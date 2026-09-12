@@ -18,6 +18,12 @@
 // output that already shipped for an existing seed.
 
 import { rng, sub, pick, int, shuffle } from './seed.js';
+// Circular by design: skill.js dispatches its {mode: 'sloppy'} to this module, and this module
+// asks skill.js for the clean document's own section bodies to embed (Addendum I rule 3). Both
+// bindings are only ever called from inside a function body here, never at module-evaluation
+// time, so it resolves fine under ESM's live-binding circular-import handling -- see the
+// comment on `sections` in skill.js.
+import { sections as cleanSections } from './skill.js';
 
 const PREFIX_FRACTION = 0.15; // > the 10% floor Addendum A requires, with margin
 const DEFAULT_TARGET_BYTES = 5 * 1024 * 1024;
@@ -346,12 +352,40 @@ function renderSpecialBlock(state, headingsPick, heading, bodyLines) {
   return { start, end };
 }
 
+// --- Addendum I rule 3: full clean-skill sections, embedded verbatim ---------------------
+// Unlike a rule chain, a prose section from the clean skill is not a scalar fact with 2-4
+// decoy readings -- it's the actual signing recipe, the actual worked example, the actual
+// state-machine paragraph. There is exactly one true copy of each, and the fix for "the
+// sloppy doc dropped the whole publish-signing recipe" is to paste that one true copy in,
+// intact, somewhere a careful reader will find it. So these get a note explaining why an
+// old copy of a whole section is sitting in an internal doc (plausible -- teams do this) and
+// then the section's body, character for character, with nothing inserted into the middle of
+// it: the filler and the wrapper note are entirely outside the appendChunk call that emits it.
+const SECTION_COPY_NOTES = [
+  (h) => `(pasted wholesale from an older copy of the house-rules skill; that document called this section "${h}")`,
+  (h) => `Mirror of the published skill's "${h}" section, copied here in case the live doc ever moves. Word for word, as far as anyone checked.`,
+  (h) => `Someone pasted the whole "${h}" section into this doc a while back so it would not get lost.`,
+  (h) => `Full copy of "${h}" from the reference skill, kept here for people who do not want to click through.`,
+  (h) => `Backup of "${h}" from before the last skill rewrite. May or may not still match the live one -- it does, this time.`,
+];
+
+function renderSectionBlock(state, headingsPick, notePick, item) {
+  const heading = pick(headingsPick, HEADINGS);
+  const note = pick(notePick, SECTION_COPY_NOTES)(item.heading);
+  const before = [`### ${heading}`, '', note, ''].join('\n');
+  appendChunk(state, before);
+  const { start, end } = appendChunk(state, item.body);
+  appendChunk(state, '\n\n');
+  return { offset: start, length: end - start, heading: item.heading };
+}
+
 function build(world, targetBytes) {
   const seed = world.seed;
   const state = { chunks: [], pos: 0 };
   const rFiller = rng(sub(seed, 'sloppy.filler'));
   const rHeadings = rng(sub(seed, 'sloppy.headings'));
   const rLayout = rng(sub(seed, 'sloppy.layout'));
+  const rSectionNote = rng(sub(seed, 'sloppy.sectionNotes'));
 
   const title = [
     `# ${world.vocab.workspace} media house -- internal notes (unsorted)`,
@@ -427,9 +461,10 @@ function build(world, targetBytes) {
     const totalCount = chain.decoyValues.length + 1;
     const markers = markersFor(precedence.type, rMark, totalCount);
     chain.decoyValues.forEach((value, i) => {
-      flatItems.push({ chainKey: chain.key, label: chain.label, value, marker: markers[i], isTruth: false });
+      flatItems.push({ type: 'rule', chainKey: chain.key, label: chain.label, value, marker: markers[i], isTruth: false });
     });
     flatItems.push({
+      type: 'rule',
       chainKey: chain.key,
       label: chain.label,
       value: chain.trueValue,
@@ -438,9 +473,16 @@ function build(world, targetBytes) {
     });
   }
 
-  const order = shuffle(rLayout, flatItems);
+  // Addendum I rule 3: every `## ` section of the clean skill, as its own item, mixed in with
+  // the rule-chain items so it lands anywhere the shuffle puts it -- never in the mandatory
+  // filler prefix above, since that's already emitted, but otherwise unpredictable per seed.
+  const cleanSecs = cleanSections(world);
+  const sectionItems = cleanSecs.map((s) => ({ type: 'section', heading: s.heading, body: s.body }));
+
+  const order = shuffle(rLayout, [...flatItems, ...sectionItems]);
 
   const byChain = new Map(chains.map((c) => [c.key, { key: c.key, label: c.label, truth: null, decoys: [] }]));
+  const bySection = new Map(cleanSecs.map((s) => [s.heading, { heading: s.heading, offset: null, length: null }]));
 
   const introTextForDuplicate = title.split('\n')[2] || 'This is not the published reference.';
   let dupCounter = 0;
@@ -457,10 +499,17 @@ function build(world, targetBytes) {
       appendChunk(state, gen(world, rFiller));
     }
 
-    const rendered = renderChainEntry(state, rHeadings, precedence, item);
-    const rec = byChain.get(item.chainKey);
-    if (item.isTruth) rec.truth = rendered;
-    else rec.decoys.push(rendered);
+    if (item.type === 'rule') {
+      const rendered = renderChainEntry(state, rHeadings, precedence, item);
+      const rec = byChain.get(item.chainKey);
+      if (item.isTruth) rec.truth = rendered;
+      else rec.decoys.push(rendered);
+    } else {
+      const rendered = renderSectionBlock(state, rHeadings, rSectionNote, item);
+      const rec = bySection.get(item.heading);
+      rec.offset = rendered.offset;
+      rec.length = rendered.length;
+    }
   }
 
   // Trailing padding: keep adding filler until close to the target, favoring generator variety.
@@ -482,6 +531,14 @@ function build(world, targetBytes) {
     return { key: c.key, label: c.label, truth: rec.truth, decoys: rec.decoys };
   });
 
+  // Section offsets in clean-document order (not shuffle order), so a caller can look one up
+  // by heading without re-deriving cleanSections(world) itself.
+  const sections = cleanSecs.map((s) => {
+    const rec = bySection.get(s.heading);
+    return { heading: s.heading, offset: rec.offset, length: rec.length, body: s.body };
+  });
+  const publishSigningSection = sections.find((s) => s.heading === 'Publish signing');
+
   const truth = {
     seed: world.seed,
     targetBytes,
@@ -491,9 +548,14 @@ function build(world, targetBytes) {
       precedenceConvention: precedenceOffset,
       unitWords: unitBlock.start,
       loraNames: loraBlock.start,
-      signingRecipe: (byChain.get('canon').truth || {}).offset ?? null,
+      // Addendum I: the "signing recipe" one of the four things is now the whole embedded
+      // "Publish signing" section (X-Signature, X-Timestamp, the canonical string, the worked
+      // example) -- not just the scalar canon-ordering fact, which is also still tracked below
+      // as the 'canon' rule chain.
+      signingRecipe: publishSigningSection ? publishSigningSection.offset : null,
     },
     rules,
+    sections,
   };
 
   return { doc, truth };
@@ -519,11 +581,19 @@ export function toSkill(world, opts = {}) {
   return memoBuild(world, targetBytes).doc;
 }
 
-// truthTable(world, {targetBytes}) -> { precedence, fourThings, rules: [{key,label,truth,decoys}] }
-// with every offset in BYTES into the string toSkill(world, opts) would return (the document is
-// ASCII-only, so string index and byte offset coincide). `truth`/each decoy is
-// `{offset, blockStart, blockEnd, marker, value}` where `offset` is the index of the first
-// character of the value itself, always immediately preceded and followed by a backtick.
+// truthTable(world, {targetBytes}) -> { precedence, fourThings, rules: [{key,label,truth,decoys}],
+// sections: [{heading,offset,length,body}] } with every offset a JS string index into the
+// document toSkill(world, opts) would return. These coincided with UTF-8 byte
+// offsets while the document was ASCII-only; since Addendum I rule 3 embeds the clean skill's
+// sections verbatim, the document carries whatever non-ASCII they do (today: the `->` arrow the
+// clean skill renders as U+2192), so index and byte offset diverge after the first such
+// character. Slice the string, never a Buffer. `truth`/each decoy is
+// `{offset, blockStart, blockEnd, marker, value}` where
+// `offset` is the index of the first character of the value itself, always immediately preceded
+// and followed by a backtick. `sections` (Addendum I rule 3) is one entry per `## ` section of
+// the clean skill, in clean-document order, each with the exact index range of that section's
+// body as embedded verbatim somewhere in the sloppy document -- `doc.slice(offset, offset +
+// length) === body`, and `body` is also exactly what skill.js's own `sections(world)` returns.
 export function truthTable(world, opts = {}) {
   const targetBytes = opts.targetBytes ?? DEFAULT_TARGET_BYTES;
   return memoBuild(world, targetBytes).truth;

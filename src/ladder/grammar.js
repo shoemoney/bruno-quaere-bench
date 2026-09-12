@@ -22,7 +22,7 @@
 // running env (of descriptors/values) via resolveRefs before the op executes.
 
 import { rng, sub, pick, int } from '../seed.js';
-import { create, convert, combine, diff, applyLora, pxFromUnit } from '../media.js';
+import { create, convert, combine, diff, applyLora, pxFromUnit, snap6, roundToGrid } from '../media.js';
 import { createResourceStore, seedInitialData, listWorkspaces, listProjects, listAssetsForProject } from '../api/resources.js';
 
 
@@ -365,11 +365,23 @@ function safeLoraPool(world) {
 // compute + ref resolution (shared verbatim by the local and HTTP interpreters)
 // ---------------------------------------------------------------------------
 
-// runCompute(fn, args): args has already had every {$ref} resolved to a concrete value.
-export function runCompute(fn, args) {
+// runCompute(world, fn, args): args has already had every {$ref} resolved to a concrete value.
+// Addendum I rule 1: a percent resize target is `roundToGrid(snap6(raw), roundTo, roundMode)` --
+// the exact same function the API applies to every other convert target -- not a bare
+// `Math.round`. The rung text's own ROUND_NOTE ("the house rounds every size to its usual grid;
+// do that after every resize") is only true if this compute step rounds on the house grid too;
+// a hidden Math.round here silently overrode it and decided ~28% of percent-step rungs on a rule
+// nowhere in the docs. `world` is threaded through so this can read world.rules.roundTo/roundMode.
+export function runCompute(world, fn, args) {
   if (fn === 'percentOfDims') {
     const { of, percent } = args;
-    return { width: Math.max(1, Math.round(of.width * (percent / 100))), height: Math.max(1, Math.round(of.height * (percent / 100))) };
+    const { roundTo, roundMode } = world.rules;
+    const rawW = snap6(of.width * (percent / 100));
+    const rawH = snap6(of.height * (percent / 100));
+    return {
+      width: Math.max(1, roundToGrid(rawW, roundTo, roundMode)),
+      height: Math.max(1, roundToGrid(rawH, roundTo, roundMode)),
+    };
   }
   throw new Error(`unknown compute fn: ${fn}`);
 }
@@ -429,7 +441,7 @@ function execStep(world, store, env, step) {
       return convert(world, a.descriptor, args.apply.opts);
     });
   } else if (step.op === 'compute') {
-    value = runCompute(args.fn, args);
+    value = runCompute(world, args.fn, args);
   } else if (step.op === 'render') {
     value = create(world, args.kind, args.params);
   } else if (step.op === 'publish') {
@@ -586,6 +598,175 @@ const SHRINK_PERCENT = [55, 85];
 const GROW_PERCENT = [120, 180];
 
 // ---------------------------------------------------------------------------
+// Addendum I rule 2: the generator guard.
+//
+// A percent step is ambiguous when the two plausible ways of grid-rounding it disagree: round the
+// raw scaled value to a whole pixel first, THEN grid-round that integer (the reading the rung
+// text's own ROUND_NOTE literally describes), versus grid-round the raw (snap6'd) value directly
+// (the rule runCompute now actually applies). Resampling the WHOLE rung from a fresh sub-seed
+// whenever any one percent step lands on this is not viable: a rung can carry several percent
+// steps (tier 9 carries four), their ambiguity odds compound, and under an 'up'/'down' roundMode
+// with a small roundTo a single step can be ambiguous on the order of half the time -- measured
+// needing several hundred whole-rung resamples before all of them happened to be clean at once.
+// So instead this nudges just the one offending percent value, deterministically and without
+// touching the RNG stream at all (exactly like unitValueForPx's boundary nudge above), which
+// almost always escapes an ambiguous window on the first or second try.
+// ---------------------------------------------------------------------------
+
+const MAX_PERCENT_NUDGE = 50;
+
+function percentIsAmbiguous(world, dims, percent) {
+  const { roundTo, roundMode } = world.rules;
+  for (const dim of ['width', 'height']) {
+    const raw = snap6(dims[dim] * (percent / 100));
+    if (roundToGrid(Math.round(raw), roundTo, roundMode) !== roundToGrid(raw, roundTo, roundMode)) return true;
+  }
+  return false;
+}
+
+// solveChainPercents(world, chain, i, width, height): mutates chain[i..] 's shrink/grow steps in
+// place so every one of them is unambiguous, given the actual (grid-rounded) width/height a live
+// descriptor would carry at step i. Returns whether a solution exists.
+//
+// A single-step, look-only-at-yourself nudge is not enough: fixing step i's own ambiguity by
+// picking whichever nearby percent is locally safe can hand step i+1 a (width, height) pair that
+// is ITSELF unfixable -- when width+height is an exact multiple of 100, raw_w+raw_h is an exact
+// integer for every percent, which forces their fractional parts to be exact complements, so
+// exactly one axis is always on the wrong side of the rounding discontinuity no matter which
+// percent gets picked for that step. That is a property of the (width, height) pair reaching a
+// step, not of any one percent value, and it can only be escaped by choosing a DIFFERENT percent
+// further up the chain, not by anything available at the step itself.
+//
+// So this searches with backtracking: try candidate percents for step i in order of closeness to
+// what was originally drawn (own-ambiguity check first, cheap), and for each locally-safe
+// candidate, recurse into the rest of the chain with the resulting dims; the first candidate whose
+// suffix also solves wins. Chains carry at most a handful of percent steps (tier 9's is the
+// longest, at four) and the vast majority of candidates succeed on the first or second try, so
+// this stays fast despite being worst-case exponential in chain length.
+function solveChainPercents(world, chain, i, width, height) {
+  if (i >= chain.length) return true;
+  const step = chain[i];
+  const { roundTo, roundMode } = world.rules;
+  if (step.kind === 'resize') {
+    const w = roundToGrid(step.width, roundTo, roundMode);
+    const h = roundToGrid(step.height, roundTo, roundMode);
+    return solveChainPercents(world, chain, i + 1, w, h);
+  }
+  if (step.kind !== 'shrink' && step.kind !== 'grow') {
+    return solveChainPercents(world, chain, i + 1, width, height);
+  }
+  const [lo, hi] = step.kind === 'shrink' ? SHRINK_PERCENT : GROW_PERCENT;
+  const original = step.percent;
+  const candidates = [0];
+  for (let delta = 1; delta <= MAX_PERCENT_NUDGE; delta += 1) candidates.push(delta, -delta);
+  for (const delta of candidates) {
+    const candidate = original + delta;
+    if (candidate < lo || candidate > hi) continue;
+    if (percentIsAmbiguous(world, { width, height }, candidate)) continue;
+    const w = Math.max(1, roundToGrid(snap6(width * (candidate / 100)), roundTo, roundMode));
+    const h = Math.max(1, roundToGrid(snap6(height * (candidate / 100)), roundTo, roundMode));
+    step.percent = candidate;
+    if (solveChainPercents(world, chain, i + 1, w, h)) return true;
+  }
+  step.percent = original;
+  return false;
+}
+
+// fixChainPercents(world, prefixPlan, chain, fromKey): entry point for solveChainPercents --
+// resolves the actual starting width/height (whatever `prefixPlan`, already composed but not yet
+// including the chain, resolves `fromKey` to) and mutates `chain` in place. Called before
+// chainSteps() turns `chain` into plan steps, so the plan and the narrative (which reads the very
+// same `chain` array for the rung's text) can never disagree about which percent was actually
+// used. Throws only if the whole search space is exhausted, which should not happen for any real
+// (width, height) pair this generator draws.
+// `store` is optional: execStep only ever reads it for a 'batch' step, and seedSnapshot() re-seeds
+// (and re-hashes -- hashDescriptor renders every seeded asset) the WHOLE library, which is real
+// money on a hot path. Only pay for it when prefixPlan actually contains a batch step and the
+// caller has not already built one of its own (batchTier has -- pass it through and this call
+// reseeds nothing a second time).
+function fixChainPercents(world, prefixPlan, chain, fromKey, store) {
+  if (!chain || chain.length === 0) return;
+  const env = new Map();
+  const resolvedStore = store !== undefined ? store : (prefixPlan.some((s) => s.op === 'batch') ? seedSnapshot(world) : null);
+  for (const step of prefixPlan) execStep(world, resolvedStore, env, step);
+  const { width, height } = env.get(fromKey);
+  if (!solveChainPercents(world, chain, 0, width, height)) {
+    throw new Error(`fixChainPercents: no consistent set of percents for chain from "${fromKey}" starting at ${width}x${height}: ${JSON.stringify(chain)}`);
+  }
+}
+
+// resolveImageDim(world, value, unit): the exact width or height media.js's create() would
+// resolve `value` (given in `unit`, or already a bare pixel count when `unit` is undefined) to --
+// the same pxFromUnit + roundToGrid pipeline media.js's own (private) resolveDim runs, replicated
+// here so the generator can know a candidate canvas's REAL post-grid dimensions up front, without
+// building (and throwing away) a full params/shapes object just to find out.
+function resolveImageDim(world, value, unit) {
+  const px = unit !== undefined ? pxFromUnit(value, unit, world.rules.dpi) : value;
+  return roundToGrid(px, world.rules.roundTo, world.rules.roundMode);
+}
+
+// drawSafeImageCanvas(world, r, chain, canvasOpts): drawImageCanvas, but guaranteed to hand back a
+// canvas whose REAL (post-unit-conversion, post-grid-round) width/height lets solveChainPercents
+// solve the WHOLE chain, not just its first step. solveChainPercents's own backtracking handles
+// any solvable starting pair (including one that only works once a LATER step in the chain gets
+// picked differently); what it cannot do is manufacture a solution when NO percent for the
+// chain's first shrink/grow step works for its exact starting (width, height) at all -- e.g. when
+// width+height is an exact multiple of 100 (raw_w+raw_h is then an exact integer for every
+// percent, forcing their fractional parts to be exact complements, so exactly one axis is always
+// on the wrong side of the rounding discontinuity), or when one axis's OWN residue mod 100 alone
+// is unsafe across the tier's entire percent range regardless of the other axis (see the
+// width-only sweep below). Both are properties of the STARTING pair, fixable only by drawing a
+// different canvas. So this tries the chain (on a throwaway copy, so a failed trial never mutates
+// the real one) against the drawn canvas, and if it does not solve, sweeps nearby (width, height)
+// offsets -- deterministic, no extra draw from `r`, so nothing else this composer goes on to draw
+// is disturbed -- until one does.
+function drawSafeImageCanvas(world, r, chain, canvasOpts) {
+  const canvas = drawImageCanvas(r, canvasOpts);
+  if (!chain || chain.length === 0) return canvas;
+  // With roundTo=1, a percent step's ambiguity on one axis is a function of that axis's own
+  // (dim mod 100) alone -- dim*p/100's fractional part equals ((dim mod 100)*p/100)'s -- so
+  // nudging height can only ever fix HEIGHT's residue. When it is WIDTH's own residue that is
+  // unsafe for every percent in the chain's whole range (e.g. dim%100 === 1 makes every shrink
+  // percent 55-85 land past the 0.5 rounding line under roundMode 'down'), no amount of
+  // height-only nudging helps. So this sweeps a small square of (dWidth, dHeight) offsets,
+  // nearest first, rather than nudging height alone.
+  const tryDims = (pxWidth, pxHeight) => {
+    if (pxWidth < 1 || pxHeight < 1) return null;
+    const width = canvas.unit !== undefined ? unitValueForPx(world, pxWidth, canvas.unit) : pxWidth;
+    const height = canvas.unit !== undefined ? unitValueForPx(world, pxHeight, canvas.unit) : pxHeight;
+    return { width: resolveImageDim(world, width, canvas.unit), height: resolveImageDim(world, height, canvas.unit) };
+  };
+  for (let radius = 0; radius <= 20; radius += 1) {
+    const dWidths = radius === 0 ? [0] : [-radius, radius];
+    for (const dWidth of dWidths) {
+      for (let dHeight = -radius; dHeight <= radius; dHeight += 1) {
+        const dims = tryDims(canvas.pxWidth + dWidth, canvas.pxHeight + dHeight);
+        if (!dims) continue;
+        const trial = chain.map((s) => ({ ...s }));
+        if (solveChainPercents(world, trial, 0, dims.width, dims.height)) {
+          return { ...canvas, pxWidth: canvas.pxWidth + dWidth, pxHeight: canvas.pxHeight + dHeight };
+        }
+      }
+    }
+    if (radius > 0) {
+      // the two vertical edges above covered dWidth = +-radius for every dHeight; still need the
+      // top/bottom edges at dWidth strictly between -radius and radius.
+      for (let dWidth = -radius + 1; dWidth <= radius - 1; dWidth += 1) {
+        for (const dHeight of [-radius, radius]) {
+          const dims = tryDims(canvas.pxWidth + dWidth, canvas.pxHeight + dHeight);
+          if (!dims) continue;
+          const trial = chain.map((s) => ({ ...s }));
+          if (solveChainPercents(world, trial, 0, dims.width, dims.height)) {
+            return { ...canvas, pxWidth: canvas.pxWidth + dWidth, pxHeight: canvas.pxHeight + dHeight };
+          }
+        }
+      }
+    }
+  }
+  throw new Error("drawSafeImageCanvas: could not find a canvas size compatible with the chain's percent steps");
+}
+
+// ---------------------------------------------------------------------------
 // per-tier composers
 // ---------------------------------------------------------------------------
 
@@ -626,7 +807,7 @@ function tier1(world, r, band, n) {
     // descriptor, so the house's grid rounding lands twice -- once on the created canvas, once
     // on the resize -- instead of once.
     chain = [{ kind: 'lora', name: lora.name }, { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT), format }];
-    canvas = drawImageCanvas(r, { ...canvasPxRange(chainScaleEvents(world, chain), 120), useUnit: true });
+    canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(chainScaleEvents(world, chain), 120), useUnit: true });
   } else {
     canvas = drawImageCanvas(r, { minPx: 120, maxPx: 320, useUnit: true });
     const width = int(r, 120, 400);
@@ -644,8 +825,10 @@ function tier1(world, r, band, n) {
     unit: canvas.unit,
     ...shapeFloors(events),
   });
+  const createStep = { op: 'create', resultKey: 'a', args: { kind: 'image', params } };
+  fixChainPercents(world, [createStep], chain, 'a');
   const { steps, lastKey } = chainSteps(chain, 'a', 'c');
-  const plan = [{ op: 'create', resultKey: 'a', args: { kind: 'image', params } }, ...steps];
+  const plan = [createStep, ...steps];
   return {
     plan,
     submitKey: lastKey,
@@ -661,7 +844,7 @@ function tier2(world, r, band, n) {
   ];
   if (featureAt(band, n, 'secondLora')) chain.push({ kind: 'lora', name: pick(r, world.loras).name });
   const events = chainScaleEvents(world, chain);
-  const canvas = drawImageCanvas(r, { ...canvasPxRange(events, 140), useUnit: true });
+  const canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 140), useUnit: true });
   const params = makeImageParams(world, r, {
     shapeCount: shapeCountFor(band, r),
     pxWidth: canvas.pxWidth,
@@ -669,8 +852,10 @@ function tier2(world, r, band, n) {
     unit: canvas.unit,
     ...shapeFloors(events),
   });
+  const createStep = { op: 'create', resultKey: 'a', args: { kind: 'image', params } };
+  fixChainPercents(world, [createStep], chain, 'a');
   const { steps, lastKey } = chainSteps(chain, 'a', 'c');
-  const plan = [{ op: 'create', resultKey: 'a', args: { kind: 'image', params } }, ...steps];
+  const plan = [createStep, ...steps];
   return { plan, submitKey: lastKey, narrative: { tier: 2, params, chain, liveTrap: featureAt(band, n, 'liveTrap') } };
 }
 
@@ -683,7 +868,7 @@ function tier3(world, r, band, n) {
   if (featureAt(band, n, 'loraLookup')) chain.push({ kind: 'lora', name: pick(r, world.loras).name });
   const events = chainScaleEvents(world, chain);
   const shapeCount = shapeCountFor(band, r);
-  const ca = drawImageCanvas(r, { ...canvasPxRange(events, 140), useUnit: true });
+  const ca = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 140), useUnit: true });
   const paramsA = makeImageParams(world, r, {
     shapeCount,
     pxWidth: ca.pxWidth,
@@ -698,13 +883,14 @@ function tier3(world, r, band, n) {
     pxHeight: cb.pxHeight,
     unit: cb.unit,
   });
-  const { steps, lastKey } = chainSteps(chain, 'd', 'c');
-  const plan = [
+  const prefixPlan = [
     { op: 'create', resultKey: 'a', args: { kind: 'image', params: paramsA } },
     { op: 'create', resultKey: 'b', args: { kind: 'image', params: paramsB } },
     { op: 'diff', resultKey: 'd', args: { a: 'a', b: 'b', verifyEtag: true } },
-    ...steps,
   ];
+  fixChainPercents(world, prefixPlan, chain, 'd');
+  const { steps, lastKey } = chainSteps(chain, 'd', 'c');
+  const plan = [...prefixPlan, ...steps];
   return {
     plan,
     submitKey: lastKey,
@@ -730,8 +916,7 @@ function batchTier(world, r, band, n, { withSideChecks }) {
   if (featureAt(band, n, 'secondLora')) chain.push({ kind: 'lora', name: pick(r, pool).name });
   if (featureAt(band, n, 'secondGrow')) chain.push({ kind: 'grow', percent: int(r, ...GROW_PERCENT) });
   if (featureAt(band, n, 'thirdLora')) chain.push({ kind: 'lora', name: pick(r, pool).name });
-  const { steps, lastKey } = chainSteps(chain, 'combined', 'c');
-  const plan = [
+  const prefixPlan = [
     {
       op: 'batch',
       resultKey: 'batched',
@@ -745,8 +930,10 @@ function batchTier(world, r, band, n, { withSideChecks }) {
       },
     },
     { op: 'combine', resultKey: 'combined', args: { from: ['batched'], opts: combineOpts } },
-    ...steps,
   ];
+  fixChainPercents(world, prefixPlan, chain, 'combined', store);
+  const { steps, lastKey } = chainSteps(chain, 'combined', 'c');
+  const plan = [...prefixPlan, ...steps];
   return {
     plan,
     submitKey: lastKey,
@@ -786,7 +973,7 @@ function renderTier(world, r, band, n, { withPublish }) {
   ];
   if (featureAt(band, n, 'save')) chain.push({ kind: 'save', format });
   const events = chainScaleEvents(world, chain);
-  const canvas = drawImageCanvas(r, { ...canvasPxRange(events, 160), useUnit: true });
+  const canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 160), useUnit: true });
   const params = makeImageParams(world, r, {
     shapeCount: shapeCountFor(band, r),
     pxWidth: canvas.pxWidth,
@@ -796,6 +983,7 @@ function renderTier(world, r, band, n, { withPublish }) {
   });
   const plan = [{ op: 'render', resultKey: 'rendered', args: { kind: 'image', params, workspaceId } }];
   if (withPublish) plan.push({ op: 'publish', resultKey: 'published', args: { renderKey: 'rendered' } });
+  fixChainPercents(world, plan, chain, 'rendered');
   const { steps, lastKey } = chainSteps(chain, 'rendered', 'c');
   plan.push(...steps);
   return {
@@ -841,7 +1029,7 @@ function tier9(world, r, band, n) {
     { kind: 'save', format },
   ];
   const events = chainScaleEvents(world, chain);
-  const canvas = drawImageCanvas(r, { ...canvasPxRange(events, 200), useUnit: true });
+  const canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 200), useUnit: true });
   const params = makeImageParams(world, r, {
     shapeCount: shapeCountFor(band, r),
     pxWidth: canvas.pxWidth,
@@ -849,15 +1037,19 @@ function tier9(world, r, band, n) {
     unit: canvas.unit,
     ...shapeFloors(events),
   });
+  const createStep = { op: 'create', resultKey: 'a', args: { kind: 'image', params } };
+  fixChainPercents(world, [createStep], chain, 'a');
   const { steps, lastKey } = chainSteps(chain, 'a', 'c');
-  const plan = [{ op: 'create', resultKey: 'a', args: { kind: 'image', params } }, ...steps];
+  const plan = [createStep, ...steps];
   return { plan, submitKey: lastKey, narrative: { tier: 9, params, chain, liveTrap: featureAt(band, n, 'liveTrap') } };
 }
 
 const TIER_COMPOSERS = [tier0, tier1, tier2, tier3, tier4, tier5, tier6, tier7, tier8, tier9];
 
-// composePlan(world, n) -> { plan, submitKey, narrative }. `plan` is exactly what
-// runPlanLocally and the HTTP interpreter both execute.
+// composePlan(world, n) -> { plan, submitKey, narrative }. `plan` is exactly what runPlanLocally
+// and the HTTP interpreter both execute. Every tier composer above already nudges its own percent
+// steps away from ambiguity (fixChainPercents, Addendum I rule 2) before returning, so nothing
+// further to guard here.
 export function composePlan(world, n) {
   const band = bandFor(n);
   const r = rng(sub(world.seed, `rung:${n}`));

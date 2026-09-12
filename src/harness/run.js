@@ -17,6 +17,7 @@ import { answerKey } from '../ladder/reference.js';
 import { makeSandbox } from './sandbox.js';
 import { createDriver as createAnthropicDriver } from './drivers/anthropic.js';
 import { createDriver as createOpenAiDriver } from './drivers/openai.js';
+import { createDriver as createGoogleDriver } from './drivers/google.js';
 
 const PROMPT_URL = new URL('./prompt.md', import.meta.url);
 
@@ -110,6 +111,15 @@ export function resolveDriver(driverName, { model, systemPrompt }) {
       baseUrl: 'https://api.deepseek.com',
       systemPrompt,
     });
+  }
+  // Addendum H: gemini-cli 0.59.0 doesn't know gemini-3.8-flash (silently coerces it to
+  // 3.5-flash), but the vaulted Google key reaches 3.8 fine through Google's own
+  // OpenAI-compatible endpoint. Runs on this preset until a Gemini CLI release knows the literal
+  // id (Jeremy's ruling: prefer the CLI once it does). A dedicated driver, not createOpenAiDriver
+  // -- see drivers/google.js's header for why (thought_signature round-tripping on tool calls,
+  // an array-shaped error body) -- but the same Chat Completions wire protocol otherwise.
+  if (driverName === 'google') {
+    return createGoogleDriver({ model, apiKey: process.env.GEMINI_API_KEY, systemPrompt });
   }
   throw new Error(`unknown driver: ${driverName}`);
 }
@@ -302,6 +312,14 @@ const TRANSIENT = /\b(429|500|502|503|504|529)\b|overloaded|rate.?limit|ECONNRES
 
 const RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000];
 
+// Addendum H: a 401/403 mid-climb is the provider itself refusing the key (a blocked team, a
+// revoked or wrong credential) -- distinct from a TRANSIENT provider hiccup (which gets the
+// escalating retry above) and distinct from the agent failing a rung. Exactly one retry, after a
+// fixed delay; if that retry also errors, the climb stops as 'provider' with the status folded
+// into driverError -- never 'error' (which the board reads as a harness problem) and never
+// 'fail' (which it reads as a bad submission).
+const PROVIDER_AUTH_ERROR = /\b(401|403)\b/;
+
 async function stepWithRetry(driver, messages, tools, msLeft) {
   let lastErr;
   for (let i = 0; i <= RETRY_DELAYS_MS.length; i += 1) {
@@ -338,13 +356,15 @@ async function adminGet(adminBase, pathname) {
 // climb({driverName, model, seed, attempt, budgetTokens, maxTurns, outDir, driver?, publicPort?,
 // adminPort?}) -> RunResult
 //
-// Two params beyond ARCHITECTURE.md's literal signature, both escape hatches for tests rather
+// Three params beyond ARCHITECTURE.md's literal signature, all escape hatches for tests rather
 // than something a real run needs:
 //   - `driver`: a pre-built {step(messages, tools)} that skips driverName/model resolution
 //     entirely, letting tests climb rungs with a scripted fake instead of a real provider.
 //   - `publicPort`/`adminPort`: normally 0 (ephemeral, per ARCHITECTURE.md's "start a server pair
 //     on free ports"); a test that needs to know the base URL *before* the server starts (to bake
 //     it into a scripted driver's collection files) can pin them instead.
+//   - `providerRetryDelayMs`: the fixed delay before the single Addendum H retry on a 401/403.
+//     A real run always waits the full 30 s; tests override it so the suite stays fast.
 export async function climb({
   driverName,
   model,
@@ -368,6 +388,8 @@ export async function climb({
   // Highest rung that counts as the top: clearing it stops the climb with stoppedBecause 'top'.
   // `quaere run --max-rung N` exposes it; a short calibration climb can cap well below 99.
   topRung = 99,
+  // Addendum H: see the doc comment above climb().
+  providerRetryDelayMs = 30_000,
 } = {}) {
   const world = makeWorld(seed);
   const runDir = path.join(outDir, String(model || driverName), String(seed), String(attempt));
@@ -463,11 +485,35 @@ export async function climb({
       try {
         stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - (Date.now() - startedAt));
       } catch (err) {
-        // Addendum D/E: a context-length error is not a fall -- trim harder (40%) and retry once;
-        // only if that retry also fails does the run actually end in 'error'. Addendum E widens
-        // detection beyond the message-shaped regex: any 400/413 from a call made at or above 85%
-        // of contextLimit is treated as context-length too, since providers don't all say so.
-        if (isContextLengthError(err.message, callEstimate, contextLimit)) {
+        // Addendum H: a 401/403 is the provider itself, not the agent or the harness -- exactly
+        // one retry after a fixed delay (never stepWithRetry's escalating backoff), then stop as
+        // 'provider' with the status in driverError. Checked before the context-length regexes
+        // below since 400/413 and 401/403 never overlap.
+        if (PROVIDER_AUTH_ERROR.test(err.message)) {
+          const msLeftForRetry = wallMsLimit - (Date.now() - startedAt);
+          if (Number.isFinite(msLeftForRetry) && providerRetryDelayMs >= msLeftForRetry) {
+            stoppedBecause = 'provider';
+            driverError = err.message;
+            transcript.push({ turn: turns, error: err.message });
+            break;
+          }
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((r) => setTimeout(r, providerRetryDelayMs));
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - (Date.now() - startedAt));
+          } catch (err2) {
+            stoppedBecause = 'provider';
+            driverError = err2.message;
+            transcript.push({ turn: turns, error: err2.message });
+            break;
+          }
+        } else if (isContextLengthError(err.message, callEstimate, contextLimit)) {
+          // Addendum D/E: a context-length error is not a fall -- trim harder (40%) and retry
+          // once; only if that retry also fails does the run actually end in 'error'. Addendum E
+          // widens detection beyond the message-shaped regex: any 400/413 from a call made at or
+          // above 85% of contextLimit is treated as context-length too, since providers don't all
+          // say so.
           const { messages: trimmed, removed } = trimToFraction(messages, contextLimit, 0.4);
           if (removed > 0) {
             messages = [...trimmed, { role: 'user', content: trimNote(removed) }];

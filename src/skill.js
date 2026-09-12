@@ -372,6 +372,38 @@ export function toSkill(world, opts = {}) {
   return lines.join('\n');
 }
 
+// sections(world) -> [{heading, body}], one entry per top-level (`## `) section of the clean
+// document, in document order. `body` is the exact text between that heading's line and the
+// next `## ` heading (or the end of the document), with only the section's own leading and
+// trailing blank lines trimmed -- everything else (inner blank lines, code fences, tables)
+// stays byte-for-byte as clean mode renders it.
+//
+// Addendum I rule 3: skill-sloppy.js embeds each of these bodies verbatim, as one intact
+// block, somewhere in the noise. Exposing them here means skill-sloppy.js never re-parses or
+// re-derives the clean document's structure -- it just asks for the sections and buries them.
+// This never changes a byte of what toSkill(world) itself returns; test/skill-clean-pin.test.js
+// guards that.
+export function sections(world) {
+  const doc = toSkill(world, { mode: 'clean' });
+  const lines = doc.split('\n');
+  const raw = [];
+  let current = null;
+  for (const line of lines) {
+    const m = /^## (.+)$/.exec(line);
+    if (m) {
+      if (current) raw.push(current);
+      current = { heading: m[1], lines: [] };
+    } else if (current) {
+      current.lines.push(line);
+    }
+  }
+  if (current) raw.push(current);
+  return raw.map(({ heading, lines: bodyLines }) => ({
+    heading,
+    body: bodyLines.join('\n').replace(/^\n+/, '').replace(/\n+$/, ''),
+  }));
+}
+
 // truthTable(world, {targetBytes}) -> the sloppy document's answer key: every rule with its
 // true value and the byte offsets of its canonical statement and every decoy, plus the four
 // buried items' offsets and the precedence convention in force. See skill-sloppy.js.

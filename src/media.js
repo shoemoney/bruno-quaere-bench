@@ -64,7 +64,9 @@ export function pxFromUnit(value, unit, dpi) {
 }
 
 // Round `value` to the nearest multiple of `step` (default 1, i.e. plain integer px), per mode.
-function roundToGrid(value, step = 1, mode = 'nearest') {
+// Exported (Addendum I) so grammar.js's percentOfDims compute uses this exact function -- the
+// same one the API and every other conversion path apply -- instead of a parallel Math.round.
+export function roundToGrid(value, step = 1, mode = 'nearest') {
   const s = step > 0 ? step : 1;
   const q = value / s;
   let rounded;

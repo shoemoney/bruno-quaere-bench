@@ -13,7 +13,13 @@ import { rng, sub, pick, int, shuffle } from './seed.js';
 // dimension whose exact product would land within 1e-6px of a grid boundary. Both change which
 // concrete descriptors (and so which hashes) a seed produces versus 0.2.x -- not the difficulty
 // curve itself, but still enough that a 0.2.x run and a 0.3.x run are not directly comparable.
-export const VERSION = '0.3.0';
+//
+// Bumped to 0.4.0 by Addendum I: a percent-resize compute step now targets
+// `roundToGrid(snap6(raw), roundTo, roundMode)` -- the same function every other convert target
+// uses -- instead of a hidden `Math.round(raw)` the docs never stated, and the generator redraws
+// any rung whose percent step would have been ambiguous between the two readings. 0.3.x hashes
+// for any rung with a percent step are superseded.
+export const VERSION = '0.4.0';
 
 const WORKSPACE_NOUNS = ['studio', 'fleet', 'lab', 'yard', 'shop', 'depot', 'guild', 'forge', 'atelier', 'bureau'];
 const PROJECT_NOUNS = ['scene', 'vehicle', 'sensor', 'mission', 'reel', 'session', 'build', 'sketch', 'spread', 'rig'];

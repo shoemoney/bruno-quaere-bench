@@ -118,7 +118,7 @@ async function cmdReference(args) {
   }
 }
 
-const KNOWN_DRIVERS = new Set(['anthropic', 'openai', 'openrouter', 'xai', 'deepseek', 'cli']);
+const KNOWN_DRIVERS = new Set(['anthropic', 'openai', 'openrouter', 'xai', 'deepseek', 'google', 'cli']);
 const KNOWN_SKILL_MODES = new Set(['clean', 'sloppy']);
 // Addendum F: "Wall cap --wall-ms default 3 h." Applies to every driver, not just `cli` -- an
 // operator who forgets the flag on a real run gets a run that eventually stops and still writes
@@ -128,7 +128,7 @@ const DEFAULT_WALL_MS = 10_800_000;
 async function cmdRun(args) {
   const driverName = args.driver || 'anthropic';
   if (!KNOWN_DRIVERS.has(driverName)) {
-    throw new Error(`--driver must be one of anthropic|openai|openrouter|xai|deepseek|cli, got: ${driverName}`);
+    throw new Error(`--driver must be one of anthropic|openai|openrouter|xai|deepseek|google|cli, got: ${driverName}`);
   }
   const skillMode = args['skill-mode'] !== undefined ? args['skill-mode'] : 'sloppy';
   if (!KNOWN_SKILL_MODES.has(skillMode)) {

@@ -315,7 +315,7 @@ async function execPlanHttp(ctx, plan, n) {
       env.set(step.resultKey, out.map((o) => o.descriptor));
       ids.set(step.resultKey, out.map((o) => o.id));
     } else if (step.op === 'compute') {
-      env.set(step.resultKey, runCompute(args.fn, args));
+      env.set(step.resultKey, runCompute(ctx.world, args.fn, args));
     } else if (step.op === 'render') {
       // eslint-disable-next-line no-await-in-loop
       const result = await httpRender(ctx, args, step.resultKey, projects, idemPrefix);

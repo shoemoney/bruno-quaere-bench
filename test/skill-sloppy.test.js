@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toSkill, truthTable } from '../src/skill-sloppy.js';
-import { toSkill as toSkillDispatch } from '../src/skill.js';
+import { toSkill as toSkillDispatch, sections as cleanSections } from '../src/skill.js';
 import { makeWorld } from '../src/world.js';
 
 const SEEDS = [1, 2, 3, 4, 5];
@@ -131,7 +131,69 @@ test('the other three of "the four things" (unit words, lora names, signing reci
     for (const [name, offset] of Object.entries(tt.fourThings)) {
       assert.ok(offset > doc.length * 0.1, `seed ${seed}: ${name} at ${(offset / doc.length * 100).toFixed(1)}%, must be > 10%`);
     }
-    assert.equal(tt.fourThings.signingRecipe, tt.rules.find((r) => r.key === 'canon').truth.offset, `seed ${seed}`);
+    // Addendum I: "signing recipe" now points at the whole embedded "Publish signing" section
+    // (the real recipe: X-Signature, X-Timestamp, the canonical string), not just the scalar
+    // canon-ordering fact -- that fact is still separately tracked as the 'canon' rule chain.
+    const publishSigning = tt.sections.find((s) => s.heading === 'Publish signing');
+    assert.ok(publishSigning, `seed ${seed}: no "Publish signing" section in truth table`);
+    assert.equal(tt.fourThings.signingRecipe, publishSigning.offset, `seed ${seed}`);
+  }
+});
+
+// Addendum I rule 3: skill-sloppy.js currently re-emits scalar facts only and drops every prose
+// section, including the entire publish-signing recipe. The fix embeds each `##` section body
+// of the clean skill verbatim as an intact block inside the noise, never in the first 10%.
+test('every `## ` section of the clean skill appears verbatim, intact, past 10%, in the sloppy 64 KB output', () => {
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    const doc = toSkill(world, { targetBytes: SMALL });
+    const tt = truthTable(world, { targetBytes: SMALL });
+    const clean = cleanSections(world);
+    assert.ok(clean.length > 10, `seed ${seed}: suspiciously few clean sections (${clean.length})`);
+    assert.equal(tt.sections.length, clean.length, `seed ${seed}: truth table section count mismatch`);
+    for (const c of clean) {
+      const rec = tt.sections.find((s) => s.heading === c.heading);
+      assert.ok(rec, `seed ${seed}: section "${c.heading}" missing from truth table`);
+      assert.equal(rec.body, c.body, `seed ${seed}: section "${c.heading}" body doesn't match skill.js's own sections()`);
+      assert.ok(rec.offset > doc.length * 0.1, `seed ${seed}: section "${c.heading}" at ${(rec.offset / doc.length * 100).toFixed(1)}%, must be > 10%`);
+      const got = doc.slice(rec.offset, rec.offset + rec.length);
+      assert.equal(got, c.body, `seed ${seed}: section "${c.heading}" not verbatim at its recorded offset`);
+      // "intact block": the exact substring occurs once, unbroken, at exactly that offset --
+      // not merely somewhere in the document (e.g. reassembled from fragments).
+      assert.equal(doc.indexOf(c.body), rec.offset, `seed ${seed}: section "${c.heading}" body's first occurrence isn't at its recorded offset`);
+    }
+  }
+});
+
+test('every `## ` section of the clean skill appears verbatim, intact, past 10%, in the sloppy 5 MB output', () => {
+  const target = 5 * 1024 * 1024;
+  const world = makeWorld(1);
+  const doc = toSkill(world, { targetBytes: target });
+  const tt = truthTable(world, { targetBytes: target });
+  const clean = cleanSections(world);
+  for (const c of clean) {
+    const rec = tt.sections.find((s) => s.heading === c.heading);
+    assert.ok(rec, `section "${c.heading}" missing from truth table`);
+    assert.ok(rec.offset > doc.length * 0.1, `section "${c.heading}" must be past 10%`);
+    assert.equal(doc.slice(rec.offset, rec.offset + rec.length), c.body, `section "${c.heading}" not verbatim`);
+  }
+});
+
+// The specific failure Addendum I calls out by name: hmac was zero hits in 5 MB before this
+// fix, which makes rungs 60+ (publish, hmac) unsolvable from the docs alone.
+test('X-Signature, X-Timestamp, and the canonical string all appear, inside the embedded "Publish signing" section', () => {
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    const doc = toSkill(world, { targetBytes: SMALL });
+    const tt = truthTable(world, { targetBytes: SMALL });
+    assert.match(doc, /X-Signature/, `seed ${seed}`);
+    assert.match(doc, /X-Timestamp/, `seed ${seed}`);
+    const publishSigning = tt.sections.find((s) => s.heading === 'Publish signing');
+    const body = doc.slice(publishSigning.offset, publishSigning.offset + publishSigning.length);
+    assert.match(body, new RegExp(escapeRegExp(world.hmac.header)), `seed ${seed}: ${world.hmac.header} not in the signing section itself`);
+    assert.match(body, new RegExp(escapeRegExp(world.hmac.tsHeader)), `seed ${seed}: ${world.hmac.tsHeader} not in the signing section itself`);
+    // the worked canonical string example, e.g. "1730000000POST/workspaces/w_1/projects/p_1/publish"
+    assert.match(body, /```\n\d+POST\/\S+publish\n```/, `seed ${seed}: no canonical-string worked example in the signing section`);
   }
 });
 
