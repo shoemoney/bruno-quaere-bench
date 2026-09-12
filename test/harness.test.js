@@ -104,6 +104,11 @@ test('makeSandbox: write_file/read_file/grep/ls reject paths that escape the san
 const SEED = 909;
 const PUBLIC_PORT = 48190;
 const ADMIN_PORT = 48191;
+// Addendum B/A together: the sandbox's read_file/grep exist because a 5 MB sloppy skill cannot be
+// read in one turn. The full-size test would just be slow, so this climb asks for a 64 KB sloppy
+// skill instead -- small enough to build fast, still sloppy enough to exercise the editor tools
+// for real (grep finds several `dpi=...` claims, decoys included, per skill-sloppy.js).
+const SKILL_BYTES = 64 * 1024;
 
 function yamlBlock(text, indent) {
   const pad = ' '.repeat(indent);
@@ -268,6 +273,12 @@ test(
     });
 
     const driver = makeScriptedDriver([
+      // Addendum B: before writing anything, the agent goes looking in the sloppy skill --
+      // grep for a rule, then read the region around a hit. Neither call's result feeds this
+      // scripted driver's later steps (it isn't adaptive), but both must round-trip through the
+      // real sandbox tools against the real (64 KB) SKILL.md the harness wrote to disk.
+      { toolCalls: [{ id: 't0', name: 'grep', input: { pattern: 'dpi=', path: 'SKILL.md' } }] },
+      { toolCalls: [{ id: 't0b', name: 'read_file', input: { path: 'SKILL.md', offset: 0, limit: 50 } }] },
       { toolCalls: [{ id: 't1', name: 'write_file', input: { path: 'opencollection.yml', content: buildOpenCollectionYml() } }] },
       {
         toolCalls: [
@@ -289,6 +300,7 @@ test(
         maxTurns: 10,
         publicPort: PUBLIC_PORT,
         adminPort: ADMIN_PORT,
+        skillBytes: SKILL_BYTES,
       });
 
       assert.equal(result.rung, 2, `expected to clear through rung 2, got ${JSON.stringify(result)}`);
@@ -306,11 +318,25 @@ test(
       const resultOnDisk = JSON.parse(await readFile(path.join(runDir, 'result.json'), 'utf8'));
       assert.equal(resultOnDisk.rung, 2);
 
-      const transcript = (await readFile(path.join(runDir, 'transcript.jsonl'), 'utf8')).trim().split('\n');
-      assert.equal(transcript.length, 4);
+      const transcriptLines = (await readFile(path.join(runDir, 'transcript.jsonl'), 'utf8')).trim().split('\n');
+      assert.equal(transcriptLines.length, 6);
+      const transcript = transcriptLines.map((line) => JSON.parse(line));
+      assert.equal(transcript[0].toolCalls[0].name, 'grep');
+      assert.equal(transcript[1].toolCalls[0].name, 'read_file');
 
       const collected = await readFile(path.join(runDir, 'collection', 'climb.yml'), 'utf8');
       assert.match(collected, /submit passed/);
+
+      // The skill the agent actually read from disk is the small sloppy one this run asked for
+      // (skillBytes), not the 5 MB default, and it is sloppy enough that the grep step above
+      // would have found real hits -- both a `--skill-bytes` wiring check and a sanity check on
+      // Addendum A's noise.
+      const skillOnDisk = await readFile(path.join(runDir, 'collection', 'SKILL.md'), 'utf8');
+      assert.ok(
+        skillOnDisk.length > SKILL_BYTES * 0.5 && skillOnDisk.length < SKILL_BYTES * 2,
+        `SKILL.md is ${skillOnDisk.length} bytes, expected close to ${SKILL_BYTES}`,
+      );
+      assert.match(skillOnDisk, /dpi=/);
     } finally {
       await rm(outDir, { recursive: true, force: true });
     }

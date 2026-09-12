@@ -50,10 +50,28 @@ function toAnthropicMessages(messages) {
   return out;
 }
 
+// Addendum D: mark the single most recent tool_result as an ephemeral cache breakpoint. Anthropic
+// caches everything up to and including a marked block, so this is "cache the conversation as of
+// its last tool result" -- the part that's identical on the next turn's resend.
+function markLastToolResultCacheable(anthropicMessages) {
+  for (let i = anthropicMessages.length - 1; i >= 0; i -= 1) {
+    const msg = anthropicMessages[i];
+    if (msg.role !== 'user') continue;
+    for (let j = msg.content.length - 1; j >= 0; j -= 1) {
+      if (msg.content[j].type === 'tool_result') {
+        msg.content[j] = { ...msg.content[j], cache_control: { type: 'ephemeral' } };
+        return;
+      }
+    }
+  }
+}
+
 export function createDriver({ model, apiKey, systemPrompt, baseUrl = DEFAULT_URL, maxTokens = 4096 }) {
   if (!apiKey) throw new Error('anthropic driver: missing apiKey (set ANTHROPIC_API_KEY)');
 
   async function step(messages, tools) {
+    const anthropicMessages = toAnthropicMessages(messages);
+    markLastToolResultCacheable(anthropicMessages);
     const res = await fetch(baseUrl, {
       method: 'POST',
       headers: {
@@ -64,8 +82,9 @@ export function createDriver({ model, apiKey, systemPrompt, baseUrl = DEFAULT_UR
       body: JSON.stringify({
         model,
         max_tokens: maxTokens,
-        system: systemPrompt,
-        messages: toAnthropicMessages(messages),
+        // Addendum D: the system prompt is identical every turn -- the other cache breakpoint.
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        messages: anthropicMessages,
         tools: toAnthropicTools(tools),
       }),
     });
@@ -87,6 +106,9 @@ export function createDriver({ model, apiKey, systemPrompt, baseUrl = DEFAULT_UR
       usage: {
         input_tokens: data.usage ? data.usage.input_tokens : 0,
         output_tokens: data.usage ? data.usage.output_tokens : 0,
+        // Addendum D: reported for the board, never charged to the novel-token budget --
+        // run.js's accounting is keyed off input_tokens/output_tokens alone.
+        cache_read_input_tokens: data.usage ? data.usage.cache_read_input_tokens || 0 : 0,
       },
       stop: data.stop_reason,
     };

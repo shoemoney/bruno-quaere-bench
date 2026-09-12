@@ -54,6 +54,24 @@ test('quaere skill --seed 1 prints the same markdown toSkill(makeWorld(1)) would
   assert.match(result.stdout, /^---/);
 });
 
+test('quaere skill --mode sloppy --bytes N prints a sloppy document of about N bytes', () => {
+  const bytes = 200_000;
+  const result = runCli(['skill', '--seed', '2', '--mode', 'sloppy', '--bytes', String(bytes)]);
+  assert.equal(result.status, 0, result.stderr);
+  // The generator fills to just under the target, then stops rather than overshooting.
+  assert.ok(result.stdout.length > bytes * 0.9, `sloppy skill was ${result.stdout.length} bytes, wanted ~${bytes}`);
+  assert.ok(result.stdout.length < bytes * 1.1, `sloppy skill was ${result.stdout.length} bytes, wanted ~${bytes}`);
+  // ...and it is genuinely the sloppy document, not the clean one padded out.
+  assert.ok(result.stdout.length > toSkill(makeWorld(2)).length * 5);
+});
+
+test('quaere skill defaults to clean mode and rejects an unknown --mode', () => {
+  assert.equal(runCli(['skill', '--seed', '2']).stdout, `${toSkill(makeWorld(2), { mode: 'clean' })}\n`);
+  const bad = runCli(['skill', '--seed', '2', '--mode', 'bogus']);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /--mode must be one of clean\|sloppy/);
+});
+
 test('quaere rung --seed 1 --n 3 prints the rung number and its task text', () => {
   const result = runCli(['rung', '--seed', '1', '--n', '3']);
   assert.equal(result.status, 0, result.stderr);

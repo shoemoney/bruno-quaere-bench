@@ -69,11 +69,13 @@ export function renderBoard(results) {
     return `${lines.join('\n')}\n`;
   }
 
-  lines.push('| Model | Rung | Turns | Fidelity | Trap | Tokens | Wall ms |');
-  lines.push('|---|---|---|---|---|---|---|');
+  // Addendum D: Novel (what the budget is spent against) and Billed (what the provider actually
+  // charges, cumulative resend included) side by side make the 87:1 resend ratio visible per run.
+  lines.push('| Model | Rung | Turns | Fidelity | Trap | Novel | Billed | Trims | Wall ms |');
+  lines.push('|---|---|---|---|---|---|---|---|---|');
   for (const row of rows) {
     lines.push(
-      `| ${row.model} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.tokens)} | ${Math.round(row.wallMs)} |`,
+      `| ${row.model} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.trims.toFixed(1)} | ${Math.round(row.wallMs)} |`,
     );
   }
 

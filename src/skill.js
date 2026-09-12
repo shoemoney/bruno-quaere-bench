@@ -6,6 +6,7 @@
 
 import { listLies } from './spec.js';
 import { resolvePath, fieldName } from './world.js';
+import { toSkill as toSloppySkill, truthTable as sloppyTruthTable } from './skill-sloppy.js';
 
 const TRAP_OVERRIDE_TEXT = {
   fieldCase: (l) => `- The reference lists a field as \`${l.detail.spec}\` on \`${l.detail.method.toUpperCase()} ${l.path}\`. What the response actually carries is \`${l.detail.real}\`. Read field names off a real response body, never off memory of the docs.`,
@@ -157,10 +158,18 @@ function signingRecipe(world) {
   ].join('\n');
 }
 
-// toSkill(world) -> markdown text, 200-400 lines, shaped like a real Bruno
-// skill: frontmatter, then sections a team would actually write and an agent
-// would actually need. Deterministic per seed.
-export function toSkill(world) {
+// toSkill(world, {mode, targetBytes}) -> markdown text, deterministic per seed (and, for
+// sloppy mode, per targetBytes). mode 'clean' (the default, and the only mode this function
+// used to have) is the 200-400 line ground-truth document below: frontmatter, then sections a
+// team would actually write and an agent would actually need.
+//
+// mode 'sloppy' (Addendum A) wraps that same set of facts in megabytes of plausible internal-doc
+// noise -- see skill-sloppy.js, which owns everything about how that document is built and
+// where its truth table's offsets come from. Nothing about the clean document below changes
+// because sloppy mode exists; test/skill-clean-pin.test.js pins its exact bytes for seed 1.
+export function toSkill(world, opts = {}) {
+  const mode = opts.mode ?? 'clean';
+  if (mode === 'sloppy') return toSloppySkill(world, opts);
   const { vocab, rules, auth, pagination, loras } = world;
   const loraNames = loras.map((l) => l.name).join(', ');
 
@@ -351,3 +360,8 @@ export function toSkill(world) {
 
   return lines.join('\n');
 }
+
+// truthTable(world, {targetBytes}) -> the sloppy document's answer key: every rule with its
+// true value and the byte offsets of its canonical statement and every decoy, plus the four
+// buried items' offsets and the precedence convention in force. See skill-sloppy.js.
+export { sloppyTruthTable as truthTable };

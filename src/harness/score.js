@@ -23,7 +23,13 @@ export function medianRun(runs) {
   return sorted[Math.floor((sorted.length - 1) / 2)];
 }
 
-// scoreModel(model, runs) -> {model, rung, turns, fidelity, trap, tokens, wallMs, cost}
+// Older result.json files (pre-Addendum-D) never recorded tokensNovel/tokensBilled/trims; fall
+// back to the billed total (tokensIn + tokensOut) and zero trims rather than propagate NaN.
+function billedOf(r) {
+  return (r.tokensIn || 0) + (r.tokensOut || 0);
+}
+
+// scoreModel(model, runs) -> {model, rung, turns, fidelity, trap, novel, billed, trims, wallMs}
 export function scoreModel(model, runs) {
   const rep = medianRun(runs);
   return {
@@ -32,9 +38,12 @@ export function scoreModel(model, runs) {
     turns: rep.turns,
     fidelity: mean(runs.map((r) => r.fidelity)),
     trap: mean(runs.map((r) => r.trap)),
-    tokens: mean(runs.map((r) => r.tokensIn + r.tokensOut)),
+    // Addendum D: Novel is what the 3M budget is spent against; Billed is what the provider
+    // actually charges (cumulative resend included).
+    novel: mean(runs.map((r) => (r.tokensNovel != null ? r.tokensNovel : billedOf(r)))),
+    billed: mean(runs.map((r) => (r.tokensBilled != null ? r.tokensBilled : billedOf(r)))),
+    trims: mean(runs.map((r) => r.trims || 0)),
     wallMs: mean(runs.map((r) => r.wallMs)),
-    cost: null,
   };
 }
 

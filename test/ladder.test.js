@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { makeWorld } from '../src/world.js';
 import { routes } from '../src/routes.js';
 import { makeRung, difficulty } from '../src/ladder/rung.js';
+import { runPlanLocallyTrace } from '../src/ladder/grammar.js';
 
 // ---------------------------------------------------------------------------
 // banned field names: every property name declared anywhere in routes.js's request/response
@@ -154,5 +155,45 @@ test('difficulty strictly rises across band boundaries', () => {
     const last = makeRung(world, tier * 10 + 9);
     const next = makeRung(world, (tier + 1) * 10);
     assert.ok(difficulty(next) > difficulty(last));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Addendum D geometry floor: media.js's convert() and applyLora('scale') never clamp a shape's
+// size -- by design, they are pure functions of their inputs -- so it is the composer's job in
+// grammar.js to never generate a plan that shrinks a shape below 8px on any axis. Checked after
+// *every* step of every rung's plan (runPlanLocallyTrace), not just the final submitted
+// descriptor, because a plan can pass through an undersized intermediate on its way to a
+// final descriptor that happens to look fine.
+// ---------------------------------------------------------------------------
+
+function assertShapeFloor(value, ctx) {
+  if (!value || value.kind !== 'image') return;
+  for (const s of value.shapes) {
+    if (s.type === 'rect') {
+      assert.ok(s.w >= 8, `${ctx}: rect w=${s.w} < 8px`);
+      assert.ok(s.h >= 8, `${ctx}: rect h=${s.h} < 8px`);
+    } else if (s.type === 'circle') {
+      assert.ok(s.r * 2 >= 8, `${ctx}: circle diameter=${s.r * 2} < 8px`);
+    } else if (s.type === 'line') {
+      assert.ok(Math.abs(s.x2 - s.x) >= 8, `${ctx}: line dx=${s.x2 - s.x} < 8px`);
+      assert.ok(Math.abs(s.y2 - s.y) >= 8, `${ctx}: line dy=${s.y2 - s.y} < 8px`);
+    }
+  }
+}
+
+test('Addendum D: every shape stays >= 8px on each axis after every plan step, rungs 0-99, seeds 1-3', () => {
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    for (let n = 0; n < 100; n += 1) {
+      const rung = makeRung(world, n);
+      const trace = runPlanLocallyTrace(world, rung.plan);
+      trace.forEach((value, i) => {
+        const step = rung.plan[i];
+        const ctx = `rung ${n} seed ${seed} step ${i} (${step.op}:${step.resultKey})`;
+        if (Array.isArray(value)) value.forEach((v) => assertShapeFloor(v, ctx));
+        else assertShapeFloor(value, ctx);
+      });
+    }
   }
 });

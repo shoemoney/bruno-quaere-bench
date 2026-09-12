@@ -56,7 +56,21 @@ function cmdSpec(args) {
 
 function cmdSkill(args) {
   const world = makeWorld(seedFrom(args));
-  process.stdout.write(`${toSkill(world)}\n`);
+  // --mode clean (default) prints the tight, honest document; --mode sloppy prints the
+  // Addendum A version, where the same facts are buried in --bytes of plausible noise.
+  const mode = args.mode !== undefined ? args.mode : 'clean';
+  if (!KNOWN_SKILL_MODES.has(mode)) {
+    throw new Error(`--mode must be one of clean|sloppy, got: ${mode}`);
+  }
+  const opts = { mode };
+  if (args.bytes !== undefined) {
+    const targetBytes = Number(args.bytes);
+    if (!Number.isFinite(targetBytes) || targetBytes <= 0) {
+      throw new Error(`--bytes must be a positive number, got: ${args.bytes}`);
+    }
+    opts.targetBytes = targetBytes;
+  }
+  process.stdout.write(`${toSkill(world, opts)}\n`);
 }
 
 function cmdRung(args) {
@@ -103,22 +117,39 @@ async function cmdReference(args) {
   }
 }
 
+const KNOWN_DRIVERS = new Set(['anthropic', 'openai', 'openrouter']);
+const KNOWN_SKILL_MODES = new Set(['clean', 'sloppy']);
+
 async function cmdRun(args) {
+  const driverName = args.driver || 'anthropic';
+  if (!KNOWN_DRIVERS.has(driverName)) {
+    throw new Error(`--driver must be one of anthropic|openai|openrouter, got: ${driverName}`);
+  }
+  const skillMode = args['skill-mode'] !== undefined ? args['skill-mode'] : 'sloppy';
+  if (!KNOWN_SKILL_MODES.has(skillMode)) {
+    throw new Error(`--skill-mode must be one of clean|sloppy, got: ${skillMode}`);
+  }
   const attempts = args.attempts !== undefined ? Number(args.attempts) : 1;
   const results = [];
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     // eslint-disable-next-line no-await-in-loop
     const result = await harnessClimb({
-      driverName: args.driver,
+      driverName,
       model: args.model,
       seed: seedFrom(args),
       attempt,
       budgetTokens: args.budget !== undefined ? Number(args.budget) : undefined,
+      // Addendum D: proactive context-trim threshold (tokens); defaults to climb()'s own 160000.
+      contextLimit: args['context-limit'] !== undefined ? Number(args['context-limit']) : undefined,
       maxTurns: args['max-turns'] !== undefined ? Number(args['max-turns']) : undefined,
       // --wall-ms caps a climb by wall clock so an operator-imposed timeout still produces a
       // result.json; without it an outer `timeout` kills the process mid-turn and the run is lost.
       wallMsLimit: args['wall-ms'] !== undefined ? Number(args['wall-ms']) : undefined,
       outDir: args.out || 'runs',
+      // Addendum A: the skill the agent gets is sloppy (5 MB, buried facts) by default for a real
+      // run; --skill-mode clean and/or a smaller --skill-bytes are for debugging the harness itself.
+      skillMode,
+      skillBytes: args['skill-bytes'] !== undefined ? Number(args['skill-bytes']) : undefined,
     });
     results.push(result);
     console.log(JSON.stringify(result));

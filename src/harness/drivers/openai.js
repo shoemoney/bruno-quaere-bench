@@ -41,6 +41,34 @@ function toOpenAiMessages(systemPrompt, messages) {
   return out;
 }
 
+// Addendum D: OpenRouter passes an OpenAI-shaped `cache_control` on a content PART through to
+// Anthropic models as a real cache breakpoint. Plain OpenAI ignores/rejects string content here,
+// so this only runs when the caller opts in with `cacheControl: true` (openrouter driver only --
+// see run.js's resolveDriver).  Marks the system message and the single most recent tool result.
+function applyCacheControl(openAiMessages) {
+  const [system, ...rest] = openAiMessages;
+  const withCachedSystem = {
+    ...system,
+    content: [{ type: 'text', text: system.content, cache_control: { type: 'ephemeral' } }],
+  };
+  let lastToolIndex = -1;
+  for (let i = rest.length - 1; i >= 0; i -= 1) {
+    if (rest[i].role === 'tool') {
+      lastToolIndex = i;
+      break;
+    }
+  }
+  const out = [withCachedSystem, ...rest];
+  if (lastToolIndex >= 0) {
+    const idx = lastToolIndex + 1; // +1 for the system message re-inserted at index 0
+    out[idx] = {
+      ...out[idx],
+      content: [{ type: 'text', text: out[idx].content, cache_control: { type: 'ephemeral' } }],
+    };
+  }
+  return out;
+}
+
 export function createDriver({
   model,
   apiKey,
@@ -48,10 +76,14 @@ export function createDriver({
   baseUrl = DEFAULT_BASE_URL,
   extraHeaders = {},
   maxTokens = 4096,
+  // Addendum D: set by run.js's resolveDriver only for --driver openrouter.
+  cacheControl = false,
 }) {
   if (!apiKey) throw new Error('openai driver: missing apiKey (set OPENAI_API_KEY or OPENROUTER_API_KEY)');
 
   async function step(messages, tools) {
+    let openAiMessages = toOpenAiMessages(systemPrompt, messages);
+    if (cacheControl) openAiMessages = applyCacheControl(openAiMessages);
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -62,7 +94,7 @@ export function createDriver({
       body: JSON.stringify({
         model,
         max_tokens: maxTokens,
-        messages: toOpenAiMessages(systemPrompt, messages),
+        messages: openAiMessages,
         tools: toOpenAiTools(tools),
         tool_choice: 'auto',
       }),
@@ -84,6 +116,10 @@ export function createDriver({
       usage: {
         input_tokens: data.usage ? data.usage.prompt_tokens : 0,
         output_tokens: data.usage ? data.usage.completion_tokens : 0,
+        // Addendum D: reported only, never charged. OpenRouter's Anthropic pass-through echoes
+        // Anthropic's field name; plain OpenAI's automatic caching reports it nested instead.
+        cache_read_input_tokens:
+          (data.usage && (data.usage.cache_read_input_tokens || (data.usage.prompt_tokens_details || {}).cached_tokens)) || 0,
       },
       stop: choice.finish_reason,
     };

@@ -88,9 +88,48 @@ function resolveDriver(driverName, { model, systemPrompt }) {
       baseUrl: 'https://openrouter.ai/api/v1',
       systemPrompt,
       extraHeaders: { 'HTTP-Referer': 'https://git.shoemoney.ai', 'X-Title': 'Bruno QUAERE' },
+      // Addendum D: OpenRouter may route to an Anthropic model, which needs explicit
+      // cache_control breakpoints (plain OpenAI caches automatically, so its driver leaves this
+      // off). Harmless no-op against a non-Anthropic upstream -- it just adds a field they ignore.
+      cacheControl: true,
     });
   }
   throw new Error(`unknown driver: ${driverName}`);
+}
+
+// --- Addendum D: novel-token accounting, context trimming, context-length-error recovery -------
+
+// A provider's 400 for "the conversation is too big" -- distinct from TRANSIENT (rate limits,
+// 5xx, sockets): retrying the identical request fails identically forever, only trimming helps.
+const CONTEXT_LENGTH_ERROR =
+  /context[_ ]length|context.window|too many tokens|prompt is too long|maximum context|input is too long/i;
+
+function trimNote(removed) {
+  return `[context trimmed: ${removed} earlier turns removed. Files you wrote in the sandbox persist.]`;
+}
+
+// Same chars/4 heuristic the spec calls for: no tokenizer here (zero deps), and it only has to
+// be consistent enough to decide "we are over the limit," not exact.
+function estimateCharsOf(messages) {
+  return messages.reduce((sum, m) => sum + JSON.stringify(m).length, 0);
+}
+
+function estimateTokensOf(messages) {
+  return Math.ceil(estimateCharsOf(messages) / 4);
+}
+
+// trimToFraction(messages, contextLimit, fraction) -> {messages, removed}. Drops the OLDEST
+// messages first (never the single most recent one, so there is always something to send) until
+// the estimated size is under contextLimit * fraction.
+function trimToFraction(messages, contextLimit, fraction) {
+  let msgs = messages;
+  let removed = 0;
+  const targetChars = contextLimit * fraction * 4;
+  while (msgs.length > 1 && estimateCharsOf(msgs) > targetChars) {
+    msgs = msgs.slice(1);
+    removed += 1;
+  }
+  return { messages: msgs, removed };
 }
 
 async function runTool(sandbox, call) {
@@ -270,6 +309,14 @@ export async function climb({
   driver: providedDriver,
   publicPort = 0,
   adminPort = 0,
+  // Addendum A: the skill the agent gets is sloppy and 5 MB by default for a real run; tests (and
+  // `quaere run --skill-mode clean`) can ask for the tidy 200-400 line document, or a smaller
+  // `skillBytes`, instead.
+  skillMode = 'sloppy',
+  skillBytes = 5_000_000,
+  // Addendum D: proactive context trimming threshold, in estimated tokens. The harness trims
+  // down to 60% of this on a normal breach, 40% on a provider context-length error.
+  contextLimit = 160_000,
 } = {}) {
   const world = makeWorld(seed);
   const runDir = path.join(outDir, String(model || driverName), String(seed), String(attempt));
@@ -292,9 +339,9 @@ export async function climb({
     await adminPost(adminBase, '/admin/rungs', answerKey(world));
 
     await sandbox.writeFile('spec.json', JSON.stringify(toOpenApi(world), null, 2));
-    // toSkill currently takes just `world` (see src/skill.js); the extra options object here is
-    // forward-compatible with Addendum A's `{mode:'sloppy', targetBytes}` and is a no-op today.
-    await sandbox.writeFile('SKILL.md', toSkill(world, { mode: 'sloppy', targetBytes: 5_000_000 }));
+    // Addendum A: sloppy mode buries every rule in megabytes of plausible noise; skill.js
+    // dispatches on `mode` to skill-sloppy.js, which does the burying and owns targetBytes.
+    await sandbox.writeFile('SKILL.md', toSkill(world, { mode: skillMode, targetBytes: skillBytes }));
 
     const promptTemplate = await readFile(PROMPT_URL, 'utf8');
     const systemPrompt = fillPrompt(promptTemplate, {
@@ -311,6 +358,16 @@ export async function climb({
 
     let tokensIn = 0;
     let tokensOut = 0;
+    let tokensNovel = 0;
+    let cacheReadTokens = 0;
+    let trims = 0;
+    // Previous turn's raw usage, for the novel-token delta below; 0 before the first call so
+    // turn 1's whole (empty-history) input is counted as novel, same as any other new content.
+    let prevInputTokens = 0;
+    let prevOutputTokens = 0;
+    // The harness's own running estimate of what's about to be sent: the provider's last-reported
+    // input_tokens once we have one, else null so the pre-first-call check falls back to chars/4.
+    let contextEstimate = null;
     let turns = 0;
     let lastSubmissionCount = 0;
     let noToolStreak = 0;
@@ -322,6 +379,20 @@ export async function climb({
       }
       turns += 1;
 
+      // Addendum D: trim BEFORE sending, using what we already know about the context we're
+      // about to build -- the last real input_tokens the provider reported, or (turn 1, nothing
+      // reported yet) a chars/4 estimate of the messages themselves.
+      const preEstimate = contextEstimate != null ? contextEstimate : estimateTokensOf(messages);
+      if (preEstimate > contextLimit) {
+        const { messages: trimmed, removed } = trimToFraction(messages, contextLimit, 0.6);
+        if (removed > 0) {
+          messages = [...trimmed, { role: 'user', content: trimNote(removed) }];
+          trims += 1;
+          transcript.push({ turn: turns, trim: { removed, reason: 'proactive', contextLimit, note: trimNote(removed) } });
+          contextEstimate = null;
+        }
+      }
+
       // A live provider call is the one step here that fails for reasons that have nothing to do
       // with the climb: 429s, 5xx, and socket resets. Letting those throw out of climb() loses the
       // whole run -- the transcript and result.json below never get written, so a two-hour climb
@@ -331,24 +402,65 @@ export async function climb({
       try {
         stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - (Date.now() - startedAt));
       } catch (err) {
-        stoppedBecause = 'error';
-        driverError = err.message;
-        transcript.push({ turn: turns, error: err.message });
-        break;
+        // Addendum D: a context-length error is not a fall -- trim harder (40%) and retry once;
+        // only if that retry also fails does the run actually end in 'error'.
+        if (CONTEXT_LENGTH_ERROR.test(err.message)) {
+          const { messages: trimmed, removed } = trimToFraction(messages, contextLimit, 0.4);
+          if (removed > 0) {
+            messages = [...trimmed, { role: 'user', content: trimNote(removed) }];
+            trims += 1;
+            transcript.push({
+              turn: turns,
+              trim: { removed, reason: 'context-length-error', contextLimit, note: trimNote(removed) },
+            });
+            contextEstimate = null;
+            try {
+              stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - (Date.now() - startedAt));
+            } catch (err2) {
+              stoppedBecause = 'error';
+              driverError = err2.message;
+              transcript.push({ turn: turns, error: err2.message });
+              break;
+            }
+          } else {
+            stoppedBecause = 'error';
+            driverError = err.message;
+            transcript.push({ turn: turns, error: err.message });
+            break;
+          }
+        } else {
+          stoppedBecause = 'error';
+          driverError = err.message;
+          transcript.push({ turn: turns, error: err.message });
+          break;
+        }
       }
       const usage = stepResult.usage || {};
-      tokensIn += usage.input_tokens || 0;
-      tokensOut += usage.output_tokens || 0;
+      const inputTokens = usage.input_tokens || 0;
+      const outputTokens = usage.output_tokens || 0;
+      tokensIn += inputTokens;
+      tokensOut += outputTokens;
+      cacheReadTokens += usage.cache_read_input_tokens || 0;
+
+      // Budget = novel tokens (Addendum D): the new content this turn added, never the resend of
+      // everything already paid for. `max(0, ...)` also absorbs the entirely expected case where
+      // input_tokens actually DROPS turn over turn because we just trimmed.
+      const novelDelta = outputTokens + Math.max(0, inputTokens - (prevInputTokens + prevOutputTokens));
+      tokensNovel += novelDelta;
+      prevInputTokens = inputTokens;
+      prevOutputTokens = outputTokens;
+      contextEstimate = inputTokens || contextEstimate;
 
       transcript.push({
         turn: turns,
         assistant: stepResult.assistant,
         toolCalls: stepResult.toolCalls,
         usage,
+        novel: novelDelta,
         stop: stepResult.stop,
       });
 
-      if (tokensIn + tokensOut >= budgetTokens) {
+      if (tokensNovel >= budgetTokens) {
         stoppedBecause = 'budget';
         break;
       }
@@ -424,6 +536,13 @@ export async function climb({
       turns,
       tokensIn,
       tokensOut,
+      // Addendum D: tokensNovel is what the 3M budget is measured against; tokensBilled is the
+      // old (pre-Addendum-D) cumulative-resend accounting, kept because it's still what the
+      // provider actually charges for.
+      tokensNovel,
+      tokensBilled: tokensIn + tokensOut,
+      cacheReadTokens,
+      trims,
       wallMs,
       fidelity,
       trap,

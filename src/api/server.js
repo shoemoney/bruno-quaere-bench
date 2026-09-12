@@ -717,9 +717,12 @@ export function createServer({ world, publicPort = 0, adminPort = 0 }) {
       publicServer.once('error', reject);
       publicServer.listen(publicPort, () => resolve());
     });
+    // ADMIN_BIND lets the container answer its mapped admin port from outside (Dockerfile sets
+    // 0.0.0.0); the harness never sets this and so always gets loopback-only, per ARCHITECTURE.md.
+    const adminBind = process.env.ADMIN_BIND || '127.0.0.1';
     await new Promise((resolve, reject) => {
       adminServer.once('error', reject);
-      adminServer.listen(adminPort, '127.0.0.1', () => resolve());
+      adminServer.listen(adminPort, adminBind, () => resolve());
     });
     return {
       publicPort: publicServer.address().port,
