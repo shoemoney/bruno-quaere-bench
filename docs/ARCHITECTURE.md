@@ -635,3 +635,39 @@ Added 2026-09-12 14:45 after the first full native round on ladder 0.3.0.
 - **Provider 403 handling.** A 403 or 401 mid-climb is a provider error: retry once after 30 s,
   then stop with `stoppedBecause: 'provider'` and the status code in `driverError`. Never
   classify it as a fall.
+
+## Addendum I: the key must be derivable from the documents, and a doc-only solver proves it
+
+Added 2026-09-12 14:50 from an audit of the three top falls on ladder 0.3.0 (fable rung 17,
+astra rung 25, deepseek rung 16). All three fell on one undocumented rule.
+
+**What happened.** For a "shrink to N percent" step the answer key computed
+`Math.round(raw)` and then the house grid (`src/ladder/grammar.js:372`). Nothing in the 5 MB
+skill or the spec states the `Math.round` step. Worse, the rung text's own note ("the house
+rounds every size to its usual grid; do that after every resize") describes grid-rounding the
+raw value, which gives a different integer whenever the two cross a grid line. deepseek's notes
+file shows it resolved every decoy correctly, applied the documented rule, and lost. Measured
+over seeds 300-330: 28 percent of all rungs with a percent step are decided by that hidden
+rounding. The reference passes because it calls the same code, so the reference gate is
+structurally blind to this class of bug, exactly as it was to the Addendum G float bug.
+
+**Rules.**
+1. **The key follows the documented rule.** A percent resize target is
+   `roundToGrid(snap6(raw), roundTo, roundMode)`, the same function the API applies. Remove the
+   hidden `Math.round`. `ROUND_NOTE` in `rung.js` then reads true as written. Rebaseline.
+2. **Generator guard.** Reject any percent whose two plausible roundings disagree
+   (`grid(round(raw)) !== grid(raw)`) and redraw, so no rung ever turns on that ambiguity even
+   if a future rule change reintroduces it.
+3. **The sloppy skill is a superset of the clean skill.** `skill-sloppy.js` currently re-emits
+   scalar facts only and drops every prose section, including the entire publish-signing
+   recipe (`X-Signature`, `X-Timestamp`, hmac: zero hits in 5 MB), which makes rungs 60+
+   unsolvable from docs. It must embed each `##` section body of the clean skill verbatim as an
+   intact block inside the noise. Test: every clean section body appears verbatim in the sloppy
+   output, and `truthTable` covers the prose rules too.
+4. **A doc-only solver gates every rung.** `src/ladder/docsolver.js` computes each rung's
+   expected descriptor from `truthTable(world)`, the spec, and the rung text only, with no
+   import from `grammar.js`, `rung.js`, or `media.js` internals beyond the public render and
+   descriptor shapes. It is written by a different agent than the generator, from the docs. Gate:
+   for seeds 1..20 and every rung, `docsolver` equals the key, or the build is red. This is the
+   check that would have caught both the float bug and this one before a round burned money.
+5. **Version bump to 0.4.0 and a whole-round rerun.** All 0.3.0 rows are superseded.
