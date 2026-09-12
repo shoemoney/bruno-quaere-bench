@@ -486,3 +486,59 @@ Never the `:batch`, `-pro`, or `multi-agent` variants.
   at or above 90 percent of `--context-limit`, never after; (2) any 400 or 413 from a call made
   at or above 85 percent of the limit is treated as context-length: trim to 40 percent and retry
   once; (3) fake-driver tests for both. That run is voided and rerun.
+
+## Addendum F: native CLI drivers, direct provider keys, OpenRouter only as a last resort
+
+Added 2026-09-12 07:05. Jeremy's ruling: run each model through its own agent CLI installed on
+this Mac, with provider keys from aigate for labs that have no CLI, and OpenRouter only for a lab
+that is in neither. The benchmark now measures model plus harness product, which is what a user
+actually gets. All smoke-tested headless from an isolated home on 2026-09-12 07:00.
+
+| Model | Driver | Invocation (cwd = sandbox) | Isolation | Usage source |
+|---|---|---|---|---|
+| claude-fable-5.1 | `cli:ai` | `AI_NO_RTK=1 ai --no-chrome -p "<prompt>" --model claude-fable-5-1 --output-format json` | `CLAUDE_CONFIG_DIR=<fresh dir>` (the aigate warden still authenticates) | result JSON `usage` + `modelUsage` + `total_cost_usd` |
+| gpt-6-astra | `cli:codex` | `codex exec --json -m gpt-6-astra -C <sandbox> --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "<prompt>"` | `CODEX_HOME=<fresh dir>` containing a copy of `~/.codex/auth.json` | `turn.completed.usage` events |
+| qwen3.8-max | `cli:qwen` | `command qwen --approval-mode yolo -o json -m qwen3.8-max "<prompt>"` with `~/.qwen/.env` sourced | `HOME=<fresh dir>`; `QWEN_CODE_SUPPRESS_YOLO_WARNING=1` | result JSON `usage`, `stats.models` |
+| gemini-3.8-flash | `cli:gemini` | `gemini -y -o json -m gemini-3.8-flash -p "<prompt>"` | `HOME=<fresh dir>`, `GEMINI_API_KEY` from aigate `google`, `GEMINI_CLI_TRUST_WORKSPACE=true` | `stats.models.<model>.tokens` |
+| kimi-k3 | `cli:kimi` | `kimi -p "<prompt>" --output-format stream-json` (`-p` cannot combine with `-y`/`--auto`; prompt mode already runs tools) | `HOME=<fresh dir>` with `~/.kimi/credentials` and `~/.kimi/device_id` copied in | stream has tool calls but no usage; read the session file under `<HOME>/.kimi/sessions` after exit, else estimate chars/4 and mark `usageEstimated: true` |
+| grok-4.6 | `openai` driver | `baseUrl=https://api.x.ai/v1`, key aigate `xai`, model id verified against `GET /v1/models` | n/a | API usage |
+| deepseek-v4.1-flash | `openai` driver | `baseUrl=https://api.deepseek.com`, key aigate `deepseek`, model id verified against `GET /v1/models` | n/a | API usage |
+
+Gemini smoke test reported `gemini-3.5-flash` in `stats.models` when asked for `gemini-3.8-flash`.
+Every adapter records the model the tool actually reports as `modelVersion`; if it differs from
+the requested id the run is marked `modelMismatch: true` and the operator must resolve the alias
+before the run counts. Never silently accept a fallback model.
+
+### How a CLI climb works
+
+- The harness writes into the sandbox: `TASK.md` (the fixed prompt: the one rule, base URL, api
+  key, how to fetch `/rungs/current`, how to submit, one submission per rung, "you are the only
+  agent, do not delegate"), `spec.json`, and `HOUSE-RULES.md` (the sloppy skill; not named
+  SKILL.md so no CLI auto-loads 5 MB into context). The `-p` prompt is one line: read TASK.md and
+  begin.
+- `sandbox/bin/bru` is a logging shim first on PATH: appends `{ts, argv}` to `turns.jsonl` then
+  execs the real bru. Turns = shim lines. PATH keeps the original entries after it so the CLI's
+  own runtime resolves.
+- Rule enforcement is by detection, not prevention: the API's admin log records `User-Agent`
+  per request. Anything other than `bruno-runtime/<version>` is a violation. `RunResult.violations`
+  counts them and the board shows the column; a run with violations is published with the
+  number, not disqualified silently.
+- Supervision: the harness polls admin `/submissions` every 2 s while the CLI runs. On a failed
+  submission it kills the process tree (`stoppedBecause: 'fail'`). If the CLI exits on its own
+  before falling, the harness resumes the same session with "continue; the current rung is N"
+  (claude `--resume <session_id>`, codex `exec resume <id>`, kimi `-S <id>`, qwen and gemini
+  `--resume` where supported, otherwise a fresh session with the note) and counts it in
+  `RunResult.resumes`. Three resumes with no new submission is `stoppedBecause: 'stalled'`.
+- Budget: `tokensBilled` = reported input + output; `tokensNovel` = (input − cached) + output
+  from the tool's own usage. The 3M cap applies to novel. Wall cap `--wall-ms` default 3 h.
+- Trims are the CLI's own compaction; not observable uniformly, so the column is `resumes`.
+
+### Files
+
+`src/harness/cli/{ai,codex,qwen,gemini,kimi}.js` each export
+`{ name, build({sandbox, prompt, model, home}) -> {cmd, args, env}, parseUsage(stdout, home) ->
+{tokensIn, tokensCached, tokensOut, modelVersion, usageEstimated}, resume(sessionId) }`,
+`src/harness/cli/index.js` dispatches, `src/harness/supervise.js` runs a process under the
+polling loop, `bin/quaere.js run --driver cli --cli <name>`. Tests: adapter build() and
+parseUsage() on captured fixtures; a live smoke per CLI that runs rung 0 only, skipped when the
+binary is missing.
