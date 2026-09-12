@@ -1,0 +1,88 @@
+info:
+  name: 01 - Auth Token And Refresh
+  type: http
+  seq: 1
+  tags:
+    - auth
+
+http:
+  method: POST
+  url: "{{baseUrl}}/auth/token"
+  headers:
+    - name: content-type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "api_key": "{{apiKey}}"
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("issues a bearer token with the shape auth/token promises", function() {
+          expect(res.status).to.equal(200);
+          expect(res.body.accessToken).to.be.a('string');
+          expect(res.body.tokenType).to.equal('bearer');
+          expect(res.body.expiresIn).to.be.a('number');
+          expect(res.body.refreshToken).to.be.a('string');
+        });
+
+        const firstAccessToken = res.body.accessToken;
+        const firstRefreshToken = res.body.refreshToken;
+        bru.setVar('token', firstAccessToken);
+        bru.setVar('refreshToken', firstRefreshToken);
+
+        // Every request after this one needs a workspace id. There is no "list all workspaces
+        // and pick one" step elsewhere in the ladder's behaviors, so it is discovered here, once,
+        // right after auth, and handed down via bru.setVar like the token itself.
+        const wsRes = await fetch(bru.getEnvVar('baseUrl') + '/shops', {
+          headers: { Authorization: 'Bearer ' + firstAccessToken }
+        });
+        const wsBody = await wsRes.json();
+        test("can list workspaces with the fresh token", function() {
+          expect(wsRes.status).to.equal(200);
+          expect(wsBody.data.length).to.be.greaterThan(0);
+        });
+        bru.setVar('workspaceId', wsBody.data[0].id);
+
+        // Refresh cadence: trade the refresh token for a new pair. The new access token must
+        // differ from the first (a refresh that silently reissues the same token would hide a
+        // real bug), and every later request should use the refreshed one.
+        const refreshRes = await fetch(bru.getEnvVar('baseUrl') + '/auth/refresh', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ refreshToken: firstRefreshToken })
+        });
+        const refreshBody = await refreshRes.json();
+        test("refresh trades the refresh token for a new bearer pair", function() {
+          expect(refreshRes.status).to.equal(200);
+          expect(refreshBody.accessToken).to.be.a('string');
+          expect(refreshBody.accessToken).to.not.equal(firstAccessToken);
+          expect(refreshBody.refreshToken).to.not.equal(firstRefreshToken);
+        });
+        bru.setVar('token', refreshBody.accessToken);
+        bru.setVar('refreshToken', refreshBody.refreshToken);
+
+        // Rotation: the spent refresh token must not work a second time.
+        const reuseRes = await fetch(bru.getEnvVar('baseUrl') + '/auth/refresh', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ refreshToken: firstRefreshToken })
+        });
+        test("a spent refresh token is rejected on reuse (rotation)", function() {
+          expect(reuseRes.status).to.equal(401);
+        });
+
+docs: |-
+  Behavior #2 (Auth lifecycle): bearer token issuance, refresh, and single-use refresh-token
+  rotation. Also discovers the seed's first workspace id (via the fresh token) and stashes it
+  as `workspaceId`, since every later request needs one and there is no other natural place to
+  get it. `token` and `refreshToken` end this request pointing at the REFRESHED pair, not the
+  original one, so request 02 onward are exercising a token that has already survived a refresh.

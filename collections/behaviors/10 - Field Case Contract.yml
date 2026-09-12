@@ -1,0 +1,38 @@
+info:
+  name: 10 - Field Case Contract
+  type: http
+  seq: 10
+  tags:
+    - contract
+
+http:
+  method: GET
+  url: "{{baseUrl}}/shops/{{workspaceId}}"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("the live API's real field casing, spec lies aside", function() {
+          expect(res.status).to.equal(200);
+          // world.naming is 'camel' for seed 1 and 'created_at' is not one of the
+          // namingExceptions (api_key, file_name, project_id), so the wire field is camelCase.
+          // spec.js's fieldCase trap can make the *generated OpenAPI doc* claim the opposite
+          // case for some field; the running API never lies, only the document does. A client
+          // that trusted the spec's case over the API's actual response breaks here.
+          expect(res.body.createdAt).to.be.a('string');
+          expect(res.body).to.not.have.property('created_at');
+        });
+
+docs: |-
+  Behavior #11 (Contract testing / fieldCase trap): asserts the API's real field casing directly,
+  which is the only way to catch spec.js's fieldCase lie — the spec text itself isn't fetched by
+  this collection, only the live wire shape, exactly as an agent working strictly from `bru`
+  responses would see it.

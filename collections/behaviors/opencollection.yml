@@ -1,0 +1,33 @@
+opencollection: 1.0.0
+
+info:
+  name: Bruno QUAERE behaviors
+  version: "1"
+
+docs:
+  content: |-
+    Proves the sixteen API behaviors from docs/SPEC.md against a live `quaere serve --seed 1`
+    instance. Every request has a test that would fail if the behavior it names broke. Requests
+    are numbered so `bru run -r` executes them in a chain: 01 gets a bearer token and stashes it
+    in a runtime variable, later requests read that variable (and ones set by earlier requests)
+    instead of re-authenticating.
+
+    This collection is NOT seed-agnostic: environments/local.yml hardcodes seed 1's api key and
+    HMAC secret (world.auth.apiKey / world.auth.secret from `makeWorld(1)`), and every request URL
+    hardcodes seed 1's vocabulary nouns (workspace -> "shops", project -> "sessions",
+    asset -> "snapshots", lora library -> "catalog") since those are only resolved at seed time.
+    Everything else (workspace/project/asset ids, job ids, cursors) is discovered at runtime via
+    fetch() in pre-request scripts and bru.setVar, never hardcoded, so the collection survives a
+    fresh server restart without caring about creation-order counters.
+
+    HMAC signing (request 15) needs Node's real `crypto.createHmac`, which only the `developer`
+    Bruno sandbox exposes (`--sandbox safe`, the CLI default, shims only randomBytes/getRandomValues,
+    no HMAC/digest). Several other requests also use top-level `await fetch(...)` in pre-request
+    scripts to do setup calls without spending a second declared request. Run this collection with
+    `--sandbox developer` (scripts/run-behaviors.sh always does).
+bundled: false
+extensions:
+  bruno:
+    ignore:
+      - node_modules
+      - .git

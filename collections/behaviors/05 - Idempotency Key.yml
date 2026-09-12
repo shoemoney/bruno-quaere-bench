@@ -1,0 +1,74 @@
+info:
+  name: 05 - Idempotency Key
+  type: http
+  seq: 5
+  tags:
+    - idempotency
+
+http:
+  method: POST
+  url: "{{baseUrl}}/images"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: Authorization
+      value: "Bearer {{token}}"
+    - name: Idempotency-Key
+      value: quaere-behaviors-idem-1
+  body:
+    type: json
+    data: |-
+      {
+        "width": 64,
+        "height": 64,
+        "background": { "color": "#204060" },
+        "shapes": [
+          { "type": "circle", "x": 10, "y": 10, "r": 5, "color": "#ffffff", "opacity": 1 }
+        ]
+      }
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "201"
+  scripts:
+    - type: tests
+      code: |-
+        test("creates an image asset", function() {
+          expect(res.status).to.equal(201);
+          expect(res.body.id).to.be.a('string');
+        });
+        const firstId = res.body.id;
+
+        const base = bru.getEnvVar('baseUrl');
+        const headers = {
+          'content-type': 'application/json',
+          Authorization: 'Bearer ' + bru.getVar('token'),
+          'Idempotency-Key': 'quaere-behaviors-idem-1'
+        };
+        const sameBody = JSON.stringify({
+          width: 64, height: 64,
+          background: { color: '#204060' },
+          shapes: [{ type: 'circle', x: 10, y: 10, r: 5, color: '#ffffff', opacity: 1 }]
+        });
+
+        const replayRes = await fetch(base + '/images', { method: 'POST', headers, body: sameBody });
+        const replayBody = await replayRes.json();
+        test("same Idempotency-Key replays the original response, not a duplicate", function() {
+          expect(replayRes.status).to.equal(201);
+          expect(replayBody.id).to.equal(firstId);
+        });
+
+        const noKeyHeaders = { ...headers };
+        delete noKeyHeaders['Idempotency-Key'];
+        const freshRes = await fetch(base + '/images', { method: 'POST', headers: noKeyHeaders, body: sameBody });
+        const freshBody = await freshRes.json();
+        test("the same body without a key creates a genuinely new asset", function() {
+          expect(freshRes.status).to.equal(201);
+          expect(freshBody.id).to.not.equal(firstId);
+        });
+
+docs: |-
+  Behavior #3 (Idempotency): the same `Idempotency-Key` on POST returns the exact same resource
+  (same id, same original status) on replay; the same body with no key at all creates a new one.

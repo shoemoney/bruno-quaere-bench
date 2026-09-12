@@ -330,7 +330,11 @@ export const routes = [
     requestSchema: {
       type: 'object',
       required: ['ids', 'mode'],
-      properties: { ids: { type: 'array', items: { type: 'string' } }, mode: { type: 'string', enum: ['layer', 'mix', 'sequence'] } },
+      properties: {
+        ids: { type: 'array', items: { type: 'string' } },
+        mode: { type: 'string', enum: ['layer', 'mix', 'sequence'] },
+        opacity_step: { type: 'number' },
+      },
     },
     responseSchema: { type: 'object', properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' } } },
     behaviors: [],

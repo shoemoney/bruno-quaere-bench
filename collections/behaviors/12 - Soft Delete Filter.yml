@@ -1,0 +1,68 @@
+info:
+  name: 12 - Soft Delete Filter
+  type: http
+  seq: 12
+  tags:
+    - filters
+
+http:
+  method: GET
+  url: "{{baseUrl}}/shops/{{softDeleteWorkspaceId}}/sessions/{{softDeleteProjectId}}/snapshots?page_size=25"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        // Use the OTHER seeded workspace (index 1, not the one every earlier request already
+        // read from) so deleting one of its assets can't collide with anything upstream.
+        const base = bru.getEnvVar('baseUrl');
+        const auth = { Authorization: 'Bearer ' + bru.getVar('token') };
+
+        const wsRes = await fetch(base + '/shops', { headers: auth });
+        const wsBody = await wsRes.json();
+        const workspaceId = wsBody.data[1].id;
+
+        const projRes = await fetch(base + '/shops/' + workspaceId + '/sessions', { headers: auth });
+        const projBody = await projRes.json();
+        const projectId = projBody.data[0].id;
+
+        const listUrl = base + '/shops/' + workspaceId + '/sessions/' + projectId + '/snapshots?page_size=25';
+        const beforeRes = await fetch(listUrl, { headers: auth });
+        const beforeBody = await beforeRes.json();
+        const toDeleteId = beforeBody.data[0].id;
+
+        const deleteRes = await fetch(base + '/snapshots/' + toDeleteId, { method: 'DELETE', headers: auth });
+
+        const withDeletedRes = await fetch(listUrl + '&include_deleted=true', { headers: auth });
+        const withDeletedBody = await withDeletedRes.json();
+
+        bru.setVar('softDeleteWorkspaceId', workspaceId);
+        bru.setVar('softDeleteProjectId', projectId);
+        bru.setVar('softDeletedAssetId', toDeleteId);
+        bru.setVar('softDeleteStatus', String(deleteRes.status));
+        bru.setVar('softDeleteIdsWithDeleted', JSON.stringify(withDeletedBody.data.map((a) => a.id)));
+    - type: tests
+      code: |-
+        const deletedId = bru.getVar('softDeletedAssetId');
+        const idsWithDeleted = JSON.parse(bru.getVar('softDeleteIdsWithDeleted'));
+
+        test("the delete underneath this test actually happened", function() {
+          expect(bru.getVar('softDeleteStatus')).to.equal('204');
+        });
+        test("default listing hides the soft-deleted asset", function() {
+          expect(res.status).to.equal(200);
+          const ids = res.body.data.map((a) => a.id);
+          expect(ids).to.not.include(deletedId);
+        });
+        test("include_deleted=true reveals it again", function() {
+          expect(idsWithDeleted).to.include(deletedId);
+        });
+
+docs: |-
+  Behavior #16 (Filters): a soft-deleted asset disappears from the default project asset listing
+  and reappears with `?include_deleted=true`. Runs against workspace index 1 (never touched by
+  any other request in this collection) so the delete has no effect on fixtures other requests
+  still rely on.

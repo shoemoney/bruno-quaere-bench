@@ -1,0 +1,161 @@
+#!/usr/bin/env node
+// quaere: serve, spec, skill, rung, reference, run, board. Minimal arg parsing, zero deps.
+
+import { makeWorld } from '../src/world.js';
+import { createServer } from '../src/api/server.js';
+import { toOpenApi } from '../src/spec.js';
+import { toSkill } from '../src/skill.js';
+import { makeRung } from '../src/ladder/rung.js';
+import { climb as referenceClimb, answerKey } from '../src/ladder/reference.js';
+import { climb as harnessClimb } from '../src/harness/run.js';
+import { collectResults, renderBoard } from '../src/harness/board.js';
+
+// parseArgs(['--seed', '42', '--answer', 'runs/']) -> {seed:'42', answer:true, _:['runs/']}
+export function parseArgs(argv) {
+  const args = { _: [] };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith('--')) {
+        args[key] = next;
+        i += 1;
+      } else {
+        args[key] = true;
+      }
+    } else {
+      args._.push(a);
+    }
+  }
+  return args;
+}
+
+function seedFrom(args) {
+  return args.seed !== undefined ? Number(args.seed) : 1;
+}
+
+async function cmdServe(args) {
+  const world = makeWorld(seedFrom(args));
+  const server = createServer({
+    world,
+    publicPort: args.port !== undefined ? Number(args.port) : 8080,
+    adminPort: args['admin-port'] !== undefined ? Number(args['admin-port']) : 8081,
+  });
+  const ports = await server.start();
+  console.log(`quaere serving seed ${world.seed}`);
+  console.log(`public  http://127.0.0.1:${ports.publicPort}`);
+  console.log(`admin   http://127.0.0.1:${ports.adminPort} (loopback only)`);
+  console.log(`api key ${world.auth.apiKey}`);
+}
+
+function cmdSpec(args) {
+  const world = makeWorld(seedFrom(args));
+  process.stdout.write(`${JSON.stringify(toOpenApi(world), null, 2)}\n`);
+}
+
+function cmdSkill(args) {
+  const world = makeWorld(seedFrom(args));
+  process.stdout.write(`${toSkill(world)}\n`);
+}
+
+function cmdRung(args) {
+  const world = makeWorld(seedFrom(args));
+  const n = args.n !== undefined ? Number(args.n) : 0;
+  const rung = makeRung(world, n);
+  if (args.answer) {
+    process.stdout.write(
+      `${JSON.stringify({ n: rung.n, text: rung.text, plan: rung.plan, expectedDescriptors: rung.expectedDescriptors }, null, 2)}\n`,
+    );
+  } else {
+    console.log(`Rung ${rung.n}`);
+    console.log(rung.text);
+  }
+}
+
+async function cmdReference(args) {
+  const world = makeWorld(seedFrom(args));
+  const server = createServer({ world, publicPort: 0, adminPort: 0 });
+  const ports = await server.start();
+  try {
+    await fetch(`http://127.0.0.1:${ports.adminPort}/admin/rungs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(answerKey(world)),
+    });
+    const from = args.from !== undefined ? Number(args.from) : 0;
+    const to = args.to !== undefined ? Number(args.to) : 99;
+    const result = await referenceClimb({
+      world,
+      baseUrl: `http://127.0.0.1:${ports.publicPort}`,
+      apiKey: world.auth.apiKey,
+      from,
+      to,
+    });
+    console.log(`passed ${result.passed.length}/${to - from + 1}`);
+    if (result.failed.length > 0) {
+      console.log('failed:');
+      for (const f of result.failed) console.log(`  rung ${f.n}: ${f.reason}`);
+    }
+    process.exitCode = result.failed.length > 0 ? 1 : 0;
+  } finally {
+    await server.stop();
+  }
+}
+
+async function cmdRun(args) {
+  const attempts = args.attempts !== undefined ? Number(args.attempts) : 1;
+  const results = [];
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await harnessClimb({
+      driverName: args.driver,
+      model: args.model,
+      seed: seedFrom(args),
+      attempt,
+      budgetTokens: args.budget !== undefined ? Number(args.budget) : undefined,
+      maxTurns: args['max-turns'] !== undefined ? Number(args['max-turns']) : undefined,
+      outDir: args.out || 'runs',
+    });
+    results.push(result);
+    console.log(JSON.stringify(result));
+  }
+  return results;
+}
+
+async function cmdBoard(args) {
+  const dir = args._[0] || 'runs';
+  const results = await collectResults(dir);
+  process.stdout.write(renderBoard(results));
+}
+
+async function main() {
+  const [, , cmd, ...rest] = process.argv;
+  const args = parseArgs(rest);
+
+  const commands = {
+    serve: cmdServe,
+    spec: cmdSpec,
+    skill: cmdSkill,
+    rung: cmdRung,
+    reference: cmdReference,
+    run: cmdRun,
+    board: cmdBoard,
+  };
+
+  const handler = commands[cmd];
+  if (!handler) {
+    console.error('usage: quaere <serve|spec|skill|rung|reference|run|board> [options]');
+    process.exitCode = 1;
+    return;
+  }
+  await handler(args);
+}
+
+// Only run when invoked directly (not when imported by tests).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(err.stack || err.message);
+    process.exitCode = 1;
+  });
+}

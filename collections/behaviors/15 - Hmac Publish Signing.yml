@@ -1,0 +1,60 @@
+info:
+  name: 15 - Hmac Publish Signing
+  type: http
+  seq: 15
+  tags:
+    - signing
+
+http:
+  method: POST
+  url: "{{baseUrl}}/shops/{{workspaceId}}/sessions/{{smProjectId}}/publish"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        // world.hmac.canon is 'ts+method+path': sign `${ts}${method}${path}` with the api
+        // secret, sha256, hex. `crypto` here is node:crypto (require works because this
+        // collection is run with --sandbox developer; the default 'safe' sandbox only shims
+        // crypto.randomBytes/getRandomValues, no HMAC).
+        const crypto = require('crypto');
+        const path = '/shops/' + bru.getVar('workspaceId') + '/sessions/' + bru.getVar('smProjectId') + '/publish';
+        const ts = String(Math.floor(Date.now() / 1000));
+        const secret = bru.getEnvVar('hmacSecret');
+        const signature = crypto.createHmac('sha256', secret).update(ts + 'POST' + path).digest('hex');
+
+        // Prove the header is actually checked, before spending the one real publish this
+        // project's state machine allows: a garbage signature against the same timestamp and
+        // path must be rejected, and rejected before the state-machine check even runs (this
+        // project is still only 'rendered' pending the request below, not yet published).
+        const base = bru.getEnvVar('baseUrl');
+        const badRes = await fetch(base + path, {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + bru.getVar('token'),
+            'X-Timestamp': ts,
+            'X-Signature': 'not-a-real-signature'
+          }
+        });
+        bru.setVar('publishBadSignatureStatus', String(badRes.status));
+
+        req.setHeader('X-Timestamp', ts);
+        req.setHeader('X-Signature', signature);
+    - type: tests
+      code: |-
+        test("an invalid signature is rejected before publish is even attempted", function() {
+          expect(bru.getVar('publishBadSignatureStatus')).to.equal('401');
+        });
+        test("the correctly signed request publishes the rendered project", function() {
+          expect(res.status).to.equal(200);
+          expect(res.body.status).to.equal('published');
+        });
+
+docs: |-
+  Behavior #15 (Request signing): POST .../publish requires `X-Timestamp` plus `X-Signature`,
+  an HMAC-SHA256 over `ts+method+path` keyed by the API secret (world.hmac). Completes the
+  project lifecycle started in request 13 and continued in request 14 (still 'rendered' when
+  this request starts).

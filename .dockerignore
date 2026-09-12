@@ -1,0 +1,12 @@
+.git
+node_modules
+runs/
+test/
+collections/
+docs/*.png
+*.log
+.env
+.remember/
+Dockerfile
+.dockerignore
+npm-debug.log*

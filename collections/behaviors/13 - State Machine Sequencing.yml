@@ -1,0 +1,70 @@
+info:
+  name: 13 - State Machine Sequencing
+  type: http
+  seq: 13
+  tags:
+    - sequencing
+
+http:
+  method: GET
+  url: "{{baseUrl}}/shops/{{workspaceId}}/sessions/{{smProjectId}}"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        // A brand new project, owned by this request and the two after it (14, 15), so its
+        // draft -> composed -> rendered -> published walk is never disturbed by anything else.
+        const base = bru.getEnvVar('baseUrl');
+        const auth = { Authorization: 'Bearer ' + bru.getVar('token') };
+
+        const createRes = await fetch(base + '/shops/' + bru.getVar('workspaceId') + '/sessions', {
+          method: 'POST',
+          headers: { ...auth, 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'behaviors-state-machine' })
+        });
+        const createBody = await createRes.json();
+        const projectId = createBody.id;
+        bru.setVar('smProjectId', projectId);
+        bru.setVar('smCreateStatus', String(createRes.status));
+        bru.setVar('smCreateBodyStatus', createBody.status);
+
+        const projectPath = base + '/shops/' + bru.getVar('workspaceId') + '/sessions/' + projectId;
+
+        const renderTooEarly = await fetch(projectPath + '/render', { method: 'POST', headers: auth });
+        bru.setVar('smRenderBeforeComposeStatus', String(renderTooEarly.status));
+
+        const composeRes = await fetch(projectPath + '/compose', {
+          method: 'POST',
+          headers: { ...auth, 'content-type': 'application/json' },
+          body: JSON.stringify({ assetIds: [] })
+        });
+        const composeBody = await composeRes.json();
+        bru.setVar('smComposeStatus', String(composeRes.status));
+        bru.setVar('smComposeBodyStatus', composeBody.status);
+    - type: tests
+      code: |-
+        test("a fresh project starts life as draft", function() {
+          expect(bru.getVar('smCreateStatus')).to.equal('201');
+          expect(bru.getVar('smCreateBodyStatus')).to.equal('draft');
+        });
+        test("render before compose is rejected with 409", function() {
+          expect(bru.getVar('smRenderBeforeComposeStatus')).to.equal('409');
+        });
+        test("compose from draft succeeds", function() {
+          expect(bru.getVar('smComposeStatus')).to.equal('200');
+          expect(bru.getVar('smComposeBodyStatus')).to.equal('composed');
+        });
+        test("the project's own GET agrees it is now composed", function() {
+          expect(res.status).to.equal(200);
+          expect(res.body.status).to.equal('composed');
+        });
+
+docs: |-
+  Behavior #13 (Sequencing): draft -> composed -> rendered -> published, out-of-order calls
+  rejected with 409. This request creates the project and proves the draft/compose half; requests
+  14 (render) and 15 (publish) continue the SAME project (`smProjectId`) through the rest of the
+  chain.

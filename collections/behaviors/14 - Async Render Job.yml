@@ -1,0 +1,51 @@
+info:
+  name: 14 - Async Render Job
+  type: http
+  seq: 14
+  tags:
+    - async
+
+http:
+  method: POST
+  url: "{{baseUrl}}/shops/{{workspaceId}}/sessions/{{smProjectId}}/render"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "202"
+    - expression: res.headers.location
+      operator: isDefined
+  scripts:
+    - type: tests
+      code: |-
+        test("render on a composed project is 202 with a Location", function() {
+          expect(res.status).to.equal(202);
+          expect(res.headers.location).to.be.a('string');
+          expect(res.headers.location.startsWith('/jobs/')).to.equal(true);
+        });
+
+        const base = bru.getEnvVar('baseUrl');
+        const auth = { Authorization: 'Bearer ' + bru.getVar('token') };
+        const jobUrl = base + res.headers.location;
+
+        const poll1 = await (await fetch(jobUrl, { headers: auth })).json();
+        const poll2 = await (await fetch(jobUrl, { headers: auth })).json();
+        const poll3 = await (await fetch(jobUrl, { headers: auth })).json();
+        const poll4 = await (await fetch(jobUrl, { headers: auth })).json();
+
+        test("the job advances queued -> running -> done and then holds", function() {
+          expect(poll1.status).to.equal('queued');
+          expect(poll2.status).to.equal('running');
+          expect(poll3.status).to.equal('done');
+          expect(poll4.status).to.equal('done');
+        });
+
+docs: |-
+  Behavior #6 (Long-running operations): POST .../render returns 202 with a `Location` pointing
+  at the job; polling that job advances queued -> running -> done, once per poll, then holds at
+  done. A client that read `data` off the render response instead of following `Location` would
+  have nothing to poll.

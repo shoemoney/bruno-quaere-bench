@@ -1,0 +1,54 @@
+info:
+  name: 02 - Discovery Links
+  type: http
+  seq: 2
+  tags:
+    - discovery
+
+http:
+  method: GET
+  url: "{{baseUrl}}/shops/{{workspaceId}}"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+    - expression: res.body.links
+      operator: isDefined
+  scripts:
+    - type: tests
+      code: |-
+        test("workspace response carries a links block", function() {
+          expect(res.status).to.equal(200);
+          expect(res.body.links).to.be.an('object');
+          expect(res.body.links.loras).to.be.a('string');
+          expect(res.body.links.loras.startsWith('/')).to.equal(true);
+        });
+
+        // The lora library route is deliberately absent from routes[].inSpec (loras.list has
+        // inSpec: false): the ONLY way to it is this links block. Follow it for real, rather than
+        // trusting a hardcoded "/catalog" in this collection.
+        const lorasRes = await fetch(bru.getEnvVar('baseUrl') + res.body.links.loras, {
+          headers: { Authorization: 'Bearer ' + bru.getVar('token') }
+        });
+        const lorasBody = await lorasRes.json();
+        test("following the discovered link reaches a real lora library", function() {
+          expect(lorasRes.status).to.equal(200);
+          expect(Array.isArray(lorasBody.data)).to.equal(true);
+          expect(lorasBody.data.length).to.be.greaterThan(0);
+          for (const lora of lorasBody.data) {
+            expect(lora.id).to.be.a('string');
+            expect(lora.name).to.be.a('string');
+            expect(lora.op).to.be.a('string');
+          }
+        });
+
+docs: |-
+  Behavior #7 (Discovery): the lora library is reachable only via the `links` block on
+  GET /{workspaces}/{id}, never from the spec (routes.js marks loras.list inSpec: false). This
+  request never hardcodes "/catalog" in a URL; it reads the link out of the response and follows
+  it, so it would fail exactly the way a model that only read the spec would fail.

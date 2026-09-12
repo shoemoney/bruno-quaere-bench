@@ -1,0 +1,47 @@
+info:
+  name: 07 - Content Negotiation
+  type: http
+  seq: 7
+  tags:
+    - headers
+
+http:
+  method: GET
+  url: "{{baseUrl}}/shops/{{workspaceId}}/sessions/{{sampleProjectId}}/snapshots?page_size=5"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+    - name: Accept
+      value: text/csv
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("Accept: text/csv returns CSV", function() {
+          expect(res.status).to.equal(200);
+          expect(res.headers['content-type']).to.include('text/csv');
+          expect(String(res.body).split('\n')[0].trim()).to.equal(
+            'id,kind,hash,etag,display_name,created_at,updated_at'
+          );
+        });
+
+        const base = bru.getEnvVar('baseUrl');
+        const url = base + '/shops/' + bru.getVar('workspaceId') + '/sessions/' + bru.getVar('sampleProjectId') + '/snapshots?page_size=5';
+        const jsonRes = await fetch(url, {
+          headers: { Authorization: 'Bearer ' + bru.getVar('token'), Accept: 'application/json' }
+        });
+        const jsonBody = await jsonRes.json();
+        test("the same path without an Accept override still returns JSON", function() {
+          expect(jsonRes.status).to.equal(200);
+          expect(jsonRes.headers.get('content-type')).to.include('application/json');
+          expect(Array.isArray(jsonBody.data)).to.equal(true);
+        });
+
+docs: |-
+  Behavior #8 (Headers / content negotiation): the exact same path serves JSON or CSV, chosen
+  purely by the `Accept` header, with no separate `.csv` route.

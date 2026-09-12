@@ -1,0 +1,34 @@
+info:
+  name: 09 - Deprecated Redirect
+  type: http
+  seq: 9
+  tags:
+    - deprecation
+
+http:
+  method: GET
+  url: "{{baseUrl}}/v1/pictures"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+settings:
+  followRedirects: false
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "301"
+  scripts:
+    - type: tests
+      code: |-
+        test("the deprecated spec-listed path 301s to the new one", function() {
+          expect(res.status).to.equal(301);
+          expect(res.headers.location).to.equal('/images');
+        });
+
+docs: |-
+  Behavior #10 (Deprecation): `/v1/pictures` (still `inSpec: true`, per world.deprecated) 301s to
+  `/images`. `followRedirects: false` on this request so the 301 itself is what gets asserted,
+  rather than silently following it and asserting on /images's own response.

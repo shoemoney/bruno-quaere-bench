@@ -1,0 +1,45 @@
+info:
+  name: 08 - Problem Json Validation
+  type: http
+  seq: 8
+  tags:
+    - errors
+
+http:
+  method: POST
+  url: "{{baseUrl}}/shops/{{workspaceId}}/sessions"
+  headers:
+    - name: content-type
+      value: application/json
+    - name: Authorization
+      value: "Bearer {{token}}"
+  body:
+    type: json
+    data: "{}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "422"
+    - expression: "res.headers['content-type']"
+      operator: contains
+      value: problem+json
+  scripts:
+    - type: tests
+      code: |-
+        test("a missing required field is a 422 problem+json body", function() {
+          expect(res.status).to.equal(422);
+          expect(res.headers['content-type']).to.include('application/problem+json');
+          expect(res.body.type).to.equal('about:blank');
+          expect(res.body.title).to.equal('Unprocessable Entity');
+          expect(res.body.status).to.equal(422);
+          expect(Array.isArray(res.body.errors)).to.equal(true);
+          expect(res.body.errors.length).to.be.greaterThan(0);
+          expect(res.body.errors[0].field).to.equal('name');
+          expect(res.body.errors[0].message).to.be.a('string');
+        });
+
+docs: |-
+  Behavior #9 (Error handling): every error is application/problem+json, and a 422 carries
+  field-level detail in `errors: [{field, message}]` rather than a bare string.

@@ -1,0 +1,11 @@
+name: local
+variables:
+  - name: baseUrl
+    value: http://127.0.0.1:8080
+    description: quaere serve --seed 1 --port 8080 --admin-port 8081
+  - name: apiKey
+    value: key_bffb137cc47bfbc6acccf763
+    description: makeWorld(1).auth.apiKey - seed 1 is hardcoded, this collection proves the server
+  - name: hmacSecret
+    value: sec_59cf92114e2cd386c86e54e6de379668
+    description: makeWorld(1).auth.secret, used only by request 15's HMAC pre-request script

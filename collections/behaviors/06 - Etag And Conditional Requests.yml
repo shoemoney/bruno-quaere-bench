@@ -1,0 +1,71 @@
+info:
+  name: 06 - Etag And Conditional Requests
+  type: http
+  seq: 6
+  tags:
+    - caching
+
+http:
+  method: GET
+  url: "{{baseUrl}}/snapshots/{{sampleAssetId}}"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+    - expression: res.headers.etag
+      operator: isDefined
+  scripts:
+    - type: tests
+      code: |-
+        test("get returns an ETag", function() {
+          expect(res.status).to.equal(200);
+          expect(res.headers.etag).to.be.a('string');
+        });
+        const etag = res.headers.etag;
+        const base = bru.getEnvVar('baseUrl');
+        const url = base + '/snapshots/' + bru.getVar('sampleAssetId');
+        const auth = { Authorization: 'Bearer ' + bru.getVar('token') };
+
+        const notModified = await fetch(url, { headers: { ...auth, 'If-None-Match': etag } });
+        test("If-None-Match with the current ETag is a 304", function() {
+          expect(notModified.status).to.equal(304);
+        });
+
+        const noIfMatch = await fetch(url, {
+          method: 'PATCH',
+          headers: { ...auth, 'content-type': 'application/json' },
+          body: JSON.stringify({ displayName: 'should-be-rejected' })
+        });
+        test("PATCH with no If-Match is rejected (428)", function() {
+          expect(noIfMatch.status).to.equal(428);
+        });
+
+        const wrongIfMatch = await fetch(url, {
+          method: 'PATCH',
+          headers: { ...auth, 'content-type': 'application/json', 'If-Match': '"not-the-real-etag"' },
+          body: JSON.stringify({ displayName: 'should-be-rejected' })
+        });
+        test("PATCH with a stale If-Match is a 412", function() {
+          expect(wrongIfMatch.status).to.equal(412);
+        });
+
+        const correctIfMatch = await fetch(url, {
+          method: 'PATCH',
+          headers: { ...auth, 'content-type': 'application/json', 'If-Match': etag },
+          body: JSON.stringify({ displayName: 'conditional-ok' })
+        });
+        const correctBody = await correctIfMatch.json();
+        test("PATCH with the matching ETag succeeds", function() {
+          expect(correctIfMatch.status).to.equal(200);
+          expect(correctBody.displayName).to.equal('conditional-ok');
+        });
+
+docs: |-
+  Behavior #5 (Caching and concurrency): GET .../{assets}/{id} with If-None-Match short-circuits
+  to 304; PATCH requires If-Match (428 when absent, 412 when stale), and only succeeds once the
+  caller round-trips the ETag it was just handed.

@@ -1,0 +1,55 @@
+info:
+  name: 03 - Nested Resource Hierarchy
+  type: http
+  seq: 3
+  tags:
+    - hierarchy
+
+http:
+  method: GET
+  url: "{{baseUrl}}/shops/{{workspaceId}}/sessions"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+  scripts:
+    - type: tests
+      code: |-
+        test("workspace has at least one project", function() {
+          expect(res.status).to.equal(200);
+          expect(res.body.data.length).to.be.greaterThan(0);
+        });
+        const projectId = res.body.data[0].id;
+        bru.setVar('sampleProjectId', projectId);
+
+        const base = bru.getEnvVar('baseUrl');
+        const auth = { Authorization: 'Bearer ' + bru.getVar('token') };
+
+        const assetsRes = await fetch(
+          base + '/shops/' + bru.getVar('workspaceId') + '/sessions/' + projectId + '/snapshots?page_size=25',
+          { headers: auth }
+        );
+        const assetsBody = await assetsRes.json();
+        test("project's assets are listable through its own nested path", function() {
+          expect(assetsRes.status).to.equal(200);
+          expect(assetsBody.data.length).to.be.greaterThan(0);
+        });
+        bru.setVar('sampleAssetId', assetsBody.data[0].id);
+
+        // There is no top-level "list every asset" route (routes.js has no bare GET
+        // /{assets}). An asset id is discoverable only by listing its parent project.
+        const bareRes = await fetch(base + '/snapshots', { headers: auth });
+        test("there is no route to list assets outside a project", function() {
+          expect(bareRes.status).to.equal(404);
+        });
+
+docs: |-
+  Behavior #14 (Hierarchy): asset ids only exist to a client that has listed
+  /{workspaces}/{w}/{projects}/{p}/{assets} first. GET /{assets} with no id and no parent matches
+  no route (confirmed 404), which is the whole point: the ladder can require "find this asset"
+  without ever printing its id anywhere but inside a nested listing.

@@ -492,7 +492,10 @@ async function routeHandlers(routeId, ctx) {
       }
       descs.push(a.descriptor);
     }
-    const descriptor = combine(world, descs, { mode: readField(world, body, 'mode') });
+    const descriptor = combine(world, descs, {
+      mode: readField(world, body, 'mode'),
+      opacityStep: readField(world, body, 'opacity_step'),
+    });
     const id = nextId(world, state.store, 'asset');
     const newAsset = buildAsset({ id, descriptor, store: state.store, now });
     state.store.assets.set(id, newAsset);

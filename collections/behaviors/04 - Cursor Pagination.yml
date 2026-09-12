@@ -1,0 +1,68 @@
+info:
+  name: 04 - Cursor Pagination
+  type: http
+  seq: 4
+  tags:
+    - pagination
+
+http:
+  method: GET
+  url: "{{baseUrl}}/shops?page_size=1"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "200"
+    - expression: res.body.data.length
+      operator: eq
+      value: "1"
+  scripts:
+    - type: tests
+      code: |-
+        test("first page has exactly one item and a cursor", function() {
+          expect(res.status).to.equal(200);
+          expect(res.body.data.length).to.equal(1);
+          expect(res.body.cursor).to.be.a('string');
+        });
+
+        // Walk pages with page_size=1 until a page carries no `cursor` key at all. seedInitialData
+        // always seeds exactly 2 workspaces (PROJECTS_PER_WORKSPACE.length in resources.js), and
+        // nothing before this request creates a third (there is no create-workspace route), so
+        // the walk is deterministically 2 pages long for any seed.
+        const base = bru.getEnvVar('baseUrl');
+        const auth = { Authorization: 'Bearer ' + bru.getVar('token') };
+        let cursor = res.body.cursor;
+        let pages = 1;
+        let items = res.body.data.length;
+        let lastPageHadCursor = true;
+        while (cursor && pages < 10) {
+          const r = await fetch(base + '/shops?page_size=1&cursor=' + encodeURIComponent(cursor), { headers: auth });
+          const b = await r.json();
+          pages += 1;
+          items += b.data.length;
+          cursor = b.cursor;
+          lastPageHadCursor = cursor !== undefined;
+        }
+
+        test("walking cursors lands on exactly 2 pages, last one cursor-less", function() {
+          expect(pages).to.equal(2);
+          expect(items).to.equal(2);
+          expect(lastPageHadCursor).to.equal(false);
+        });
+
+        // A client that (wrongly) treated an empty `data` array as the stop signal, instead of a
+        // missing `cursor`, would have looped forever here since page_size=1 never returns an
+        // empty page while items remain. Confirm the actual last page truly has no cursor key.
+        const lastRaw = await fetch(base + '/shops?page_size=1&cursor=' + encodeURIComponent(res.body.cursor), { headers: auth });
+        const lastBody = await lastRaw.json();
+        test("the last page object has no cursor property at all", function() {
+          expect(Object.prototype.hasOwnProperty.call(lastBody, 'cursor')).to.equal(false);
+        });
+
+docs: |-
+  Behavior #1 (Pagination): opaque cursors, last page signaled by an absent `cursor` key rather
+  than an empty `data` array. Forces page_size=1 so the 2 seeded workspaces span exactly 2 pages.

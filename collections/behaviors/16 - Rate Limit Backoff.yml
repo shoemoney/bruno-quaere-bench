@@ -1,0 +1,65 @@
+info:
+  name: 16 - Rate Limit Backoff
+  type: http
+  seq: 16
+  tags:
+    - rateLimit
+
+http:
+  method: GET
+  url: "{{baseUrl}}/shops?page_size=1"
+  headers:
+    - name: Authorization
+      value: "Bearer {{rateLimitToken}}"
+
+runtime:
+  assertions:
+    - expression: res.status
+      operator: eq
+      value: "429"
+    - expression: res.headers.retry-after
+      operator: isDefined
+  scripts:
+    - type: before-request
+      code: |-
+        // Rate limiting is scoped per bearer token (createRateLimiter keys on tokenId), and this
+        // is the LAST request in the collection, so a fresh token here can be burned down to its
+        // limit without starving anything that runs after it. world.rate.limit is 20-60 per
+        // world.rate.windowSec seconds; loop comfortably past any of those and let the server's
+        // own count decide when the 429 actually lands, rather than hardcoding a specific limit.
+        const base = bru.getEnvVar('baseUrl');
+        const tokenRes = await fetch(base + '/auth/token', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ api_key: bru.getEnvVar('apiKey') })
+        });
+        const tokenBody = await tokenRes.json();
+        const rateLimitToken = tokenBody.accessToken;
+        bru.setVar('rateLimitToken', rateLimitToken);
+
+        const auth = { Authorization: 'Bearer ' + rateLimitToken };
+        let sawRetryAfter = null;
+        for (let i = 0; i < 80; i += 1) {
+          const r = await fetch(base + '/shops?page_size=1', { headers: auth });
+          if (r.status === 429) {
+            sawRetryAfter = r.headers.get('retry-after');
+            break;
+          }
+        }
+        bru.setVar('rateLimitRetryAfterSeenInLoop', sawRetryAfter === null ? '' : String(sawRetryAfter));
+    - type: tests
+      code: |-
+        test("hammering one token past its budget was already caught mid-loop", function() {
+          expect(bru.getVar('rateLimitRetryAfterSeenInLoop')).to.not.equal('');
+        });
+        test("the token is still over budget on the very next call, with Retry-After", function() {
+          expect(res.status).to.equal(429);
+          expect(res.headers['retry-after']).to.be.a('string');
+          expect(Number(res.headers['retry-after'])).to.be.greaterThan(0);
+        });
+
+docs: |-
+  Behavior #4 (Rate limits): once a token's request count in the current window reaches
+  world.rate.limit, further calls get 429 with `Retry-After`, and budget resets are on-the-second
+  (a sliding window), not a hard reset. Deliberately last in this collection and on its own fresh
+  token, so exhausting it doesn't fail every request that would otherwise run after it.

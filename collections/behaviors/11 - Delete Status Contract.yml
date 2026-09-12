@@ -1,0 +1,44 @@
+info:
+  name: 11 - Delete Status Contract
+  type: http
+  seq: 11
+  tags:
+    - contract
+
+http:
+  method: DELETE
+  url: "{{baseUrl}}/snapshots/{{freshAssetId}}"
+  headers:
+    - name: Authorization
+      value: "Bearer {{token}}"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        // A disposable asset, created purely so this request has something of its own to delete
+        // without disturbing fixtures other requests still read.
+        const createRes = await fetch(bru.getEnvVar('baseUrl') + '/images', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', Authorization: 'Bearer ' + bru.getVar('token') },
+          body: JSON.stringify({ width: 16, height: 16, background: { color: '#000000' }, shapes: [] })
+        });
+        const createBody = await createRes.json();
+        bru.setVar('freshAssetId', createBody.id);
+    - type: tests
+      code: |-
+        test("delete is 204, never the 200 a lying spec could claim", function() {
+          expect(res.status).to.equal(204);
+        });
+
+        const getAfter = await fetch(bru.getEnvVar('baseUrl') + '/snapshots/' + bru.getVar('freshAssetId'), {
+          headers: { Authorization: 'Bearer ' + bru.getVar('token') }
+        });
+        test("the deleted asset is gone from a plain GET", function() {
+          expect(getAfter.status).to.equal(404);
+        });
+
+docs: |-
+  Behavior #12 (Contract testing / deleteStatus trap): the real DELETE response is always 204.
+  spec.js's deleteStatus trap can make the *document* claim 200 for this operation; only hitting
+  the live API (never the generated spec) proves the true status, which is what this asserts.
