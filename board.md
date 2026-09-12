@@ -9,8 +9,8 @@
 | claude-fable-5-1 | cli:ai | 310 | 16 | 91 | 97.1% | 75.0% | 98986 | 103472 | 0.0 | 0.0 | fail |
 | deepseek-flash | deepseek | 316 | 15 | 176 | 97.1% | 100.0% | 145019 | 17194730 | 0.0 | 0.0 | fail |
 | gemini-3.8-flash | cli:gemini | 313 | 9 | 56 | 99.7% | 83.3% | 76930 | 215125 | 0.0 | 0.0 | fail |
+| k3 | cli:kimi | 314 | 5 | 32 | 83.3% | 100.0% | 103589 | 4683173 | 0.0 | 0.0 | fail |
 | qwen3.8-max | cli:qwen | 312 | 5 | 39 | 94.6% | 75.0% | 135863 | 4343756 | 0.0 | 0.0 | fail |
-| k3 | cli:kimi | 314 | -1 | 0 | 41.7% | 100.0% | 51825 | 2341617 | 0.0 | 1.5 | stalled |
 
 #### Expected vs produced at the fall rung
 
@@ -19,8 +19,8 @@
 - **claude-fable-5-1** (cli:ai, seed 310): fell at rung 17 -- expected [bb8b3a59ef074ea123174295e36c7e2b1d655bc53b393a32de441db534dc7679], produced [a6aa0a2f60c05bea9031228eebbf89b7e1c75e401ab46a8914d06e6a944a491c] (fidelity 48.6%)
 - **deepseek-flash** (deepseek, seed 316): fell at rung 16 -- expected [8d02ea08ca75c6735daf4c52b9c30105b27b827d72ff0224f04a1350597eb810], produced [db8b16fd06ebb42463b6095476be552813bdd41d04c700b837a8b8e72654ba55] (fidelity 50.0%)
 - **gemini-3.8-flash** (cli:gemini, seed 313): fell at rung 10 -- expected [9d94d3f2ac0a808a0fc002b287402ffddfaebca594f5d63a5e3aacd0078fca43], produced [95d31aaf56f6b0976043a3dd32ec544ee00c2cfadf933b4842ddc0d1409b4f7a] (fidelity 96.4%)
+- **k3** (cli:kimi, seed 314): fell at rung 6 -- expected [a09459239bd3911d2653008dbdc1dad6f8e1c3c2dffd935cbb5eb70480845e76], produced [5b35f6acf065f83bb044a137398197fca39f63f2644f14d0f7d38314fce3f257] (fidelity 25.0%)
 - **qwen3.8-max** (cli:qwen, seed 312): fell at rung 6 -- expected [2da0f87d41ef9394ff1e62ad851978017273e97911c900f69d106860890ac803], produced [e9ba69e402251b36d47adc6e2687a67b3421957b162825b9f863a115f2449bbc] (fidelity 61.9%)
-- **k3** (cli:kimi, seed 314): stopped (stalled) after clearing rung -1
 
 ## Superseded
 
@@ -61,32 +61,4 @@
 - **x-ai/grok-4.20-multi-agent** (x-ai/grok-4.20-multi-agent, seed 113): stopped (error) after clearing rung -1
 - **claude-fable-5-1** (cli:ai, seed 220): fell at rung 0 -- expected [8e66f44dd4488bab31774fce5e0fdc8e874302a0f394ff006a20019a9599f848], produced [d2d76f696baecb647e0cb32d9b85f7d20ea6a3379aedf545819ed5895de88aa3] (fidelity 95.2%)
 - **anthropic/claude-fable-5.1** (anthropic/claude-fable-5.1, seed 110): fell at rung 0 -- expected [86099182a28c743de8780cde231ac3a1a795ca7791e731fe95c65e692fcebd14], produced [] (fidelity 0.0%)
-
-
-## Calibration rounds
-
-### Ladder version 0.3.0
-
-**Round 1**: Seed 310–315 (six models) ran native against ladder 0.3.0 in parallel (wall clock ~14 hours total, staggered launches 2026-09-11).
-
-| Model | Driver | Fall Rung | Turns | Novel Tokens | Billed Tokens | Violations | Resumes | Reason |
-|---|---|---|---|---|---|---|---|---|
-| **gpt-6-astra** | cli:codex | 25 | 124 | 122,372 | 5,553,284 | 0 | 0 | Task reasoning: API pipeline correct (5×HTTP 201/200), but final asset content (shape/style/opacity) diverged from reference despite dimension math being exact at every stage — caught by content-hash mismatch (fidelity 88.4%). |
-| **claude-fable-5-1** | cli:ai | 17 | 91 | 98,986 | 103,472 | 0 | 0 | Task reasoning: house-rules interpretation failure. Model executed technically perfect API flow but produced spec-mismatched content; likely misread dated-decoy clause in 5MB sloppy HOUSE-RULES.md. |
-| **deepseek-flash** | deepseek | 16 | 176 | 145,019 | 17,194,730 | 0 | 0 | Task reasoning: fell one rung before gpt-6-astra's failure point. |
-| **gemini-3.8-flash** | cli:gemini | 10 | 56 | 76,930 | 215,125 | 0 | 0 | Tooling slip: built asset correctly (POST returned 201 w/ exact hash match), but reused stale asset id from prior rung in submit call instead of fresh id — off-by-one copy-paste in template. Model reasoning was sound; execution stumbled. |
-| **qwen3.8-max** | cli:qwen | 5 | 39 | 135,863 | 4,343,756 | 0 | 0 | In-progress at forced finalization (3hr wall, Monitor task still armed). |
-| **grok-4.6** | xai | 23 | 181 | 141,620 | 18,439,250 | 0 | 0 | Stopped (error) after clearing rung 23. |
-
-**Pre-run fix (k3)**: kimi CLI adapter (src/harness/cli/kimi.js) passed `--model k3` bare, but kimi-code's config.toml namespaces models under "kimi-code/" prefix. First attempt died immediately with "Model 'k3' is not configured" (rung -1, 0 turns, 3 resumes, stalled). Fixed resolveModelAlias() in adapter; moved dead run to runs/k3/314/1-failed-modelalias/ and reran.
-
-| Model | Driver | Fall Rung | Turns | Novel Tokens | Billed Tokens | Violations | Resumes | Reason |
-|---|---|---|---|---|---|---|---|---|
-| **k3** | cli:kimi | 6 | 32 | 103,589 | 4,683,173 | 0 | 0 | Tooling slip (post-fix, rerun attempt): at rung 6, model created fresh asset (POST 201, id "43", hash exact-match). But submit call reused prior rung's asset id (41) instead of the fresh one — one tool call off. Model understood task; execution templating error. (harnessBug=true pre-run from kimi.js fix, harnessBug=false on this attempt.) |
-
-#### Steepening applied post-round-1
-
-After gpt-6-astra reached rung 25 (fell at 25 with high fidelity 88.4%), the lowest effective floor across all models was gemini-3.8-flash at rung 10, with k3/qwen in single digits. **Ladder must be steep:** most of the signal came from the top 2 models (gpt-6-astra, grok in older round); mid-tier models (claude-fable, deepseek) clustered rung 15–17. No model had rungs 18–24 before gpt-6-astra probed them.
-
-**Action:** Post-round-1, steepen rungs 10–20 (increase trap complexity and dimension/constraint nesting) so mid-tier models encounter failure points closer to the ceiling rather than a long tail of trivial rungs. This prevents stalls from platform/driver issues looking like model reasoning gaps.
 
