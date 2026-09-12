@@ -7,7 +7,13 @@ import { rng, sub, pick, int, shuffle } from './seed.js';
 // Bumped to 0.2.0 by Addendum C round-2 steepening: the difficulty grammar's band parameters
 // changed, so the same seed no longer yields the same ladder as a 0.1.x run did. Results from the
 // two versions are not comparable and the version is what says so.
-export const VERSION = '0.2.0';
+//
+// Bumped to 0.3.0 by Addendum G: media.js's unit-to-pixel conversion now snaps its raw product to
+// 6 decimals before rounding, and grammar.js's generator rejects and redraws any unit-tagged
+// dimension whose exact product would land within 1e-6px of a grid boundary. Both change which
+// concrete descriptors (and so which hashes) a seed produces versus 0.2.x -- not the difficulty
+// curve itself, but still enough that a 0.2.x run and a 0.3.x run are not directly comparable.
+export const VERSION = '0.3.0';
 
 const WORKSPACE_NOUNS = ['studio', 'fleet', 'lab', 'yard', 'shop', 'depot', 'guild', 'forge', 'atelier', 'bureau'];
 const PROJECT_NOUNS = ['scene', 'vehicle', 'sensor', 'mission', 'reel', 'session', 'build', 'sketch', 'spread', 'rig'];

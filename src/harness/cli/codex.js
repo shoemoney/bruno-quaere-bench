@@ -72,7 +72,7 @@ export function resume(threadId, opts = {}) {
 // stdout can legitimately carry more than one, and each is the incremental cost of that turn, not
 // a running total (unlike the ai adapter's single-shot JSON result). `home` is accepted (unused)
 // to match the shared adapter signature -- codex's usage is already on stdout, unlike kimi's.
-export function parseUsage(stdout, home) { // eslint-disable-line no-unused-vars
+function parseFromStdout(stdout) {
   const lines = String(stdout).split('\n').filter(Boolean);
   let threadId = null;
   let tokensIn = 0;
@@ -101,11 +101,113 @@ export function parseUsage(stdout, home) { // eslint-disable-line no-unused-vars
     tokensIn,
     tokensCached,
     tokensOut,
-    // codex's --json event stream carries no per-turn model field today; the requested model is
-    // already known to the caller (it's what build() was given), so there is nothing to reconcile
-    // here the way ai.js's modelUsage breakdown requires.
+    // codex's --json event stream carries no per-turn model field; the rollout file under
+    // CODEX_HOME does (turn_context.payload.model), so parseUsage() below tops this up from
+    // there rather than leaving the board's Model column empty on an otherwise clean run.
     modelVersion: null,
     usageEstimated: false,
     threadId,
   };
+}
+
+// Every *.jsonl under `dir`, newest-modified first. Shared by the rollout reader below; a
+// directory that does not exist (or cannot be read) yields nothing rather than throwing.
+function newestJsonlFiles(dir) {
+  const out = [];
+  const walk = (d) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith('.jsonl')) out.push(full);
+    }
+  };
+  walk(dir);
+  const withMtime = [];
+  for (const f of out) {
+    try {
+      withMtime.push({ f, mtimeMs: fs.statSync(f).mtimeMs });
+    } catch {
+      // raced with the CLI's own cleanup; skip it rather than fail the whole read
+    }
+  }
+  withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return withMtime.map((x) => x.f);
+}
+
+// readUsageFromCodexRollout(home) -> {tokensIn, tokensCached, tokensOut, modelVersion,
+// usageEstimated, threadId} or null. Addendum G's drained-kill fallback for codex: a SIGTERMed
+// `codex exec --json` exits without ever printing its turn.completed events, but the same numbers
+// are already durable in the rollout transcript codex writes itself, at
+// `$CODEX_HOME/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<session-id>.jsonl` -- one JSON object per
+// line, carrying `token_usage_record` payloads (with a cumulative `thread_token_usage`),
+// `turn_context` payloads (with the model codex actually used) and a `session_meta` (session id).
+//
+// Captured from a live killed run's rollout file, not reconstructed from documentation.
+export function readUsageFromCodexRollout(home) {
+  if (!home) return null;
+  const files = newestJsonlFiles(path.join(home, 'sessions'));
+  for (const file of files) {
+    let text;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    let threadId = null;
+    let modelVersion = null;
+    let latestUsage = null;
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let entry;
+      try {
+        entry = JSON.parse(trimmed);
+      } catch {
+        continue; // a partially-written last line from a killed process is skipped, not fatal
+      }
+      const payload = entry.payload || {};
+      if (entry.type === 'session_meta' && payload.session_id) threadId = payload.session_id;
+      if (entry.type === 'turn_context' && payload.model) modelVersion = payload.model;
+      // thread_token_usage is the running total for the whole thread, so the LAST record wins --
+      // summing them would multiply-count every earlier turn.
+      if (entry.type === 'token_usage_record' && (payload.thread_token_usage || payload.usage)) {
+        latestUsage = payload.thread_token_usage || payload.usage;
+      }
+    }
+    if (!latestUsage && !modelVersion) continue;
+    return {
+      tokensIn: (latestUsage && latestUsage.input_tokens) || 0,
+      tokensCached: (latestUsage && latestUsage.cached_input_tokens) || 0,
+      tokensOut: (latestUsage && latestUsage.output_tokens) || 0,
+      modelVersion,
+      usageEstimated: !latestUsage,
+      threadId,
+    };
+  }
+  return null;
+}
+
+// parseUsage(stdout, home?) -> the shape above. Reads stdout first; on a killed/truncated stream
+// (Addendum G) falls back to the rollout transcript under CODEX_HOME. Even when stdout parses,
+// the model is only ever in the rollout, so fill it in from there when `home` is available.
+export function parseUsage(stdout, home) {
+  let fromStdout;
+  try {
+    fromStdout = parseFromStdout(stdout);
+  } catch (err) {
+    const fromRollout = readUsageFromCodexRollout(home);
+    if (fromRollout) return fromRollout;
+    throw err;
+  }
+  if (fromStdout.modelVersion == null && home) {
+    const fromRollout = readUsageFromCodexRollout(home);
+    if (fromRollout && fromRollout.modelVersion) fromStdout.modelVersion = fromRollout.modelVersion;
+  }
+  return fromStdout;
 }

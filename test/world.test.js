@@ -38,7 +38,9 @@ test('world has the exact top-level shape from the architecture doc', () => {
 });
 
 test('world.version is pinned', () => {
-  assert.equal(makeWorld(1).version, '0.2.0');
+  // Rebaselined 0.2.0 -> 0.3.0 by Addendum G's exact-arithmetic fix (media.js's unit-to-pixel
+  // snap plus grammar.js's grid-boundary redraw) -- see world.js's VERSION comment.
+  assert.equal(makeWorld(1).version, '0.3.0');
 });
 
 test('vocab has the four required nouns as non-empty strings', () => {

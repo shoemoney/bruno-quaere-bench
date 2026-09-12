@@ -6,12 +6,12 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile, readFile as fsReadFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, mkdir, readFile as fsReadFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
-import { build, resume, parseUsage, copyAuth, name as adapterName } from '../src/harness/cli/codex.js';
+import { build, resume, parseUsage, copyAuth, readUsageFromCodexRollout, name as adapterName } from '../src/harness/cli/codex.js';
 
 const FIXTURE_URL = new URL('./fixtures/cli-codex-usage.jsonl', import.meta.url);
 
@@ -196,5 +196,72 @@ test('codex CLI live smoke: a trivial prompt produces parseable --json usage', a
     assert.equal(result.status, 0, result.stderr);
     const usage = parseUsage(result.stdout);
     assert.ok(usage.tokensIn > 0);
+  });
+});
+
+
+// --- Addendum G: the drained-kill fallback, and the model the rollout (not stdout) carries -----
+//
+// cli-codex-rollout.jsonl was captured from a real killed run's
+// $CODEX_HOME/sessions/<yyyy>/<mm>/<dd>/rollout-*.jsonl, trimmed to the four record types the
+// reader uses. The whole point: `codex exec --json` prints NOTHING on SIGTERM, so a fallen run
+// used to report zero tokens and a null model.
+
+const ROLLOUT_FIXTURE_URL = new URL('./fixtures/cli-codex-rollout.jsonl', import.meta.url);
+
+async function withCodexHome(fn) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'quaere-cli-codex-rollout-'));
+  try {
+    const sessionsDir = path.join(dir, 'sessions', '2026', '09', '12');
+    await mkdir(sessionsDir, { recursive: true });
+    const body = await fsReadFile(ROLLOUT_FIXTURE_URL, 'utf8');
+    await writeFile(path.join(sessionsDir, 'rollout-2026-09-12T13-09-52-01a096cf.jsonl'), body);
+    return await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test('readUsageFromCodexRollout reads cumulative thread usage and the model codex actually used', async () => {
+  await withCodexHome(async (home) => {
+    const usage = readUsageFromCodexRollout(home);
+    assert.ok(usage, 'the rollout under CODEX_HOME must be found');
+    // thread_token_usage is cumulative for the thread, so the LAST record is the total -- summing
+    // every record would multiply-count every earlier turn.
+    assert.equal(usage.tokensIn, 408029);
+    assert.equal(usage.tokensCached, 377600);
+    assert.equal(usage.tokensOut, 1756);
+    assert.equal(usage.modelVersion, 'gpt-6-astra');
+    assert.equal(usage.usageEstimated, false);
+    assert.equal(usage.threadId, '01a096cf-bee2-7dc0-ad28-3ac6e3fb4d9c');
+  });
+});
+
+test('readUsageFromCodexRollout returns null for a home with no sessions, and parseUsage still throws there', () => {
+  assert.equal(readUsageFromCodexRollout(undefined), null);
+  assert.throws(() => parseUsage('not json'), /no turn\.completed usage event/);
+});
+
+test('parseUsage falls back to the rollout when a killed codex printed nothing', async () => {
+  await withCodexHome(async (home) => {
+    const usage = parseUsage('', home);
+    assert.equal(usage.modelVersion, 'gpt-6-astra');
+    assert.equal(usage.tokensIn, 408029);
+  });
+});
+
+test('parseUsage fills in the model from the rollout even when stdout parsed cleanly', async () => {
+  await withCodexHome(async (home) => {
+    const stdout = [
+      JSON.stringify({ type: 'thread.started', thread_id: 'thr_1' }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 3 } }),
+    ].join('\n');
+    const usage = parseUsage(stdout, home);
+    // stdout's own numbers win; only the model (which the --json stream never carries) comes from
+    // the rollout.
+    assert.equal(usage.tokensIn, 10);
+    assert.equal(usage.tokensOut, 3);
+    assert.equal(usage.threadId, 'thr_1');
+    assert.equal(usage.modelVersion, 'gpt-6-astra');
   });
 });

@@ -8,7 +8,7 @@
 import { mkdir, writeFile, readFile, cp, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-import { makeWorld } from '../world.js';
+import { makeWorld, VERSION as LADDER_VERSION } from '../world.js';
 import { createServer } from '../api/server.js';
 import { toOpenApi, listLies } from '../spec.js';
 import { toSkill } from '../skill.js';
@@ -621,6 +621,9 @@ export async function climb({
     }
 
     const result = {
+      // Addendum G: the board groups rows by ladder version, so every run records the ladder it
+      // actually climbed (see run-cli.js for the same stamp on the CLI path).
+      version: LADDER_VERSION,
       model: model || driverName,
       // Addendum F: which driver produced this run -- message-loop drivers here (anthropic,
       // openai, openrouter, xai, deepseek); the `cli:*` drivers under src/harness/cli/ are a

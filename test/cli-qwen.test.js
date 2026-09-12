@@ -5,12 +5,12 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, mkdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
-import { build, resume, parseUsage, readQwenEnv, name as adapterName } from '../src/harness/cli/qwen.js';
+import { build, resume, parseUsage, readQwenEnv, readUsageFromQwenUsageRecord, name as adapterName } from '../src/harness/cli/qwen.js';
 import { loadAdapter } from '../src/harness/cli/index.js';
 
 const FIXTURE_URL = new URL('./fixtures/cli-qwen-usage.json', import.meta.url);
@@ -186,5 +186,78 @@ test('qwen CLI live smoke: a trivial prompt produces parseable -o json usage', a
     assert.equal(result.status, 0, result.stderr);
     const usage = parseUsage(result.stdout);
     assert.ok(usage.tokensIn > 0);
+  });
+});
+
+
+// --- Addendum G: the live-captured killed-run fallback -----------------------------------------
+//
+// qwen exits on SIGTERM having printed only {"error":{"type":"FatalCancellationError"}} to stderr
+// and NOTHING to stdout (verified on a real rung-0 run), so the drain window alone cannot rescue
+// its usage. It does write $HOME/.qwen/usage_record.jsonl, one line per finished session, with the
+// per-model totals already summed -- the line below is that shape, trimmed from a real run.
+
+const USAGE_RECORD_LINE = JSON.stringify({
+  version: 1,
+  sessionId: '04e3ae1d-16e2-4b7a-a32f-40602463611e',
+  timestamp: 1789237550739,
+  models: {
+    'qwen3.8-max': {
+      requests: 41,
+      inputTokens: 2562623,
+      outputTokens: 18871,
+      cachedTokens: 2477198,
+      thoughtsTokens: 10833,
+      totalTokens: 2581494,
+    },
+  },
+});
+
+async function withQwenUsageHome(fn, { lines = [USAGE_RECORD_LINE] } = {}) {
+  await withTempDir(async (dir) => {
+    const home = path.join(dir, 'home');
+    await mkdir(path.join(home, '.qwen'), { recursive: true });
+    await writeFile(path.join(home, '.qwen', 'usage_record.jsonl'), `${lines.join('\n')}\n`);
+    await fn(home);
+  });
+}
+
+test('readUsageFromQwenUsageRecord reads the served model and per-model totals off usage_record.jsonl', async () => {
+  await withQwenUsageHome(async (home) => {
+    const usage = readUsageFromQwenUsageRecord(home);
+    assert.ok(usage);
+    assert.equal(usage.modelVersion, 'qwen3.8-max');
+    assert.equal(usage.tokensIn, 2562623);
+    assert.equal(usage.tokensCached, 2477198);
+    // thoughtsTokens is billed reasoning spend and belongs on the output side: 18871 + 10833.
+    assert.equal(usage.tokensOut, 29704);
+    assert.equal(usage.usageEstimated, false);
+    assert.equal(usage.sessionId, '04e3ae1d-16e2-4b7a-a32f-40602463611e');
+  });
+});
+
+test('the newest usage_record line wins, and a half-written last line is ignored', async () => {
+  const older = JSON.stringify({ version: 1, sessionId: 'older', models: { 'qwen3.8-max': { inputTokens: 1 } } });
+  await withQwenUsageHome(
+    async (home) => {
+      const usage = readUsageFromQwenUsageRecord(home);
+      assert.equal(usage.sessionId, '04e3ae1d-16e2-4b7a-a32f-40602463611e');
+      assert.equal(usage.tokensIn, 2562623);
+    },
+    { lines: [older, USAGE_RECORD_LINE, '{"version":1,"sessi'] },
+  );
+});
+
+test('parseUsage falls back to usage_record.jsonl when a killed qwen printed nothing', async () => {
+  await withQwenUsageHome(async (home) => {
+    const usage = parseUsage('', home);
+    assert.equal(usage.modelVersion, 'qwen3.8-max');
+    assert.equal(usage.usageEstimated, false);
+  });
+});
+
+test('readUsageFromQwenUsageRecord returns null for a home with no usage record', async () => {
+  await withTempDir(async (dir) => {
+    assert.equal(readUsageFromQwenUsageRecord(path.join(dir, 'nope')), null);
   });
 });

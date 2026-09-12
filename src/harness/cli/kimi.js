@@ -137,6 +137,39 @@ function findWireFile(home, sessionId) {
   return null;
 }
 
+// newestWireFile(home) -> path | null. Addendum G: a SIGTERMed kimi never prints its
+// `session.resume_hint` line, so parseUsage has no session id to look the wire file up by -- but
+// the session it just ran is still the most recently written wire.jsonl under this run's own
+// isolated home (which is fresh per run, so there is nothing else in there to confuse it).
+function newestWireFile(home) {
+  const sessionsRoot = path.join(home, '.kimi-code', 'sessions');
+  const found = [];
+  const walk = (dir, depth) => {
+    if (depth > 6) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full, depth + 1);
+      else if (e.name === 'wire.jsonl') {
+        try {
+          found.push({ full, mtimeMs: fs.statSync(full).mtimeMs });
+        } catch {
+          // raced with the CLI's own cleanup; skip
+        }
+      }
+    }
+  };
+  walk(sessionsRoot, 0);
+  if (found.length === 0) return null;
+  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return found[0].full;
+}
+
 // parseUsage(stdout, home) -> {tokensIn, tokensCached, tokensOut, modelVersion, usageEstimated,
 // sessionId}. Unlike its qwen/gemini/ai/codex siblings, kimi's stdout carries no usage at all --
 // `home` is REQUIRED here to go dig the real per-turn totals out of the session's wire.jsonl
@@ -152,7 +185,9 @@ export function parseUsage(stdout, home) {
   const resumeHint = events.find((e) => e.type === 'session.resume_hint');
   const sessionId = (resumeHint && resumeHint.session_id) || null;
 
-  const wirePath = sessionId && home ? findWireFile(home, sessionId) : null;
+  // Addendum G: with no session id on stdout (a killed run), fall back to the newest wire.jsonl
+  // in this run's own isolated home rather than dropping straight to the chars/4 estimate.
+  const wirePath = home ? (sessionId && findWireFile(home, sessionId)) || newestWireFile(home) : null;
   if (wirePath) {
     const wireEvents = parseNdjson(fs.readFileSync(wirePath, 'utf8'));
     const usageRecords = wireEvents.filter((e) => e.type === 'usage.record');

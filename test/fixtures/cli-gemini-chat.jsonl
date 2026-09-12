@@ -1,0 +1,9 @@
+{"sessionId": "46e54e9c-5c6c-4380-bbc7-fcccc3b4ab4c", "projectHash": "3c94349a37f556771c4986107d0371dd39fa4cc8dabdca6161b33e9c79191be3", "startTime": "2026-09-12T18:11:26.458Z", "lastUpdated": "2026-09-12T18:11:26.458Z", "kind": "main"}
+{"$set": {"messages": [{"id": "d04923d38bb0f6017037e74183378ef4", "timestamp": "2026-09-12T18:11:26.458Z", "type": "user", "content": [{"text": "<trimmed>"}]}], "lastUpdated": "2026-09-12T18:11:26.458Z"}}
+{"id": "538a93be-614f-477c-957f-95461331be36", "timestamp": "2026-09-12T18:11:26.463Z", "type": "user", "content": [{"text": "<trimmed>"}]}
+{"$set": {"messages": [], "lastUpdated": "2026-09-12T18:11:26.463Z"}}
+{"id": "ce5a4ed1-88ed-47e8-bec8-2e8be01f870d", "timestamp": "2026-09-12T18:11:28.325Z", "type": "gemini", "content": [{"text": "<trimmed>"}], "model": "gemini-3.5-flash", "tokens": {"input": 10605, "output": 102, "cached": 8118, "thoughts": 138, "tool": 0, "total": 10845}}
+{"id": "ce5a4ed1-88ed-47e8-bec8-2e8be01f870d", "timestamp": "2026-09-12T18:11:28.325Z", "type": "gemini", "content": [{"text": "<trimmed>"}], "model": "gemini-3.5-flash", "tokens": {"input": 10605, "output": 102, "cached": 8118, "thoughts": 138, "tool": 0, "total": 10845}}
+{"id": "f593f5bd-9ba2-4793-a227-7284fb2e49bb", "timestamp": "2026-09-12T18:11:28.331Z", "type": "user", "content": [{"text": "<trimmed>"}]}
+{"id": "3cd49c0c-eff0-4b53-95bb-447e0a38ecfb", "timestamp": "2026-09-12T18:11:30.343Z", "type": "gemini", "content": [{"text": "<trimmed>"}], "model": "gemini-3.5-flash", "tokens": {"input": 11564, "output": 22, "cached": 8112, "thoughts": 234, "tool": 0, "total": 11820}}
+{"id": "3cd49c0c-eff0-4b53-95bb-447e0a38ecfb", "timestamp": "2026-09-12T18:11:30.343Z", "type": "gemini", "content": [{"text": "<trimmed>"}], "model": "gemini-3.5-flash", "tokens": {"input": 11564, "output": 22, "cached": 8112, "thoughts": 234, "tool": 0, "total": 11820}}

@@ -22,7 +22,7 @@
 // running env (of descriptors/values) via resolveRefs before the op executes.
 
 import { rng, sub, pick, int } from '../seed.js';
-import { create, convert, combine, diff, applyLora } from '../media.js';
+import { create, convert, combine, diff, applyLora, pxFromUnit } from '../media.js';
 import { createResourceStore, seedInitialData, listWorkspaces, listProjects, listAssetsForProject } from '../api/resources.js';
 
 
@@ -191,18 +191,58 @@ function randomHexColor(r) {
 // clamps a shape after the fact; every shape is born big enough to survive its own plan.
 // ---------------------------------------------------------------------------
 
+// Addendum G: a unit value whose exact (post-snap6) px product sits within GRID_EPSILON of a
+// house grid boundary is the seed-220-rung-0 hazard by construction -- IEEE-754 float error right
+// at that boundary can flip which side of it roundToGrid's ceil/floor/round lands on, at a
+// magnitude too small for any human (or exact integer arithmetic) to see coming. media.js snaps
+// every conversion to 6 decimals before rounding so an ambiguous case now resolves consistently
+// everywhere it is computed -- but the generator goes one step further and never *hands out* an
+// ambiguous case at all, so a rung's difficulty never quietly hinges on which side of a coin flip
+// the house's own float happened to land on.
+const GRID_EPSILON = 1e-6;
+
+function nearGridBoundary(world, unit, value) {
+  const { dpi, roundTo } = world.rules;
+  const px = pxFromUnit(value, unit, dpi); // same function, same snap6, the API/reference/key use
+  const nearestGridPoint = Math.round(px / roundTo) * roundTo;
+  // NEAR the boundary, not ON it. A product that snaps to exactly a grid multiple is the one case
+  // that is never ambiguous -- ceil, floor and round all agree on it, which is the whole point of
+  // snap6. Treating it as dangerous was actively harmful: in any world where the conversion is
+  // exact (roundTo=1 with pt at any house dpi, or in at 300dpi) EVERY candidate sits exactly on a
+  // boundary, so the redraw loop below ran its full guard of 50 nudges, shifted the canvas 50px
+  // past the pxTarget the composer asked for (blowing through drawImageCanvas's maxPx), and then
+  // returned a boundary value anyway. Only a value within GRID_EPSILON of a boundary WITHOUT
+  // landing on it is float-noise adjacent to a rounding decision, and only that gets redrawn.
+  if (px === nearestGridPoint) return false;
+  return Math.abs(px - nearestGridPoint) < GRID_EPSILON;
+}
+
 // Inverse of media.js's pxFromUnit, rounded to keep the narrated value short and clean. media.js
 // re-derives the pixel width from this value independently (pxFromUnit then roundToGrid), so the
 // round-trip only needs to land within a couple of px of pxTarget -- comfortably inside the
-// safety buffer requiredMin() adds below -- not hit it exactly.
+// safety buffer requiredMin() adds below -- not hit it exactly. If the value this would produce
+// lands within GRID_EPSILON of a grid boundary, nudge the pixel target by a whole pixel and
+// recompute -- deterministic given (world, pxTarget, unit), and bounded, since escaping an
+// isolated boundary point never takes more than a handful of 1px nudges.
 function unitValueForPx(world, pxTarget, unit) {
   if (unit === undefined) return pxTarget;
   const dpi = world.rules.dpi;
-  let raw;
-  if (unit === 'in') raw = pxTarget / dpi;
-  else if (unit === 'cm') raw = (pxTarget / dpi) * 2.54;
-  else raw = (pxTarget / dpi) * 72; // 'pt'
-  return Number(raw.toFixed(2));
+  const valueFor = (target) => {
+    let raw;
+    if (unit === 'in') raw = target / dpi;
+    else if (unit === 'cm') raw = (target / dpi) * 2.54;
+    else raw = (target / dpi) * 72; // 'pt'
+    return Number(raw.toFixed(2));
+  };
+  let target = pxTarget;
+  let value = valueFor(target);
+  let guard = 0;
+  while (nearGridBoundary(world, unit, value) && guard < 50) {
+    target += 1;
+    value = valueFor(target);
+    guard += 1;
+  }
+  return value;
 }
 
 // drawImageCanvas(r, {minPx, maxPx, useUnit}) -> {unit, pxWidth, pxHeight}: picks the pixel

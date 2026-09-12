@@ -8,8 +8,10 @@ import { toSkill } from '../src/skill.js';
 import { makeWorld } from '../src/world.js';
 import { sha256 } from '../src/canon.js';
 
-// Captured from src/skill.js before any Addendum A changes were made.
-const CLEAN_SEED_1_SHA256 = '6489992a9765b99817b9b09d1214b015dec31c0dcba36153ca58bec14a9dfd0c';
+// Rebaselined by Addendum G: the "House DPI and rounding" section gained two plainly-stated
+// facts (the API accepts `unit` and converts server-side; the 6-decimal snap before rounding),
+// which is a real, intended content change, not a regression.
+const CLEAN_SEED_1_SHA256 = '42a7cfff7a39774c3f173abbc5bb1e7fb5e41a5b88e0e19c30303b531236a920';
 
 test('clean-mode toSkill(world) output for seed 1 is byte-identical to the pre-sloppy baseline', () => {
   const world = makeWorld(1);

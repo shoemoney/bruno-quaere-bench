@@ -400,6 +400,24 @@ function build(world, targetBytes) {
     world.loras.map((l) => `\`${l.name}\``).join(', '),
   ]);
 
+  // Addendum G: two facts stated plainly, once, with no decoy chain and nothing to resolve --
+  // unlike the rule chains below, there is only ever one true statement of either of these in
+  // this document, so there is no precedence convention to apply and nothing to get wrong other
+  // than not reading this far.
+  renderSpecialBlock(state, rHeadings, pick(rHeadings, HEADINGS), [
+    'Two things that keep coming up when people hand-roll the unit math instead of just sending',
+    'the unit:',
+    '',
+    "- The API itself takes width/height in a house unit directly (send `unit` alongside them)",
+    'and converts server-side, on its own, every time. Converting by hand first is never required',
+    '-- it is purely the caller\'s own choice, and if you make that choice your arithmetic has to',
+    'land exactly where the house\'s does.',
+    '- Before the house rounds a converted dimension onto the grid, it snaps the raw (un-rounded)',
+    'pixel product to 6 decimal places. Do this yourself too if you convert by hand -- it is what',
+    'keeps a raw product that works out to, say, 168.00000000000003 in floating point landing on',
+    'exactly 168 instead of one float-noise hair off it.',
+  ]);
+
   // Rule chains: flatten into individual (chain, marker, value, isTruth) items, one item is
   // the true value, the rest are decoys, each gets its own marker ascending oldest to newest.
   const chains = buildRuleChains(world);

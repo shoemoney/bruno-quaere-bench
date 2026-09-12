@@ -459,8 +459,8 @@ test('scoreModel: older result.json files with no driver/violations/resumes fiel
   assert.equal(row.resumes, 0);
 });
 
-test('board.md renders the Model/Driver/.../Violations/Resumes/Stop columns', () => {
+test('board.md renders the Model/Driver/Seed/.../Violations/Resumes/Stop columns', () => {
   const md = renderBoard([fixtureResult({ model: 'model-a', driver: 'anthropic', violations: 1, resumes: 2, stoppedBecause: 'budget' })]);
-  assert.match(md, /\| Model \| Driver \| Rung \| Turns \| Fidelity \| Trap \| Novel \| Billed \| Violations \| Resumes \| Stop \|/);
-  assert.match(md, /\| model-a \| anthropic \| 10 \| 20 \| 100\.0% \| 100\.0% \| 150 \| 150 \| 1\.0 \| 2\.0 \| budget \|/);
+  assert.match(md, /\| Model \| Driver \| Seed \| Rung \| Turns \| Fidelity \| Trap \| Novel \| Billed \| Violations \| Resumes \| Stop \|/);
+  assert.match(md, /\| model-a \| anthropic \| 1 \| 10 \| 20 \| 100\.0% \| 100\.0% \| 150 \| 150 \| 1\.0 \| 2\.0 \| budget \|/);
 });

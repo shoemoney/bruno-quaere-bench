@@ -9,7 +9,7 @@ import { makeRung } from '../src/ladder/rung.js';
 import { climb as referenceClimb, answerKey } from '../src/ladder/reference.js';
 import { climb as harnessClimb } from '../src/harness/run.js';
 import { climb as cliClimb } from '../src/harness/run-cli.js';
-import { collectResults, renderBoard } from '../src/harness/board.js';
+import { collectResults, readDnr, renderBoard } from '../src/harness/board.js';
 
 // parseArgs(['--seed', '42', '--answer', 'runs/']) -> {seed:'42', answer:true, _:['runs/']}
 export function parseArgs(argv) {
@@ -189,8 +189,11 @@ async function cmdRun(args) {
 
 async function cmdBoard(args) {
   const dir = args._[0] || 'runs';
-  const results = await collectResults(dir);
-  process.stdout.write(renderBoard(results));
+  // readDnr reads an operator-written runs/DNR.json (missing/malformed -> []), so a model that
+  // errored out before ever producing a result.json still gets a "did not run" line instead of
+  // silently vanishing from the board.
+  const [results, dnr] = await Promise.all([collectResults(dir), readDnr(dir)]);
+  process.stdout.write(renderBoard(results, { dnr }));
 }
 
 async function main() {

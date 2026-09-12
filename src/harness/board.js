@@ -1,10 +1,14 @@
-// runs/**/result.json -> board.md, sorted by Rung desc then Turns asc, with an
-// expected-vs-produced note per model for the rung it fell at.
+// runs/**/result.json -> board.md. Addendum G: rows are grouped by ladder version (never
+// medianed across versions), one row per (model, driver, seed), the current ladder version's
+// rows lead the document and every other version sits under a "Superseded" heading, and a
+// runs/DNR.json the operator can hand-write feeds a "Did not run" list so a model that never
+// produced a result.json still shows up on the board instead of vanishing silently.
 
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { scoreRuns, medianRun } from './score.js';
+import { scoreRuns } from './score.js';
+import { VERSION as CURRENT_LADDER_VERSION } from '../world.js';
 
 async function findResultFiles(dir) {
   const out = [];
@@ -25,7 +29,9 @@ async function findResultFiles(dir) {
   return out;
 }
 
-// collectResults(runsDir) -> RunResult[], read from every runs/**/result.json under it.
+// collectResults(runsDir) -> RunResult[], read from every runs/**/result.json under it. A file
+// that fails to parse (a partial/corrupt result.json from a killed run) is skipped rather than
+// failing the whole board; score.js separately skips a file that parsed fine but has no `model`.
 export async function collectResults(runsDir) {
   const files = await findResultFiles(runsDir);
   const results = [];
@@ -37,6 +43,21 @@ export async function collectResults(runsDir) {
     }
   }
   return results;
+}
+
+// readDnr(runsDir) -> [{model, driver?, seed?, reason?}], from runs/DNR.json. This file is
+// operator-written, not generated: when a model errored out before ever producing a result.json
+// (Addendum G: "qwen never ran in round two ... every model in the lineup gets a row or an
+// explicit 'did not run: <reason>' line; silence is not allowed"), the operator records it here
+// so the board still names it. Missing or malformed -> no entries, never a board failure.
+export async function readDnr(runsDir) {
+  let raw;
+  try {
+    raw = JSON.parse(await readFile(path.join(runsDir, 'DNR.json'), 'utf8'));
+  } catch {
+    return [];
+  }
+  return Array.isArray(raw) ? raw.filter((e) => e && typeof e === 'object') : [];
 }
 
 function pct(x) {
@@ -54,38 +75,73 @@ function fellNote(run) {
   return `stopped (${run.stoppedBecause}) after clearing rung ${run.rung}`;
 }
 
-// renderBoard(RunResult[]) -> board.md text.
-export function renderBoard(results) {
-  const rows = scoreRuns(results).sort((a, b) => b.rung - a.rung || a.turns - b.turns);
-  const byModel = new Map();
-  for (const r of results) {
-    if (!byModel.has(r.model)) byModel.set(r.model, []);
-    byModel.get(r.model).push(r);
-  }
+function dnrLine(entry) {
+  const label = [entry.model, entry.driver, entry.seed != null ? `seed ${entry.seed}` : null].filter(Boolean).join(' / ') || 'unknown';
+  return `- **${label}**: did not run${entry.reason ? ` -- ${entry.reason}` : ''}`;
+}
 
+const TABLE_HEADER = '| Model | Driver | Seed | Rung | Turns | Fidelity | Trap | Novel | Billed | Violations | Resumes | Stop |';
+const TABLE_RULE = '|---|---|---|---|---|---|---|---|---|---|---|---|';
+
+function rowLine(row) {
+  return `| ${row.model} | ${row.driver} | ${row.seed} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.violations.toFixed(1)} | ${row.resumes.toFixed(1)} | ${row.stop} |`;
+}
+
+// One row per (model, driver, seed) already (score.js), sorted for a stable, readable board:
+// best rung first, then fewest turns to get there, then alphabetically so ties don't shuffle
+// between publishes.
+function sortRows(rows) {
+  return [...rows].sort(
+    (a, b) => b.rung - a.rung || a.turns - b.turns || a.model.localeCompare(b.model) || String(a.seed).localeCompare(String(b.seed)),
+  );
+}
+
+function renderVersionSection(rows) {
+  const lines = [TABLE_HEADER, TABLE_RULE];
+  for (const row of sortRows(rows)) lines.push(rowLine(row));
+  lines.push('', '#### Expected vs produced at the fall rung', '');
+  for (const row of sortRows(rows)) {
+    lines.push(`- **${row.model}** (${row.driver}, seed ${row.seed}): ${fellNote(row.representative)}`);
+  }
+  return lines;
+}
+
+// renderBoard(RunResult[], {dnr?}) -> board.md text. `dnr` is the parsed contents of a
+// runs/DNR.json (see readDnr); pass it explicitly so this stays the pure half and writeBoard
+// stays the only place that touches the filesystem for it.
+export function renderBoard(results, { dnr = [] } = {}) {
+  const rows = scoreRuns(results);
   const lines = ['# Bruno QUAERE board', ''];
+
   if (rows.length === 0) {
     lines.push('No runs yet.');
-    return `${lines.join('\n')}\n`;
+  } else {
+    const byVersion = new Map();
+    for (const row of rows) {
+      if (!byVersion.has(row.version)) byVersion.set(row.version, []);
+      byVersion.get(row.version).push(row);
+    }
+
+    const currentRows = byVersion.get(CURRENT_LADDER_VERSION);
+    if (currentRows) {
+      lines.push(`## Ladder version ${CURRENT_LADDER_VERSION} (current)`, '');
+      lines.push(...renderVersionSection(currentRows));
+    }
+
+    const supersededVersions = [...byVersion.keys()].filter((v) => v !== CURRENT_LADDER_VERSION).sort();
+    if (supersededVersions.length > 0) {
+      lines.push('', '## Superseded', '');
+      for (const version of supersededVersions) {
+        lines.push(`### Ladder version ${version}`, '');
+        lines.push(...renderVersionSection(byVersion.get(version)));
+        lines.push('');
+      }
+    }
   }
 
-  // Addendum D: Novel (what the budget is spent against) and Billed (what the provider actually
-  // charges, cumulative resend included) side by side make the 87:1 resend ratio visible per run.
-  // Addendum F: Violations (rogue User-Agent hits) and Resumes (CLI drivers picking a killed
-  // session back up) and Stop (why the representative run ended) round out the product-level view.
-  lines.push('| Model | Driver | Rung | Turns | Fidelity | Trap | Novel | Billed | Violations | Resumes | Stop |');
-  lines.push('|---|---|---|---|---|---|---|---|---|---|---|');
-  for (const row of rows) {
-    lines.push(
-      `| ${row.model} | ${row.driver} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.violations.toFixed(1)} | ${row.resumes.toFixed(1)} | ${row.stop} |`,
-    );
-  }
-
-  lines.push('', '## Expected vs produced at the fall rung', '');
-  for (const row of rows) {
-    const runs = byModel.get(row.model);
-    const rep = medianRun(runs);
-    lines.push(`- **${row.model}**: ${fellNote(rep)}`);
+  if (dnr.length > 0) {
+    lines.push('', '## Did not run', '');
+    for (const entry of dnr) lines.push(dnrLine(entry));
   }
 
   return `${lines.join('\n')}\n`;
@@ -95,8 +151,8 @@ export function renderBoard(results) {
 // workflow (Addendum C) to publish a `## Round N` board after each round; the CLI's `board`
 // subcommand prints to stdout instead so `quaere board runs/ > board.md` works as documented.
 export async function writeBoard(runsDir, outPath) {
-  const results = await collectResults(runsDir);
-  const md = renderBoard(results);
+  const [results, dnr] = await Promise.all([collectResults(runsDir), readDnr(runsDir)]);
+  const md = renderBoard(results, { dnr });
   await writeFile(outPath, md, 'utf8');
   return md;
 }

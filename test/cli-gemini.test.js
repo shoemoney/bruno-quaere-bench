@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 
-import { build, resume, parseUsage, fetchGeminiApiKey, name as adapterName } from '../src/harness/cli/gemini.js';
+import { build, resume, parseUsage, fetchGeminiApiKey, readUsageFromGeminiSessions, name as adapterName } from '../src/harness/cli/gemini.js';
 import { loadAdapter } from '../src/harness/cli/index.js';
 
 const MISMATCH_FIXTURE_URL = new URL('./fixtures/cli-gemini-usage-mismatch.json', import.meta.url);
@@ -255,4 +255,57 @@ test('gemini CLI live smoke: a trivial prompt produces parseable -o json usage',
     assert.ok(usage.tokensIn > 0);
     assert.equal(usage.modelVersion, 'gemini-3.5-flash');
   });
+});
+
+
+// --- Addendum G: "Gemini's reported model must be captured from the drained result, not left
+// null." Verified live: on SIGTERM gemini exits 0 having printed NO `-o json` result at all, so
+// the drain window alone cannot rescue it. cli-gemini-chat.jsonl is a trimmed capture of the chat
+// transcript that same run left under $HOME/.gemini/tmp/<project>/chats/, including the
+// same-id-written-twice streaming duplicate that the reader has to dedupe.
+
+const CHAT_FIXTURE_URL = new URL('./fixtures/cli-gemini-chat.jsonl', import.meta.url);
+
+async function withGeminiChatHome(fn) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'quaere-cli-gemini-chat-'));
+  try {
+    const chatsDir = path.join(dir, '.gemini', 'tmp', 'sandbox', 'chats');
+    await mkdir(chatsDir, { recursive: true });
+    const body = await readFile(CHAT_FIXTURE_URL, 'utf8');
+    await writeFile(path.join(chatsDir, 'session-2026-09-12T18-11-46e54e9c.jsonl'), body);
+    return await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test('readUsageFromGeminiSessions recovers the served model and tokens from the chat transcript', async () => {
+  await withGeminiChatHome(async (home) => {
+    const usage = readUsageFromGeminiSessions(home);
+    assert.ok(usage, 'the chat transcript under the isolated home must be found');
+    // The served model, not the requested one -- gemini silently resolves 3.8-flash to a 3.5
+    // flash build, and reporting what it actually used is what lets run-cli.js flag modelMismatch.
+    assert.equal(usage.modelVersion, 'gemini-3.5-flash');
+    // input/cached are running context totals, so the last message wins...
+    assert.equal(usage.tokensIn, 11564);
+    assert.equal(usage.tokensCached, 8112);
+    // ...while output/thoughts are per-message spend and are summed over DEDUPED ids
+    // (102+138) + (22+234). Counting the streaming duplicates would double this.
+    assert.equal(usage.tokensOut, 496);
+    assert.equal(usage.usageEstimated, false);
+    assert.equal(usage.sessionId, '46e54e9c-5c6c-4380-bbc7-fcccc3b4ab4c');
+  });
+});
+
+test('parseUsage falls back to the chat transcript when a killed gemini printed nothing', async () => {
+  await withGeminiChatHome(async (home) => {
+    const usage = parseUsage('', home);
+    assert.equal(usage.modelVersion, 'gemini-3.5-flash');
+    assert.equal(usage.tokensOut, 496);
+  });
+});
+
+test('parseUsage with unparsable stdout and no session file still throws, as before', () => {
+  assert.equal(readUsageFromGeminiSessions(undefined), null);
+  assert.throws(() => parseUsage('not json'), /was not valid JSON/);
 });

@@ -11,7 +11,7 @@
 import { mkdir, writeFile, readFile, cp, chmod } from 'node:fs/promises';
 import path from 'node:path';
 
-import { makeWorld } from '../world.js';
+import { makeWorld, VERSION as LADDER_VERSION } from '../world.js';
 import { createServer } from '../api/server.js';
 import { toOpenApi } from '../spec.js';
 import { toSkill } from '../skill.js';
@@ -173,6 +173,48 @@ async function copyCollection(sandboxDir, collectionDir) {
 //     entirely, so a test can climb against a scripted fake process instead of a real CLI binary.
 //   - `publicPort`/`adminPort`/`topRung`: normally 0 / 0 / 99; a test that wants a pinned base URL
 //     or a short climb (pass at rung 0 IS the top) can override them.
+// --- Addendum G follow-up: let a killed CLI's own shutdown writes land before reading them ------
+//
+// The drain gets the process to exit, but an agent CLI writes its usage/session records DURING
+// shutdown, and `parseUsage` used to run the instant supervise.js resolved. Measured on a real
+// rung-0 qwen kill: `$HOME/.qwen/usage_record.jsonl` was written at 18:44:17.952 and parseUsage
+// read it at 18:44:17.953 -- a one-millisecond race that cost the run its tokens AND its model,
+// with the correct answer sitting on disk a blink later. So after a supervised kill, re-read for
+// a short settle window instead of taking the first miss as final. Wall-clock waiting is fine
+// here: this is the harness, never anything that feeds an artifact, a spec, a skill, or a rung.
+const USAGE_SETTLE_MS = 250;
+const USAGE_SETTLE_ATTEMPTS = 8; // ~2s of settle in total, negligible against a climb
+
+// parseUsageSettling(adapter, stdout, homeDir, supervisedKill) -> usage, or throws the adapter's
+// own last error. On a clean exit this is exactly one parseUsage() call (no settle, no delay). On
+// a supervised kill it retries while the adapter is still reporting nothing usable -- a throw, or
+// a usageEstimated result, which is how an adapter with its own estimate fallback (kimi) says
+// "I found no real numbers" without throwing.
+async function parseUsageSettling(adapter, stdout, homeDir, supervisedKill) {
+  const attempts = supervisedKill ? USAGE_SETTLE_ATTEMPTS : 1;
+  let lastError = null;
+  let lastEstimate = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, USAGE_SETTLE_MS));
+    }
+    let usage;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      usage = (await adapter.parseUsage(stdout, homeDir)) || {};
+    } catch (err) {
+      lastError = err;
+      continue;
+    }
+    if (!usage.usageEstimated) return usage;
+    lastEstimate = usage;
+    lastError = null;
+  }
+  if (lastEstimate) return lastEstimate;
+  throw lastError || new Error('cli climb: parseUsage returned no usage');
+}
+
 export async function climb({
   cliName,
   cli: providedAdapter,
@@ -291,6 +333,10 @@ export async function climb({
         topRung,
         wallMsLeft,
         pollMs,
+        // Addendum G: the baseline is per RUN, not per spawn -- `allSubmissions` is this climb's
+        // own running total across every earlier spawn/resume, so a resume never re-reacts to
+        // (re-advances for, or re-fails on) a submission an earlier spawn already handled.
+        knownSubmissionsCount: allSubmissions.length,
         onEvent: (entry) => transcript.push(entry),
       });
 
@@ -314,9 +360,21 @@ export async function climb({
       // A CLI that dies before emitting any usage event is a tooling/provider failure, not a
       // harness bug: record what the process actually said and end the climb as an error, so
       // result.json + transcript.jsonl still get written instead of the run vanishing in a throw.
+      // Addendum G: supervise.js now SIGTERMs and drains for up to drainMs before SIGKILLing on a
+      // fall/top/wall/overshoot, so outcome.stdout is the process's own drained result (its
+      // `--output-format json` output, printed while wrapping up) in the common case, not an
+      // empty stream -- parse it exactly as a clean exit's stdout. adapter.parseUsage() for `ai`
+      // and `qwen` additionally falls back to the isolated home's session files when stdout itself
+      // didn't carry usage (e.g. the drain window still wasn't enough); only when BOTH fail does it
+      // return usageEstimated: true.
+      const supervisedKill =
+        outcome.killedFor === 'fail' ||
+        outcome.killedFor === 'top' ||
+        outcome.killedFor === 'wall' ||
+        outcome.killedFor === 'overshoot';
       let usage;
       try {
-        usage = (await adapter.parseUsage(outcome.stdout, homeDir)) || {};
+        usage = await parseUsageSettling(adapter, outcome.stdout, homeDir, supervisedKill);
       } catch (err) {
         transcript.push({
           ts: new Date().toISOString(),
@@ -328,12 +386,12 @@ export async function climb({
           stdoutTail: String(outcome.stdout || '').slice(-4000),
           stderrTail: String(outcome.stderr || '').slice(-4000),
         });
-        // A supervised kill SIGKILLs the CLI tree the moment the admin feed shows a fall, the
-        // top, or the wall -- so the process never reaches the end of `-p` and never prints its
-        // --output-format json result. Empty/short stdout on those paths is EXPECTED, and the
-        // climb's outcome is already decided by the submission that triggered the kill. Only an
-        // unparseable result from a process nobody killed is a genuine tooling failure.
-        if (outcome.killedFor === 'fail' || outcome.killedFor === 'top' || outcome.killedFor === 'wall') {
+        // Even with the drain, an adapter's own parseUsage can still throw (its session-file
+        // fallback found nothing either). On a supervised kill the climb's outcome is already
+        // decided by the submission that triggered it, so report zero/estimated usage for this
+        // spawn rather than losing the whole run; a kill nobody asked for (killedFor null/'error')
+        // is a genuine tooling failure instead.
+        if (supervisedKill) {
           usage = {};
           usageEstimated = true;
         } else {
@@ -356,6 +414,12 @@ export async function climb({
 
       if (tokensNovel >= budgetTokens) {
         stoppedBecause = 'budget';
+        break;
+      }
+      // Addendum G: an overshoot is this harness double-advancing, never the agent falling off
+      // anything -- it must never be scored as a fall ('fail') or a clean top ('top').
+      if (outcome.killedFor === 'overshoot') {
+        stoppedBecause = 'error';
         break;
       }
       if (outcome.killedFor === 'wall') {
@@ -435,14 +499,30 @@ export async function climb({
       violations = 0;
     }
 
+    // Addendum G: "Turns are counted at the API, not by the shim." codex's native round-three run
+    // reported 0 turns because its shell didn't inherit the shim's PATH -- the shim never saw a
+    // single invocation even though bru was genuinely being run. Turns is now the number of
+    // requests in the admin log whose User-Agent starts with 'bruno-runtime/' (every genuine bru
+    // invocation sends that, uniformly across drivers, regardless of how the CLI happened to reach
+    // it). The shim's own turns.jsonl stays in the transcript as a secondary log only.
     const shimTurns = await readShimTurns(sandboxDir);
-    // Addendum F: "Turns = shim lines." A message-loop run counts model turns; here the harness
-    // never sees the CLI's own turns, only how many times it actually invoked bru.
-    const turns = shimTurns.length;
     for (const t of shimTurns) transcript.push({ ts: t.ts, type: 'turn', argv: t.argv });
     transcript.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
 
+    let turns = 0;
+    try {
+      const logBody = await adminGet(adminBase, '/admin/log');
+      const entries = Array.isArray(logBody.data) ? logBody.data : [];
+      turns = entries.filter((e) => typeof e.ua === 'string' && e.ua.startsWith('bruno-runtime/')).length;
+    } catch {
+      turns = 0;
+    }
+
     const result = {
+      // Addendum G: "the board groups rows by ladder version and marks the current one" only
+      // works if a run records which ladder it climbed. Stamp it here, at write time, so
+      // score.js/board.js read a real version instead of falling back to 'unknown' forever.
+      version: LADDER_VERSION,
       model: model || cliName || 'fake',
       // cliName names the --cli flag for a real run; a test injecting an adapter object directly
       // (climb({cli: ...})) has no cliName, so fall back to the adapter's own declared name.

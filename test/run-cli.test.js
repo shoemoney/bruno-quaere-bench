@@ -13,10 +13,9 @@ import { mkdtemp, writeFile, chmod, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os';
 import path from 'node:path';
 
-import { makeWorld, fieldName } from '../src/world.js';
+import { makeWorld, fieldName, VERSION as LADDER_VERSION } from '../src/world.js';
 import { makeRung } from '../src/ladder/rung.js';
 import { climb, bruShimSource } from '../src/harness/run-cli.js';
-import { superviseProcess, killTree } from '../src/harness/supervise.js';
 import { buildTaskMd } from '../src/harness/task-md.js';
 import { resolveBru } from '../src/harness/sandbox.js';
 
@@ -225,43 +224,9 @@ test('buildTaskMd: throws without baseUrl/apiKey', () => {
   assert.throws(() => buildTaskMd({ baseUrl: 'http://x' }), /apiKey/);
 });
 
-// ---------------------------------------------------------------------------
-// supervise.js in isolation
-// ---------------------------------------------------------------------------
-
-test('killTree: a no-op on a process that already exited never throws', async () => {
-  const { spawn } = await import('node:child_process');
-  const child = spawn(process.execPath, ['-e', 'process.exit(0)']);
-  await new Promise((resolve) => child.on('exit', resolve));
-  assert.doesNotThrow(() => killTree(child));
-});
-
-test('superviseProcess: a wall-clock deadline kills the tree and reports killedFor "wall"', async () => {
-  const outcome = await superviseProcess({
-    cmd: process.execPath,
-    args: ['-e', 'setTimeout(() => {}, 60000)'],
-    env: process.env,
-    adminBase: 'http://127.0.0.1:1', // never reached: nothing to submit in this test
-    wallMsLeft: 100,
-    pollMs: 5000,
-  });
-  assert.equal(outcome.killedFor, 'wall');
-  assert.equal(outcome.timedOut, true);
-});
-
-test('superviseProcess: a process that just exits on its own resolves with killedFor null', async () => {
-  const outcome = await superviseProcess({
-    cmd: process.execPath,
-    args: ['-e', 'console.log("hi"); process.exit(3)'],
-    env: process.env,
-    adminBase: 'http://127.0.0.1:1',
-    wallMsLeft: 5000,
-    pollMs: 5000,
-  });
-  assert.equal(outcome.killedFor, null);
-  assert.equal(outcome.exitCode, 3);
-  assert.match(outcome.stdout, /hi/);
-});
+// supervise.js's own primitives (killTree, gracefulKillTree, the baseline/drain/overshoot
+// contract) are exercised in test/supervise.test.js, not here -- this file is climb()'s own
+// integration surface: task-md.js, the bru shim, and the whole CLI-adapter loop.
 
 // ---------------------------------------------------------------------------
 // climb() end to end, fake adapter
@@ -299,7 +264,11 @@ test('climb(): a fake CLI adapter that reads TASK.md, creates rung 0 via fetch, 
     assert.equal(result.modelMismatch, false);
     assert.equal(result.usageEstimated, false);
     assert.equal(result.resumes, 0);
-    assert.equal(result.turns, 0, 'the fake adapter never calls bru, so shim-logged turns is 0');
+    // Addendum G: turns is counted from the admin log's bruno-runtime/ User-Agent entries, not
+    // the shim. This fake adapter talks over plain fetch (never bru), so neither source has
+    // anything to count -- see the dedicated "turns-from-admin-log" test below for the case where
+    // they'd actually disagree.
+    assert.equal(result.turns, 0, 'the fake adapter never calls bru, so admin-log turns is 0');
     // The fake adapter talks over plain fetch, never bru -- that is exactly a violation per
     // Addendum F's detection rule, and it should show up rather than be silently absorbed.
     assert.ok(result.violations >= 1, 'fetch, not bru, should be caught as a User-Agent violation');
@@ -336,6 +305,12 @@ test('climb(): a fake CLI adapter that reads TASK.md, creates rung 0 via fetch, 
     const resultOnDisk = JSON.parse(await readFile(path.join(runDir, 'result.json'), 'utf8'));
     assert.equal(resultOnDisk.stoppedBecause, 'top');
     assert.equal(resultOnDisk.rung, 0);
+    // Addendum G: the board groups rows by ladder version, so result.json has to carry the real
+    // one. Without this, score.js's versionOf() falls back to 'unknown' for every run ever made
+    // and the board's "(current)" section is permanently empty -- a feature that only ever worked
+    // on hand-written test fixtures.
+    assert.equal(resultOnDisk.version, LADDER_VERSION);
+    assert.equal(result.version, LADDER_VERSION);
 
     // The sandbox collection (minus the harness's own bin/ shim dir) was copied out.
     const collectionSpec = await readFile(path.join(runDir, 'collection', 'spec.json'), 'utf8');
@@ -437,6 +412,227 @@ test('climb(): exceeding the token budget stops the climb as "budget" even after
     });
     assert.equal(result.stoppedBecause, 'budget');
     assert.equal(result.submissions[0].pass, true, 'the rung still passed; budget is a separate cap');
+  } finally {
+    await rm(runsDir, { recursive: true, force: true });
+    await rm(scriptDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Addendum G: "Turns are counted at the API, not by the shim."
+// ---------------------------------------------------------------------------
+
+// buildTurnsAdapterScript(): like buildFakeAdapterScript, but first fires `QUAERE_FAKE_BRU_TURNS`
+// extra GET /rungs/current requests carrying a literal `bruno-runtime/1.0.0` User-Agent -- standing
+// in for genuine bru invocations reaching the API by some path this run's shim never observed
+// (codex's round-three PATH miss, per Addendum G). The token/create/submit calls that follow use
+// fetch's own default User-Agent, same as every other fake adapter here, so they must NOT count.
+async function buildTurnsAdapterScript(dir) {
+  const scriptPath = path.join(dir, 'turns-cli.mjs');
+  const source = `#!/usr/bin/env node
+import { readFileSync } from 'node:fs';
+
+const taskText = readFileSync('TASK.md', 'utf8');
+const baseUrl = taskText.match(/Base URL: (\\S+)/)[1];
+const apiKey = taskText.match(/API key: (\\S+) --/)[1];
+const plan = JSON.parse(process.env.QUAERE_FAKE_PLAN);
+const naming = JSON.parse(process.env.QUAERE_FAKE_NAMING);
+const bruTurns = Number(process.env.QUAERE_FAKE_BRU_TURNS || '0');
+
+async function main() {
+  // Stand-ins for real bru invocations: same User-Agent a genuine bru sends, none of which this
+  // run's shim (never installed on this fake process's PATH) ever sees.
+  for (let i = 0; i < bruTurns; i += 1) {
+    await fetch(baseUrl + '/rungs/current', { headers: { 'user-agent': 'bruno-runtime/1.0.0' } });
+  }
+
+  const tokenRes = await fetch(baseUrl + '/auth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ [naming.apiKeyField]: apiKey }),
+  });
+  const tokenBody = await tokenRes.json();
+  const access = tokenBody[naming.accessTokenField];
+
+  const createRes = await fetch(baseUrl + naming.createPath, {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + access, 'content-type': 'application/json' },
+    body: JSON.stringify(plan.params),
+  });
+  const createBody = await createRes.json();
+
+  const submitRes = await fetch(baseUrl + naming.submitPath, {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + access, 'content-type': 'application/json' },
+    body: JSON.stringify({ [naming.assetsField]: [createBody.id] }),
+  });
+  const submitBody = await submitRes.json();
+
+  console.log(JSON.stringify({
+    usage: { tokensIn: 111, tokensOut: 22, tokensCached: 0, modelVersion: 'fake-turns-model' },
+    submit: submitBody,
+  }));
+}
+
+main().catch((err) => {
+  console.error(err.stack || String(err));
+  process.exit(1);
+});
+`;
+  await writeFile(scriptPath, source, 'utf8');
+  await chmod(scriptPath, 0o755);
+  return scriptPath;
+}
+
+async function makeTurnsAdapter(world, n, scriptDir, bruTurns) {
+  const rung = makeRung(world, n);
+  const step = rung.plan[rung.plan.length - 1];
+  const scriptPath = await buildTurnsAdapterScript(scriptDir);
+  const naming = {
+    apiKeyField: fieldName(world, 'api_key'),
+    accessTokenField: fieldName(world, 'access_token'),
+    assetsField: fieldName(world, 'assets'),
+    createPath: CREATE_PATH[step.args.kind],
+    submitPath: `/rungs/${n}/submit`,
+  };
+  return {
+    name: 'fake-turns',
+    build: () => ({
+      cmd: process.execPath,
+      args: [scriptPath],
+      env: {
+        QUAERE_FAKE_PLAN: JSON.stringify(step.args),
+        QUAERE_FAKE_NAMING: JSON.stringify(naming),
+        QUAERE_FAKE_BRU_TURNS: String(bruTurns),
+      },
+    }),
+    parseUsage: (stdout) => {
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        try {
+          const parsed = JSON.parse(lines[i]);
+          if (parsed && parsed.usage) return parsed.usage;
+        } catch {
+          // keep looking
+        }
+      }
+      return { tokensIn: 0, tokensOut: 0, tokensCached: 0 };
+    },
+    resume: () => null,
+  };
+}
+
+test('climb(): turns is counted from the admin log\'s bruno-runtime/ entries, not the shim -- the two can disagree', async () => {
+  const seed = 1;
+  const world = makeWorld(seed);
+  const runsDir = await tmpRunsDir();
+  const scriptDir = await mkdtemp(path.join(os.tmpdir(), 'quaere-turns-cli-'));
+  try {
+    const bruTurns = 5;
+    const adapter = await makeTurnsAdapter(world, 0, scriptDir, bruTurns);
+
+    const result = await climb({
+      cli: adapter,
+      model: 'fake-turns-model',
+      seed,
+      outDir: runsDir,
+      pollMs: 150,
+      wallMsLimit: 30_000,
+      topRung: 0,
+    });
+
+    assert.equal(result.stoppedBecause, 'top');
+    assert.equal(result.submissions[0].pass, true);
+    // This adapter never touches the sandbox's bin/bru shim at all -- turns.jsonl is empty --
+    // yet it made 5 requests carrying bru's own User-Agent. Per Addendum G, turns must come from
+    // the admin log, so it must be 5, not 0.
+    assert.equal(result.turns, bruTurns);
+
+    const runDir = path.join(runsDir, 'fake-turns-model', String(seed), '1');
+    const shimTurnsText = await readFile(path.join(runDir, 'sandbox', 'turns.jsonl'), 'utf8').catch(() => '');
+    assert.equal(shimTurnsText.trim(), '', 'the shim log stays empty; this adapter never invoked bin/bru');
+  } finally {
+    await rm(runsDir, { recursive: true, force: true });
+    await rm(scriptDir, { recursive: true, force: true });
+  }
+});
+
+
+// ---------------------------------------------------------------------------
+// Addendum G follow-up: the usage settle window after a supervised kill
+// ---------------------------------------------------------------------------
+
+// Measured on a real killed qwen run: the CLI wrote $HOME/.qwen/usage_record.jsonl at
+// 18:44:17.952 and parseUsage read it at 18:44:17.953. One millisecond early, and the run
+// reported zero tokens and a null model with the real answer already on disk. A killed spawn now
+// re-reads for a short settle window, so an adapter whose session file lands a beat after the
+// process exits still reports real usage.
+
+test('climb(): a killed spawn re-reads usage until the CLI\'s own shutdown write lands', async () => {
+  const seed = 1;
+  const world = makeWorld(seed);
+  const runsDir = await tmpRunsDir();
+  const scriptDir = await mkdtemp(path.join(os.tmpdir(), 'quaere-fake-cli-settle-'));
+  try {
+    const adapter = await makeFakeAdapter(world, 0, scriptDir);
+    // Stand in for "the session file isn't written yet": throw the way ai/codex/gemini/qwen's
+    // parseUsage does when it can find nothing, then succeed once the file would have landed.
+    let calls = 0;
+    const inner = adapter.parseUsage;
+    adapter.parseUsage = (stdout, home) => {
+      calls += 1;
+      if (calls < 3) throw new Error('fake adapter: session file not written yet');
+      return { ...inner(stdout, home), modelVersion: 'fake-model-1' };
+    };
+
+    const result = await climb({
+      cli: adapter,
+      model: 'fake-model-1',
+      seed,
+      attempt: 1,
+      outDir: runsDir,
+      pollMs: 150,
+      wallMsLimit: 30_000,
+      topRung: 0,
+    });
+
+    assert.ok(calls >= 3, 'parseUsage must be retried, not taken as final on the first miss');
+    assert.equal(result.usageEstimated, false, 'a late-landing session file is real usage, not an estimate');
+    assert.equal(result.modelVersion, 'fake-model-1');
+    assert.ok(result.tokensNovel > 0);
+  } finally {
+    await rm(runsDir, { recursive: true, force: true });
+    await rm(scriptDir, { recursive: true, force: true });
+  }
+});
+
+test('climb(): a killed spawn that never produces usage still ends as an estimate, not a throw', async () => {
+  const seed = 1;
+  const world = makeWorld(seed);
+  const runsDir = await tmpRunsDir();
+  const scriptDir = await mkdtemp(path.join(os.tmpdir(), 'quaere-fake-cli-nousage-'));
+  try {
+    const adapter = await makeFakeAdapter(world, 0, scriptDir);
+    adapter.parseUsage = () => {
+      throw new Error('fake adapter: nothing to read, ever');
+    };
+
+    const result = await climb({
+      cli: adapter,
+      model: 'fake-model-1',
+      seed,
+      attempt: 1,
+      outDir: runsDir,
+      pollMs: 150,
+      wallMsLimit: 30_000,
+      topRung: 0,
+    });
+
+    // The climb's outcome was already decided by the passing submission; a usage read that never
+    // succeeds costs the tokens column, not the run.
+    assert.equal(result.stoppedBecause, 'top');
+    assert.equal(result.rung, 0);
+    assert.equal(result.usageEstimated, true);
   } finally {
     await rm(runsDir, { recursive: true, force: true });
     await rm(scriptDir, { recursive: true, force: true });

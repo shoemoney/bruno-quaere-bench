@@ -35,14 +35,32 @@ function clamp01(v) {
   return Math.min(1, Math.max(0, v));
 }
 
+// Addendum G: snap a raw (pre-rounding) product to 6 decimal places. Seed 220 rung 0 found
+// 0.56in x 300dpi = 168.00000000000003 in IEEE-754 -- indistinguishable from 168 to any human
+// and to exact (integer) arithmetic, but enough for `roundToGrid`'s ceil/floor to jump a whole
+// extra grid step (roundTo=2, mode=up: raw/2 = 84.00000000000001, Math.ceil -> 85 -> 170, instead
+// of the exact 84 -> 168). Every unit-to-pixel conversion snaps here, before any rounding rule
+// runs, so the API, the reference (which only ever calls through this same function via the live
+// API), and this module's own answer-key computation all agree byte for byte with what integer
+// arithmetic would give.
+export function snap6(value) {
+  return Math.round(value * 1e6) / 1e6;
+}
+
 // Convert a value given in a house unit to px at the given dpi. `unit` must already be a
 // canonical unit code ('in'|'cm'|'pt') - resolving skill-defined synonym words to that code is
-// the caller's job (the skill/API layer), not this module's.
-function pxFromUnit(value, unit, dpi) {
-  if (unit === 'in') return value * dpi;
-  if (unit === 'cm') return (value / 2.54) * dpi;
-  if (unit === 'pt') return (value / 72) * dpi;
-  throw new Error(`unknown unit code: ${unit}`);
+// the caller's job (the skill/API layer), not this module's. Exported so the ladder generator
+// (grammar.js) can check, at compose time and with the exact same arithmetic, whether a candidate
+// dimension it is about to draw would land within 1e-6px of a grid boundary (see snap6's comment)
+// and redraw instead -- without media.js and the generator drifting into two slightly different
+// notions of "the exact product".
+export function pxFromUnit(value, unit, dpi) {
+  let raw;
+  if (unit === 'in') raw = value * dpi;
+  else if (unit === 'cm') raw = (value / 2.54) * dpi;
+  else if (unit === 'pt') raw = (value / 72) * dpi;
+  else throw new Error(`unknown unit code: ${unit}`);
+  return snap6(raw);
 }
 
 // Round `value` to the nearest multiple of `step` (default 1, i.e. plain integer px), per mode.

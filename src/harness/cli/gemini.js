@@ -162,7 +162,7 @@ export async function resume(sessionId, opts = {}) {
 // `stats.models` can (rarely) carry more than one key in a single response (e.g. a classifier
 // sub-call on a different model) -- token totals sum across every key; `modelVersion` is the
 // first key, which is the main turn's model in every captured fixture.
-export function parseUsage(stdout, home) { // eslint-disable-line no-unused-vars
+function parseFromStdout(stdout) {
   let data;
   try {
     data = JSON.parse(stdout);
@@ -194,4 +194,111 @@ export function parseUsage(stdout, home) { // eslint-disable-line no-unused-vars
     usageEstimated: false,
     sessionId: data.session_id || null,
   };
+}
+
+// Every chat transcript gemini wrote under this isolated home, newest-modified first:
+// `$HOME/.gemini/tmp/<project>/chats/session-<ts><id>.jsonl`.
+function geminiChatFiles(home) {
+  const tmpDir = path.join(home, '.gemini', 'tmp');
+  const files = [];
+  let projects;
+  try {
+    projects = fs.readdirSync(tmpDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    const chatsDir = path.join(tmpDir, project.name, 'chats');
+    let names;
+    try {
+      names = fs.readdirSync(chatsDir);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      if (!n.endsWith('.jsonl')) continue;
+      const full = path.join(chatsDir, n);
+      try {
+        files.push({ full, mtimeMs: fs.statSync(full).mtimeMs });
+      } catch {
+        // raced with the CLI's own cleanup; skip
+      }
+    }
+  }
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return files.map((f) => f.full);
+}
+
+// readUsageFromGeminiSessions(home) -> the parseUsage shape, or null. Addendum G: "Gemini's
+// reported model must be captured from the drained result, not left null." Gemini exits 0 on
+// SIGTERM WITHOUT printing its `-o json` result at all (verified live: stdout empty, exit code 0,
+// killedFor 'top'), so the drain alone cannot rescue it -- but the same session it just ran is on
+// disk in its own chat transcript, one JSON object per line.
+//
+// Shape captured from a live killed run, not reconstructed: `{"$set":{"messages":[...]}}` lines
+// rewrite the whole message list, plain message lines append to it, and each assistant message
+// (`type: 'gemini'`) carries `model` plus `tokens: {input, output, cached, thoughts, tool,
+// total}`. The same message id is written TWICE (a streaming update, then the final), so ids are
+// deduped. `tokens.input`/`cached` are running context totals (monotonically increasing across
+// the session, matching `-o json`'s `stats.models[*].tokens.prompt`), so the last message wins
+// for those; `output`/`thoughts` are per-message spend and are summed.
+export function readUsageFromGeminiSessions(home) {
+  if (!home) return null;
+  for (const file of geminiChatFiles(home)) {
+    let text;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    let sessionId = null;
+    const seen = new Set();
+    let tokensOut = 0;
+    let lastInput = 0;
+    let lastCached = 0;
+    let modelVersion = null;
+    const take = (m) => {
+      if (!m || typeof m !== 'object' || m.type !== 'gemini') return;
+      if (m.id && seen.has(m.id)) return;
+      if (m.id) seen.add(m.id);
+      const t = m.tokens || {};
+      tokensOut += (t.output || 0) + (t.thoughts || 0);
+      if (t.input) lastInput = t.input;
+      if (t.cached) lastCached = t.cached;
+      if (m.model) modelVersion = m.model;
+    };
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let entry;
+      try {
+        entry = JSON.parse(trimmed);
+      } catch {
+        continue; // partially-written last line from a killed process
+      }
+      if (entry.sessionId) sessionId = entry.sessionId;
+      if (entry.$set && Array.isArray(entry.$set.messages)) {
+        for (const m of entry.$set.messages) take(m);
+      } else {
+        take(entry);
+      }
+    }
+    if (!modelVersion && tokensOut === 0 && lastInput === 0) continue;
+    return { tokensIn: lastInput, tokensCached: lastCached, tokensOut, modelVersion, usageEstimated: false, sessionId };
+  }
+  return null;
+}
+
+// parseUsage(stdout, home?) -> the shape above. stdout first; on a killed run (empty or truncated
+// stdout) fall back to the isolated home's own chat transcript so the run still reports real
+// tokens and a real model instead of nulls.
+export function parseUsage(stdout, home) {
+  try {
+    return parseFromStdout(stdout);
+  } catch (err) {
+    const fromSession = readUsageFromGeminiSessions(home);
+    if (fromSession) return fromSession;
+    throw err;
+  }
 }

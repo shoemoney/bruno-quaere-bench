@@ -269,3 +269,34 @@ test('kimi CLI live smoke: a trivial prompt produces a parseable stream-json rep
     assert.ok(usage.sessionId);
   });
 });
+
+
+// --- Addendum G: a killed kimi never prints its session.resume_hint line ------------------------
+//
+// parseUsage used to need the session id off stdout to find the wire file at all, so a
+// SIGTERMed run fell straight through to the chars/4 estimate: usageEstimated true and a null
+// model, on a run whose real numbers were sitting on disk the whole time. The isolated home is
+// fresh per run, so the newest wire.jsonl under it IS this spawn's session.
+
+test('parseUsage finds the newest wire.jsonl even with no session id on stdout (killed run)', async () => {
+  await withTempDir(async (dir) => {
+    const home = path.join(dir, 'home');
+    await seedFixtureSession(home);
+    const usage = parseUsage('', home);
+    assert.equal(usage.usageEstimated, false, 'real usage, not a chars/4 estimate');
+    assert.equal(usage.tokensIn, 19914);
+    assert.equal(usage.tokensOut, 48);
+    assert.equal(usage.modelVersion, 'kimi-code/k3');
+    // Nothing on stdout said which session this was, so the id stays null even though the
+    // numbers are real -- run-cli.js only needs it to resume, and a killed run is not resumed.
+    assert.equal(usage.sessionId, null);
+  });
+});
+
+test('parseUsage still falls back to the chars/4 estimate when the home has no session at all', async () => {
+  await withTempDir(async (dir) => {
+    const usage = parseUsage('some text that is not json\n', path.join(dir, 'empty-home'));
+    assert.equal(usage.usageEstimated, true);
+    assert.equal(usage.modelVersion, null);
+  });
+});

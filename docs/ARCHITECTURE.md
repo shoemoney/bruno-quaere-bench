@@ -88,7 +88,7 @@ hashArtifact(bytes: Uint8Array): string    // sha256 of bytes, the only thing th
 
 // world.js
 World = {
-  seed, version: '0.2.0',
+  seed, version: '0.3.0',
   vocab: { workspace, project, asset, library },   // e.g. 'studio','scene','clip','library' (nouns used in paths and spec)
   ids: { style: 'uuid'|'ulid'|'prefixed'|'int', prefixes: {workspace,project,asset,job,lora} },
   naming: 'snake'|'camel',                         // field convention for the API
