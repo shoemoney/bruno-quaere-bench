@@ -1,0 +1,14 @@
+{
+  "name": "bruno-quaere",
+  "version": "0.1.0",
+  "description": "Bruno QUAERE: Quantitative Unseen Agentic Endpoint Reasoning Evaluation. A seeded deterministic media API and a hundred-rung task ladder, climbed with the Bruno CLI only.",
+  "type": "module",
+  "bin": { "quaere": "bin/quaere.js" },
+  "scripts": {
+    "test": "node --test test/",
+    "serve": "node bin/quaere.js serve",
+    "lint": "node --check bin/quaere.js && find src -name '*.js' -exec node --check {} +"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT"
+}
