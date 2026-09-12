@@ -1,5 +1,5 @@
 {
-  "name": "bruno-quaere",
+  "name": "bruno-quaere-bench",
   "version": "0.1.0",
   "description": "Bruno QUAERE: Quantitative Unseen Agentic Endpoint Reasoning Evaluation. A seeded deterministic media API and a hundred-rung task ladder, climbed with the Bruno CLI only.",
   "type": "module",
