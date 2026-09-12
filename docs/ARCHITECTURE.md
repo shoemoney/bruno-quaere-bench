@@ -479,3 +479,10 @@ Fixed seven, OpenRouter ids verified with `tools` in `supported_parameters`:
 `openai/gpt-6-astra`, `x-ai/grok-4.6`, `deepseek/deepseek-v4.1-flash`, `moonshotai/kimi-k3`,
 `qwen/qwen3.8-max-0902`, `anthropic/claude-fable-5.1`, `google/gemini-3.8-flash`.
 Never the `:batch`, `-pro`, or `multi-agent` variants.
+- **(06:36) gpt-6-astra was cut at rung 59 by the harness, not the task.** Turn 445 was sent at
+  160,107 input tokens, over the 160,000 limit, and the next call returned a generic
+  `400: Provider returned error` that the context-length classifier did not recognize, so no trim
+  and retry happened. Rules: (1) trim BEFORE a call whenever the last reported `input_tokens` is
+  at or above 90 percent of `--context-limit`, never after; (2) any 400 or 413 from a call made
+  at or above 85 percent of the limit is treated as context-length: trim to 40 percent and retry
+  once; (3) fake-driver tests for both. That run is voided and rerun.
