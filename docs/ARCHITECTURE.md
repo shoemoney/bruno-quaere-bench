@@ -444,3 +444,31 @@ the harness, not the model.
   test for all 100 rungs on seeds 1..3. Re-baselining hashes is fine; nothing is published yet.
 - **Admin bind.** `ADMIN_BIND` env (default `127.0.0.1`); the Dockerfile sets `0.0.0.0` so the
   mapped 8081 answers. The harness always uses loopback.
+
+## Addendum E: a malformed submission is a 422, not a fall; transcripts carry tool results
+
+Added 2026-09-12 06:10 after calibration round 1.
+
+- **claude-fable-5.1 fell at rung 0 on a shell-quoting slip, not on the task.** It passed
+  `--env-var submitAssets=["asse_8e4_37"]`; the sandbox tokenizer (correctly, like any shell)
+  stripped the quotes, the interpolated body became invalid JSON, the server parsed an empty
+  body, recorded a submission with no assets, and the run ended. Its reasoning up to that point
+  was exact (0.85 x 1.09 cm at 300 dpi to 96 x 128 px on a 16 grid, correct). kimi-k3 used the
+  working pattern (`"assets": ["{{assetId}}"]` in the file, a bare id in `--env-var`) and climbed
+  to rung 11.
+- **Rule:** `POST /rungs/{n}/submit` returns 422 problem+json and records NOTHING when the body
+  is not valid JSON, `assets` is missing or not an array, or any id does not resolve to an asset
+  the caller can see. A submission is recorded only when every id resolves. Wrong count, wrong
+  order, or wrong hashes still fail the rung: pickiness is about the artifact, never about JSON
+  transport. Add tests for all three 422 cases and for the recorded-only-when-resolved rule.
+- **Transcripts must include tool results.** `transcript.jsonl` currently records assistant text,
+  tool calls, and usage only. Add `toolResults: [{id, name, output (truncated to 4 KB), ms}]` per
+  turn. Without it the fall above was undiagnosable from the transcript alone.
+- **Degenerate output is its own stop reason.** kimi-k3 collapsed into repeated `<|close|>`
+  tokens with `stop: 'length'` and no tool calls at rung 11. Two consecutive turns with no tool
+  call and `stop === 'length'` set `stoppedBecause: 'degenerate'`; the fall rung stands.
+- **Model selection filters on tool support.** OpenRouter's `/models` entries carry
+  `supported_parameters`; pick only ids that include `tools`. `x-ai/grok-4.20-multi-agent`
+  answered `404 No endpoints found that support tool use`. Choose that vendor's tool-capable
+  flagship instead.
+- Runs affected by the 422 rule (round 1 fable) are rerun, not rescored.
