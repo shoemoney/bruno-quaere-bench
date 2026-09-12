@@ -74,7 +74,10 @@ function fillPrompt(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => (key in vars ? String(vars[key]) : `{{${key}}}`));
 }
 
-function resolveDriver(driverName, { model, systemPrompt }) {
+// Exported for test/harness-transcript.test.js: proves the xai/deepseek presets actually wire up
+// the right baseUrl/key env var without needing a full climb() (or a real network call -- tests
+// stub global.fetch and inspect what createDriver's returned {step} sends it).
+export function resolveDriver(driverName, { model, systemPrompt }) {
   if (driverName === 'anthropic') {
     return createAnthropicDriver({ model, apiKey: process.env.ANTHROPIC_API_KEY, systemPrompt });
   }
@@ -94,6 +97,20 @@ function resolveDriver(driverName, { model, systemPrompt }) {
       cacheControl: true,
     });
   }
+  // Generic openai-compatible provider presets: same Chat Completions wire protocol as `openai`,
+  // just a different baseUrl and key env var. Model ids are the provider's own, never verified
+  // here (that's the operator's job, same as openrouter).
+  if (driverName === 'xai') {
+    return createOpenAiDriver({ model, apiKey: process.env.XAI_API_KEY, baseUrl: 'https://api.x.ai/v1', systemPrompt });
+  }
+  if (driverName === 'deepseek') {
+    return createOpenAiDriver({
+      model,
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      baseUrl: 'https://api.deepseek.com',
+      systemPrompt,
+    });
+  }
   throw new Error(`unknown driver: ${driverName}`);
 }
 
@@ -103,6 +120,18 @@ function resolveDriver(driverName, { model, systemPrompt }) {
 // 5xx, sockets): retrying the identical request fails identically forever, only trimming helps.
 const CONTEXT_LENGTH_ERROR =
   /context[_ ]length|context.window|too many tokens|prompt is too long|maximum context|input is too long/i;
+
+// Addendum E (06:36, gpt-6-astra): a generic 400/413 that does NOT match the message-shaped
+// regex above is still context-length if the call that produced it was made near the limit --
+// that is exactly the failure that cut gpt-6-astra at rung 59 with no trim-and-retry. Only
+// classify this way when the call was already at or above 85% of contextLimit; a 400 from a
+// nearly-empty context is some other, real error and must not be swallowed as recoverable.
+const GENERIC_4XX_ERROR = /\b(400|413)\b/;
+
+function isContextLengthError(message, estimateTokens, contextLimit) {
+  if (CONTEXT_LENGTH_ERROR.test(message)) return true;
+  return GENERIC_4XX_ERROR.test(message) && estimateTokens >= contextLimit * 0.85;
+}
 
 function trimNote(removed) {
   return `[context trimmed: ${removed} earlier turns removed. Files you wrote in the sandbox persist.]`;
@@ -129,7 +158,26 @@ function trimToFraction(messages, contextLimit, fraction) {
     msgs = msgs.slice(1);
     removed += 1;
   }
+  // A tool result whose assistant tool_calls message was just trimmed away is an orphan, and both
+  // wire formats reject it (OpenAI 400s on a `role: "tool"` with no matching tool_call_id).
+  while (msgs.length > 1 && msgs[0].role === 'tool') {
+    msgs = msgs.slice(1);
+    removed += 1;
+  }
   return { messages: msgs, removed };
+}
+
+// Addendum E: transcript tool results are capped at 4 KB so a giant `bru run` dump doesn't blow
+// up transcript.jsonl. Cuts on a UTF-8 boundary rather than mid-codepoint.
+const TOOL_RESULT_MAX_BYTES = 4096;
+
+function truncateToBytes(str, maxBytes) {
+  const s = str == null ? '' : String(str);
+  if (Buffer.byteLength(s, 'utf8') <= maxBytes) return s;
+  const buf = Buffer.from(s, 'utf8').subarray(0, maxBytes);
+  let end = buf.length;
+  while (end > 0 && (buf[end - 1] & 0xc0) === 0x80) end -= 1;
+  return `${buf.subarray(0, end).toString('utf8')}…[truncated]`;
 }
 
 async function runTool(sandbox, call) {
@@ -317,6 +365,9 @@ export async function climb({
   // Addendum D: proactive context trimming threshold, in estimated tokens. The harness trims
   // down to 60% of this on a normal breach, 40% on a provider context-length error.
   contextLimit = 160_000,
+  // Highest rung that counts as the top: clearing it stops the climb with stoppedBecause 'top'.
+  // `quaere run --max-rung N` exposes it; a short calibration climb can cap well below 99.
+  topRung = 99,
 } = {}) {
   const world = makeWorld(seed);
   const runDir = path.join(outDir, String(model || driverName), String(seed), String(attempt));
@@ -371,6 +422,11 @@ export async function climb({
     let turns = 0;
     let lastSubmissionCount = 0;
     let noToolStreak = 0;
+    // Addendum E (kimi-k3, rung 11): two consecutive turns with no tool call AND stop === 'length'
+    // means the model collapsed into repeating filler, not that it is thinking -- distinct from
+    // (and reached before) the generic 3-turn noToolStreak, which covers a model that just forgot
+    // to call a tool for reasons other than degenerate repetition.
+    let degenerateStreak = 0;
 
     turnLoop: while (turns < maxTurns) {
       if (Date.now() - startedAt >= wallMsLimit) {
@@ -379,11 +435,12 @@ export async function climb({
       }
       turns += 1;
 
-      // Addendum D: trim BEFORE sending, using what we already know about the context we're
-      // about to build -- the last real input_tokens the provider reported, or (turn 1, nothing
-      // reported yet) a chars/4 estimate of the messages themselves.
+      // Addendum E (06:36, gpt-6-astra): trim BEFORE sending whenever the last reported
+      // input_tokens is already at or above 90% of contextLimit, never wait for it to actually
+      // exceed the limit -- gpt-6-astra's fatal call went out at turn 445's 160,107 tokens
+      // against a 160,000 limit because the old check only fired once already over.
       const preEstimate = contextEstimate != null ? contextEstimate : estimateTokensOf(messages);
-      if (preEstimate > contextLimit) {
+      if (preEstimate >= contextLimit * 0.9) {
         const { messages: trimmed, removed } = trimToFraction(messages, contextLimit, 0.6);
         if (removed > 0) {
           messages = [...trimmed, { role: 'user', content: trimNote(removed) }];
@@ -392,6 +449,10 @@ export async function climb({
           contextEstimate = null;
         }
       }
+      // What we're actually about to send this call, after any proactive trim just above --
+      // used to classify a generic 400/413 below as context-length only when the call itself
+      // was made near the limit (Addendum E rule 2).
+      const callEstimate = contextEstimate != null ? contextEstimate : estimateTokensOf(messages);
 
       // A live provider call is the one step here that fails for reasons that have nothing to do
       // with the climb: 429s, 5xx, and socket resets. Letting those throw out of climb() loses the
@@ -402,9 +463,11 @@ export async function climb({
       try {
         stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - (Date.now() - startedAt));
       } catch (err) {
-        // Addendum D: a context-length error is not a fall -- trim harder (40%) and retry once;
-        // only if that retry also fails does the run actually end in 'error'.
-        if (CONTEXT_LENGTH_ERROR.test(err.message)) {
+        // Addendum D/E: a context-length error is not a fall -- trim harder (40%) and retry once;
+        // only if that retry also fails does the run actually end in 'error'. Addendum E widens
+        // detection beyond the message-shaped regex: any 400/413 from a call made at or above 85%
+        // of contextLimit is treated as context-length too, since providers don't all say so.
+        if (isContextLengthError(err.message, callEstimate, contextLimit)) {
           const { messages: trimmed, removed } = trimToFraction(messages, contextLimit, 0.4);
           if (removed > 0) {
             messages = [...trimmed, { role: 'user', content: trimNote(removed) }];
@@ -451,14 +514,18 @@ export async function climb({
       prevOutputTokens = outputTokens;
       contextEstimate = inputTokens || contextEstimate;
 
-      transcript.push({
+      // Addendum E: transcripts must carry tool results -- `toolResults` is filled in below, after
+      // the tool calls (if any) actually run, by mutating this same object still sitting in
+      // `transcript`.
+      const transcriptEntry = {
         turn: turns,
         assistant: stepResult.assistant,
         toolCalls: stepResult.toolCalls,
         usage,
         novel: novelDelta,
         stop: stepResult.stop,
-      });
+      };
+      transcript.push(transcriptEntry);
 
       if (tokensNovel >= budgetTokens) {
         stoppedBecause = 'budget';
@@ -470,6 +537,13 @@ export async function climb({
       const toolCalls = stepResult.toolCalls || [];
       if (toolCalls.length === 0) {
         noToolStreak += 1;
+        // Addendum E: degenerate stop reason -- two turns running with no tool call and the
+        // provider itself saying it hit its length cap, not that it chose to stop.
+        degenerateStreak = stepResult.stop === 'length' ? degenerateStreak + 1 : 0;
+        if (degenerateStreak >= 2) {
+          stoppedBecause = 'degenerate';
+          break;
+        }
         if (noToolStreak >= 3) {
           stoppedBecause = 'error';
           break;
@@ -485,12 +559,18 @@ export async function climb({
         continue;
       }
       noToolStreak = 0;
+      degenerateStreak = 0;
 
+      const toolResults = [];
       for (const call of toolCalls) {
+        const toolStartedAt = Date.now();
         // eslint-disable-next-line no-await-in-loop
         const outcome = await runTool(sandbox, call);
+        const ms = Date.now() - toolStartedAt;
+        toolResults.push({ id: call.id, name: call.name, output: truncateToBytes(outcome.content, TOOL_RESULT_MAX_BYTES), ms });
         messages = [...messages, { role: 'tool', toolCallId: call.id, name: call.name, content: outcome.content, isError: outcome.isError }];
       }
+      transcriptEntry.toolResults = toolResults;
 
       // eslint-disable-next-line no-await-in-loop
       const subsBody = await adminGet(adminBase, '/admin/submissions');
@@ -500,7 +580,7 @@ export async function climb({
           const s = subs[i];
           submissions.push(s);
           if (s.pass) {
-            if (s.rung >= 99) {
+            if (s.rung >= topRung) {
               stoppedBecause = 'top';
               break turnLoop;
             }
@@ -527,8 +607,25 @@ export async function climb({
     await copyCollection(sandboxDir, collectionDir);
     const trap = await computeTrap(world, collectionDir);
 
+    // Addendum F: violations are counted from the admin log's User-Agent check, published by the
+    // [api] workstream at `GET /admin/violations`. Read defensively -- adminGet never throws on a
+    // non-2xx (it just returns whatever JSON body came back), so an instance that doesn't
+    // implement the route yet reports 0 rather than crashing the run.
+    let violations = 0;
+    try {
+      const violationsBody = await adminGet(adminBase, '/admin/violations');
+      if (typeof violationsBody.count === 'number') violations = violationsBody.count;
+      else if (Array.isArray(violationsBody.data)) violations = violationsBody.data.length;
+    } catch {
+      violations = 0;
+    }
+
     const result = {
       model: model || driverName,
+      // Addendum F: which driver produced this run -- message-loop drivers here (anthropic,
+      // openai, openrouter, xai, deepseek); the `cli:*` drivers under src/harness/cli/ are a
+      // separate workstream and report their own value for this field.
+      driver: driverName || null,
       modelVersion: model || null,
       seed,
       attempt,
@@ -549,6 +646,15 @@ export async function climb({
       submissions,
       stoppedBecause,
       driverError,
+      // Addendum F fields. The message-loop path here never resumes a killed session (that's the
+      // CLI drivers' job) and always has real, not estimated, provider usage, so those two are
+      // fixed; violations comes from the admin log above; modelMismatch has nothing to compare
+      // against outside the CLI drivers (which check the tool's own reported model against what
+      // was requested) so it stays false here.
+      violations,
+      resumes: 0,
+      modelMismatch: false,
+      usageEstimated: false,
     };
 
     await writeFile(path.join(runDir, 'transcript.jsonl'), `${transcript.map((t) => JSON.stringify(t)).join('\n')}\n`);

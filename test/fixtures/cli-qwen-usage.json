@@ -1,0 +1,242 @@
+[
+    {
+        "type": "system",
+        "subtype": "init",
+        "uuid": "82099c1d-d3cb-4d60-adc9-55eeb9598f6c",
+        "session_id": "82099c1d-d3cb-4d60-adc9-55eeb9598f6c",
+        "cwd": "/Users/shoemoney/Projects/bruno-awareness-ideas",
+        "tools": [
+            "web_search",
+            "read_mcp_resource",
+            "skill",
+            "read_file",
+            "zoom_image",
+            "cron_create",
+            "cron_list",
+            "cron_delete",
+            "task_stop",
+            "web_fetch",
+            "loop_wakeup",
+            "get_goal",
+            "update_goal",
+            "agent",
+            "grep_search",
+            "glob",
+            "edit",
+            "notebook_edit",
+            "run_shell_command",
+            "record_artifact",
+            "monitor",
+            "tool_search",
+            "write_file",
+            "report_findings",
+            "list_agents",
+            "send_message",
+            "enter_worktree",
+            "exit_worktree"
+        ],
+        "mcp_servers": [],
+        "model": "qwen3.8-max",
+        "permission_mode": "yolo",
+        "slash_commands": [
+            "auth",
+            "batch",
+            "bug",
+            "clear",
+            "compress",
+            "compress-fast",
+            "computer-use",
+            "config",
+            "context",
+            "coordinate",
+            "curator",
+            "dataviz",
+            "diff",
+            "docs",
+            "doctor",
+            "effort",
+            "export",
+            "extension-creator",
+            "extensions",
+            "goal",
+            "goal-draft",
+            "hooks",
+            "import-config",
+            "init",
+            "insight",
+            "language",
+            "loop",
+            "model",
+            "new-app",
+            "output-style",
+            "qc-helper",
+            "review",
+            "simplify",
+            "stats",
+            "status",
+            "stuck",
+            "summary",
+            "tasks",
+            "update",
+            "workflow-creator",
+            "zvec-grep-install"
+        ],
+        "qwen_code_version": "0.23.3",
+        "agents": [
+            "general-purpose",
+            "Explore",
+            "statusline-setup",
+            "review-agent"
+        ]
+    },
+    {
+        "type": "assistant",
+        "uuid": "5f995c76-8c94-4ebb-bd4e-5649d54b32d5",
+        "session_id": "82099c1d-d3cb-4d60-adc9-55eeb9598f6c",
+        "parent_tool_use_id": null,
+        "message": {
+            "id": "5f995c76-8c94-4ebb-bd4e-5649d54b32d5",
+            "type": "message",
+            "role": "assistant",
+            "model": "qwen3.8-max",
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "The user says \"Reply with exactly: OK\". Simple.\n\nWait \u2014 there's a lot of context injected. But the actual user instruction is just to reply with \"OK\".\n\nHmm, but should I explore? No. The task is trivial. Reply with exactly: OK.\n\nShould I check memory? No need \u2014 nothing to remember here.\n\nJust reply \"OK\".",
+                    "signature": ""
+                }
+            ],
+            "stop_reason": null,
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0
+            }
+        }
+    },
+    {
+        "type": "assistant",
+        "uuid": "7ce03530-d9b5-42f7-ba1b-bd6fd07566b2",
+        "session_id": "82099c1d-d3cb-4d60-adc9-55eeb9598f6c",
+        "parent_tool_use_id": null,
+        "message": {
+            "id": "7ce03530-d9b5-42f7-ba1b-bd6fd07566b2",
+            "type": "message",
+            "role": "assistant",
+            "model": "qwen3.8-max",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "OK"
+                }
+            ],
+            "stop_reason": null,
+            "usage": {
+                "input_tokens": 24737,
+                "output_tokens": 81,
+                "cache_read_input_tokens": 0,
+                "total_tokens": 24818
+            }
+        }
+    },
+    {
+        "type": "result",
+        "subtype": "success",
+        "uuid": "4b77098a-5183-4131-9757-77fd27c4fdac",
+        "session_id": "82099c1d-d3cb-4d60-adc9-55eeb9598f6c",
+        "is_error": false,
+        "duration_ms": 14484,
+        "duration_api_ms": 7417,
+        "num_turns": 1,
+        "result": "OK",
+        "usage": {
+            "input_tokens": 35194,
+            "output_tokens": 296,
+            "cache_read_input_tokens": 0,
+            "total_tokens": 35490
+        },
+        "permission_denials": [],
+        "stats": {
+            "models": {
+                "qwen3.8-max": {
+                    "api": {
+                        "totalRequests": 2,
+                        "totalErrors": 0,
+                        "totalLatencyMs": 14393
+                    },
+                    "tokens": {
+                        "prompt": 35194,
+                        "candidates": 296,
+                        "total": 35490,
+                        "cached": 0,
+                        "thoughts": 202
+                    },
+                    "bySource": {
+                        "main": {
+                            "api": {
+                                "totalRequests": 1,
+                                "totalErrors": 0,
+                                "totalLatencyMs": 7380
+                            },
+                            "tokens": {
+                                "prompt": 24737,
+                                "candidates": 81,
+                                "total": 24818,
+                                "cached": 0,
+                                "thoughts": 77
+                            }
+                        },
+                        "managed-auto-memory-extractor": {
+                            "api": {
+                                "totalRequests": 1,
+                                "totalErrors": 0,
+                                "totalLatencyMs": 7013
+                            },
+                            "tokens": {
+                                "prompt": 10457,
+                                "candidates": 215,
+                                "total": 10672,
+                                "cached": 0,
+                                "thoughts": 125
+                            }
+                        }
+                    }
+                }
+            },
+            "tools": {
+                "totalCalls": 0,
+                "totalSuccess": 0,
+                "totalFail": 0,
+                "totalDurationMs": 0,
+                "totalDecisions": {
+                    "accept": 0,
+                    "reject": 0,
+                    "modify": 0,
+                    "auto_accept": 0
+                },
+                "byName": {}
+            },
+            "files": {
+                "totalLinesAdded": 0,
+                "totalLinesRemoved": 0
+            },
+            "skills": {
+                "totalCalls": 0,
+                "totalSuccess": 0,
+                "totalFail": 0,
+                "byName": {}
+            },
+            "generation": {
+                "timedRequests": 2,
+                "totalTtftMs": 6979,
+                "totalGenerationDurationMs": 7414,
+                "totalThroughputOutputTokens": 296,
+                "last": {
+                    "model": "qwen3.8-max",
+                    "ttftMs": 1665,
+                    "generationDurationMs": 5348,
+                    "outputTokens": 215
+                }
+            }
+        }
+    }
+]

@@ -25,17 +25,104 @@ import { rng, sub, pick, int } from '../seed.js';
 import { create, convert, combine, diff, applyLora } from '../media.js';
 import { createResourceStore, seedInitialData, listWorkspaces, listProjects, listAssetsForProject } from '../api/resources.js';
 
+
+// Difficulty bands. Three of the six columns are *inputs* the composers below read, and three are
+// the measured envelope of what those inputs produce:
+//
+//   params   INPUT.  A budget of stated leaves -- the numbers, colours and words the rung's text
+//            spells out and the agent has to transcribe without drift. A drawn canvas costs 3
+//            (across, down, ground colour); every shape on it costs 5 (kind-and-size, x, y,
+//            colour, opacity); every tone costs 5. shapeCountFor/noteCountFor/subsetFor spend it.
+//   kinds    INPUT.  Which media a rung in this band may ask for. Audio is measurably the easier
+//            path -- it skips unit conversion, the rounding grid and all geometry -- so it lives
+//            only at the bottom two bands; everything above is pictures.
+//   features INPUT.  name -> the first offset INSIDE the band at which that obligation switches
+//            on, so a band is itself a ramp rather than a flat shelf (see featureAt).
+//
+//   steps    measured plan length for this band across seeds 1-3 (see scripts/band-envelope.js).
+//   lookups  measured count of things the rung makes the agent go and find: a house-style label,
+//            a workspace/project label, a live behaviour the written reference gets wrong.
+//   quant    measured count of quantising operations: unit-to-pixel conversions and resizes, each
+//            of which re-rounds on the house grid.
+//
+// Round 2 of Addendum C calibration put gpt-6-astra at rung 59 with sixty first-try submissions
+// and zero failures, which means tiers 0-5 as they stood measured nothing about it. This table
+// and the composers that read it are that round's steepening: more shapes and tones per rung,
+// pictures instead of audio above tier 1, a house-style lookup and a percent resize pulled down
+// into rungs 10-39, trap-dependence pulled down into rungs 15-39, pagination that actually
+// paginates (page smaller than the subset) in every batch band, and post-render chains where
+// tiers 5 and 6 used to be a single call.
 export const BANDS = [
-  { tier: 0, min: 0, max: 9, steps: [1, 1], params: [3, 6], lookups: [0, 1], quant: [0, 1], behaviors: ['auth', 'create'] },
-  { tier: 1, min: 10, max: 19, steps: [2, 2], params: [6, 10], lookups: [1, 2], quant: [1, 2], behaviors: ['convert', 'idempotency'] },
-  { tier: 2, min: 20, max: 29, steps: [3, 3], params: [8, 12], lookups: [2, 2], quant: [2, 2], behaviors: ['combine', 'loraLookup'] },
-  { tier: 3, min: 30, max: 39, steps: [3, 4], params: [10, 14], lookups: [2, 3], quant: [2, 3], behaviors: ['diff', 'etag'] },
-  { tier: 4, min: 40, max: 49, steps: [4, 5], params: [12, 16], lookups: [3, 3], quant: [3, 3], behaviors: ['paginationBatch', 'rateLimit'] },
-  { tier: 5, min: 50, max: 59, steps: [5, 5], params: [14, 18], lookups: [3, 4], quant: [3, 4], behaviors: ['asyncRender', 'stateMachine'] },
-  { tier: 6, min: 60, max: 69, steps: [5, 6], params: [16, 20], lookups: [4, 4], quant: [4, 4], behaviors: ['tokenExpiry', 'hmacPublish'] },
-  { tier: 7, min: 70, max: 79, steps: [6, 7], params: [18, 22], lookups: [4, 5], quant: [5, 5], behaviors: ['contentNegotiation', 'softDelete'] },
-  { tier: 8, min: 80, max: 89, steps: [7, 8], params: [20, 24], lookups: [5, 5], quant: [5, 6], behaviors: ['liveTrap'] },
-  { tier: 9, min: 90, max: 99, steps: [8, 10], params: [22, 28], lookups: [5, 6], quant: [6, 7], behaviors: ['everything', 'roundingOrder3'] },
+  {
+    tier: 0, min: 0, max: 9,
+    steps: [1, 1], params: [13, 18], lookups: [0, 1], quant: [0, 1],
+    kinds: ['image', 'audio'],
+    features: {},
+    behaviors: ['auth', 'create'],
+  },
+  {
+    tier: 1, min: 10, max: 19,
+    steps: [3, 4], params: [18, 23], lookups: [1, 3], quant: [1, 3],
+    kinds: ['image', 'image', 'audio'],
+    features: { percentRound: 5, liveTrap: 5 },
+    behaviors: ['convert', 'idempotency', 'loraLookup'],
+  },
+  {
+    tier: 2, min: 20, max: 29,
+    steps: [4, 5], params: [23, 28], lookups: [2, 4], quant: [2, 2],
+    kinds: ['image'],
+    features: { liveTrap: 0, secondLora: 5 },
+    behaviors: ['combine', 'loraLookup', 'roundingOrder2', 'liveTrap'],
+  },
+  {
+    tier: 3, min: 30, max: 39,
+    steps: [5, 6], params: [28, 33], lookups: [2, 4], quant: [3, 3],
+    kinds: ['image'],
+    features: { liveTrap: 0, loraLookup: 5 },
+    behaviors: ['diff', 'etag', 'roundingOrder2', 'liveTrap'],
+  },
+  {
+    tier: 4, min: 40, max: 49,
+    steps: [5, 6], params: [30, 36], lookups: [3, 5], quant: [1, 1],
+    kinds: ['image'],
+    features: { liveTrap: 0, secondLora: 5 },
+    behaviors: ['paginationBatch', 'rateLimit', 'liveTrap'],
+  },
+  {
+    tier: 5, min: 50, max: 59,
+    steps: [6, 7], params: [33, 38], lookups: [3, 4], quant: [3, 4],
+    kinds: ['image'],
+    features: { save: 5 },
+    behaviors: ['asyncRender', 'stateMachine', 'roundingOrder2'],
+  },
+  {
+    tier: 6, min: 60, max: 69,
+    steps: [8, 8], params: [36, 41], lookups: [4, 4], quant: [4, 4],
+    kinds: ['image'],
+    features: { save: 0 },
+    behaviors: ['tokenExpiry', 'hmacPublish', 'roundingOrder2'],
+  },
+  {
+    tier: 7, min: 70, max: 79,
+    steps: [8, 8], params: [38, 44], lookups: [5, 5], quant: [2, 2],
+    kinds: ['image'],
+    features: { liveTrap: 0, secondLora: 0, secondGrow: 0 },
+    behaviors: ['contentNegotiation', 'softDelete', 'liveTrap'],
+  },
+  {
+    tier: 8, min: 80, max: 89,
+    steps: [9, 9], params: [41, 47], lookups: [6, 6], quant: [2, 2],
+    kinds: ['image'],
+    features: { liveTrap: 0, secondLora: 0, secondGrow: 0, thirdLora: 0 },
+    behaviors: ['liveTrap'],
+  },
+  {
+    tier: 9, min: 90, max: 99,
+    steps: [12, 12], params: [44, 53], lookups: [4, 4], quant: [5, 5],
+    kinds: ['image'],
+    features: { liveTrap: 0 },
+    behaviors: ['everything', 'roundingOrder3', 'liveTrap'],
+  },
 ];
 
 export function bandFor(n) {
@@ -160,8 +247,13 @@ function scaleChain(events, axis) {
 // than `floorPx` itself, so a fixed per-event buffer dominates them with room to spare.
 function requiredMin(events, axis, floorPx) {
   const minCum = scaleChain(events, axis);
+  // Absolute loss budget, charged BEFORE dividing by the tightest cumulative scale: a 'scale'
+  // lora re-quantises every shape dimension onto the house grid, which can be as coarse as 16px
+  // and can round DOWN, while a convert only rounds each scaled dimension to the nearest whole
+  // pixel. A chain of several of each can therefore lose real pixels on top of the scaling.
+  const loss = events.reduce((acc, e) => acc + (e.kind === 'loraScale' ? 16 : 1), 0);
   const buffer = events.length * 3;
-  return Math.ceil(floorPx / minCum) + buffer;
+  return Math.ceil((floorPx + loss) / minCum) + buffer;
 }
 
 // makeImageParams(world, r, {..., pxWidth, pxHeight, unit, minShapeW, minShapeH, minShapeR}):
@@ -328,117 +420,277 @@ export function runPlanLocallyTrace(world, plan) {
 }
 
 // ---------------------------------------------------------------------------
+// band-parameter interpretation
+// ---------------------------------------------------------------------------
+
+// featureAt(band, n, name): is the obligation `name` switched on at rung n? A band is a ramp, not
+// a shelf -- `features` maps a name to the first offset inside the band where it turns on, so
+// rungs 15-19 can carry an obligation rungs 10-14 do not without either of them being hand-written.
+function featureAt(band, n, name) {
+  const at = band.features[name];
+  return at !== undefined && n - band.min >= at;
+}
+
+// shapeCountFor / noteCountFor / subsetFor: spend the band's `params` leaf budget. A canvas costs
+// 3 leaves before any shape is drawn on it; a shape or a tone costs 5. A batch rung draws nothing
+// itself, so its budget buys library items to work through instead (capped at the 12 a seeded
+// project holds).
+function spend(band, r, perItem, overhead, cap) {
+  const [lo, hi] = band.params;
+  const min = Math.max(1, Math.round((lo - overhead) / perItem));
+  const max = Math.max(min, Math.round((hi - overhead) / perItem));
+  return Math.min(cap, int(r, min, Math.min(cap, max)));
+}
+
+function shapeCountFor(band, r) {
+  return spend(band, r, 5, 3, 12);
+}
+
+function noteCountFor(band, r) {
+  return spend(band, r, 5, 0, 12);
+}
+
+function subsetFor(band, r) {
+  return spend(band, r, 6, 0, 12);
+}
+
+// The page a batch rung is told to work in has to be SMALLER than the subset it has to cover, or
+// pagination is a word in the task text and nothing in the work. Round 2's batch bands asked for
+// four items four at a time, i.e. exactly one page.
+function pageSizeFor(band) {
+  return band.tier >= 7 ? 2 : 3;
+}
+
+// ---------------------------------------------------------------------------
+// chains: the shared post-create obligation list
+// ---------------------------------------------------------------------------
+
+// A chain is the ordered list of things a rung does to whatever the step before it produced.
+// grammar.js turns a chain into plan steps (chainSteps) and rung.js turns the SAME chain into
+// task text, so the plan and the prose can never drift apart. Kinds:
+//
+//   { kind:'lora', name }                  a house-style lookup by display label -- one lookup
+//   { kind:'shrink'|'grow', percent, format? }
+//                                          percentOfDims then convert: the agent has to read the
+//                                          size back off the live descriptor and let the house
+//                                          re-round it on the grid -- one quant op
+//   { kind:'resize', width, height, format?, scaleX, scaleY }
+//                                          convert to an absolute pixel target -- one quant op.
+//                                          scaleX/scaleY are carried for the geometry floor only
+//                                          and never reach the task text.
+//   { kind:'save', format }                convert to a file flavor, size untouched
+function chainScaleEvents(world, chain) {
+  const events = [];
+  for (const s of chain) {
+    if (s.kind === 'lora') {
+      const lora = findLora(world, s.name);
+      if (lora.op === 'scale') events.push({ kind: 'loraScale', amount: lora.amount });
+    } else if (s.kind === 'shrink' || s.kind === 'grow') {
+      events.push({ kind: 'convert', scaleX: s.percent / 100, scaleY: s.percent / 100 });
+    } else if (s.kind === 'resize') {
+      events.push({ kind: 'convert', scaleX: s.scaleX, scaleY: s.scaleY });
+    }
+  }
+  return events;
+}
+
+// chainSteps(chain, fromKey, prefix) -> {steps, lastKey}: the plan steps the chain expands to,
+// each one feeding the next. Result keys are prefixed so a chain can be spliced into any plan
+// without colliding with the keys that plan already uses.
+function chainSteps(chain, fromKey, prefix) {
+  const steps = [];
+  let cur = fromKey;
+  chain.forEach((s, i) => {
+    const key = `${prefix}${i}`;
+    if (s.kind === 'lora') {
+      steps.push({ op: 'lora', resultKey: key, args: { from: cur, loraName: s.name } });
+    } else if (s.kind === 'save') {
+      steps.push({ op: 'convert', resultKey: key, args: { from: cur, opts: { format: s.format } } });
+    } else if (s.kind === 'resize') {
+      const opts = { width: s.width, height: s.height };
+      if (s.format !== undefined) opts.format = s.format;
+      steps.push({ op: 'convert', resultKey: key, args: { from: cur, opts } });
+    } else {
+      const dimsKey = `${key}dims`;
+      steps.push({ op: 'compute', resultKey: dimsKey, args: { fn: 'percentOfDims', of: { $ref: cur }, percent: s.percent } });
+      const opts = { width: { $ref: dimsKey, field: 'width' }, height: { $ref: dimsKey, field: 'height' } };
+      if (s.format !== undefined) opts.format = s.format;
+      steps.push({ op: 'convert', resultKey: key, args: { from: cur, opts } });
+    }
+    cur = key;
+  });
+  return { steps, lastKey: cur };
+}
+
+// canvasPxRange(events, base): the created canvas has to survive the chain the shapes on it do.
+// percentOfDims floors a dimension at 1px and the grid rounding can then round that 1 DOWN to 0,
+// which would divide every shape on the canvas by zero. Start big enough that the tightest
+// cumulative scale in the chain still leaves a comfortable canvas at the far end.
+function canvasPxRange(events, base) {
+  const minCum = Math.min(scaleChain(events, 'x'), scaleChain(events, 'y'));
+  const minPx = Math.max(base, Math.ceil(96 / minCum));
+  return { minPx, maxPx: minPx * 2 };
+}
+
+// shapeFloors(events): the three minShape* overrides makeImageParams takes, for a canvas whose
+// shapes are about to go through `events`.
+function shapeFloors(events) {
+  return {
+    minShapeW: requiredMin(events, 'x', 8),
+    minShapeH: requiredMin(events, 'y', 8),
+    minShapeR: requiredMin(events, 'r', 4),
+  };
+}
+
+const SHRINK_PERCENT = [55, 85];
+const GROW_PERCENT = [120, 180];
+
+// ---------------------------------------------------------------------------
 // per-tier composers
 // ---------------------------------------------------------------------------
 
-function tier0(world, r) {
-  const kind = pick(r, ['image', 'audio']);
+function tier0(world, r, band) {
+  const kind = pick(r, band.kinds);
   let params;
   if (kind === 'image') {
     const { unit, pxWidth, pxHeight } = drawImageCanvas(r, { minPx: 40, maxPx: 200, useUnit: r() < 0.5 });
-    params = makeImageParams(world, r, { shapeCount: int(r, 1, 2), pxWidth, pxHeight, unit });
+    params = makeImageParams(world, r, { shapeCount: shapeCountFor(band, r), pxWidth, pxHeight, unit });
   } else {
-    params = makeAudioParams(r, { noteCount: int(r, 1, 2) });
+    params = makeAudioParams(r, { noteCount: noteCountFor(band, r) });
   }
   const plan = [{ op: 'create', resultKey: 'final', args: { kind, params } }];
   return { plan, submitKey: 'final', narrative: { tier: 0, kind, params } };
 }
 
-function tier1(world, r) {
-  const kind = pick(r, ['image', 'audio']);
+function tier1(world, r, band, n) {
+  const kind = pick(r, band.kinds);
   if (kind === 'audio') {
-    const params = makeAudioParams(r, { noteCount: int(r, 2, 3) });
-    const opts = { format: pick(r, ['wav', 'qa8']), sampleRate: pick(r, [22050, 44100, 48000]) };
+    // Two converts rather than one: the flavor change and the re-cut are separate rounds, so the
+    // agent has to chain a call onto the id the previous call handed back.
+    const params = makeAudioParams(r, { noteCount: noteCountFor(band, r) });
+    const format = pick(r, ['wav', 'qa8']);
+    const sampleRate = pick(r, [22050, 44100, 48000]);
     const plan = [
       { op: 'create', resultKey: 'a', args: { kind, params } },
-      { op: 'convert', resultKey: 'final', args: { from: 'a', opts } },
+      { op: 'convert', resultKey: 'b', args: { from: 'a', opts: { format } } },
+      { op: 'convert', resultKey: 'final', args: { from: 'b', opts: { sampleRate } } },
     ];
-    return { plan, submitKey: 'final', narrative: { tier: 1, kind, params, opts } };
+    return { plan, submitKey: 'final', narrative: { tier: 1, kind, params, format, sampleRate } };
   }
-  // Image path: the convert target is drawn *before* the shapes, so the exact scale factor this
-  // convert will apply is known up front and shapes are born big enough to survive it.
-  const { unit, pxWidth, pxHeight } = drawImageCanvas(r, { minPx: 80, maxPx: 300, useUnit: true });
-  const optsWidth = int(r, 100, 400);
-  const optsHeight = int(r, 100, 400);
-  const events = [{ kind: 'convert', scaleX: optsWidth / pxWidth, scaleY: optsHeight / pxHeight }];
-  const params = makeImageParams(world, r, {
-    shapeCount: int(r, 2, 3),
-    pxWidth,
-    pxHeight,
-    unit,
-    minShapeW: requiredMin(events, 'x', 8),
-    minShapeH: requiredMin(events, 'y', 8),
-    minShapeR: requiredMin(events, 'r', 4),
-  });
-  const opts = { format: pick(r, ['svg', 'png']), width: optsWidth, height: optsHeight };
-  const plan = [
-    { op: 'create', resultKey: 'a', args: { kind: 'image', params } },
-    { op: 'convert', resultKey: 'final', args: { from: 'a', opts } },
-  ];
-  return { plan, submitKey: 'final', narrative: { tier: 1, kind: 'image', params, opts } };
-}
-
-function tier2(world, r) {
-  const { unit, pxWidth, pxHeight } = drawImageCanvas(r, { minPx: 100, maxPx: 300, useUnit: true });
   const lora = pick(r, world.loras);
-  const optsWidth = int(r, 100, 400);
-  const optsHeight = int(r, 100, 400);
-  // Order matters: the plan applies the lora, *then* converts, so the chain has to reflect that
-  // order for the "smallest cumulative prefix" logic in scaleChain to hold.
-  const events = [];
-  if (lora.op === 'scale') events.push({ kind: 'loraScale', amount: lora.amount });
-  events.push({ kind: 'convert', scaleX: optsWidth / pxWidth, scaleY: optsHeight / pxHeight });
-  const params = makeImageParams(world, r, {
-    shapeCount: int(r, 2, 4),
-    pxWidth,
-    pxHeight,
-    unit,
-    minShapeW: requiredMin(events, 'x', 8),
-    minShapeH: requiredMin(events, 'y', 8),
-    minShapeR: requiredMin(events, 'r', 4),
-  });
-  const opts = { format: pick(r, ['svg', 'png']), width: optsWidth, height: optsHeight };
-  const plan = [
-    { op: 'create', resultKey: 'a', args: { kind: 'image', params } },
-    { op: 'lora', resultKey: 'b', args: { from: 'a', loraName: lora.name } },
-    { op: 'convert', resultKey: 'final', args: { from: 'b', opts } },
-  ];
-  return { plan, submitKey: 'final', narrative: { tier: 2, params, loraName: lora.name, opts } };
-}
-
-function tier3(world, r) {
-  const kind = pick(r, ['image', 'audio']);
-  let paramsA;
-  let paramsB;
-  if (kind === 'image') {
-    // diff never scales anything -- it is a pure set difference of the primitive lists -- so
-    // these two images carry no downstream scale events and use the tier-0 floor.
-    const a = drawImageCanvas(r, { minPx: 100, maxPx: 300, useUnit: false });
-    paramsA = makeImageParams(world, r, { shapeCount: int(r, 2, 4), pxWidth: a.pxWidth, pxHeight: a.pxHeight, unit: a.unit });
-    const b = drawImageCanvas(r, { minPx: 100, maxPx: 300, useUnit: false });
-    paramsB = makeImageParams(world, r, { shapeCount: int(r, 1, 3), pxWidth: b.pxWidth, pxHeight: b.pxHeight, unit: b.unit });
+  const format = pick(r, ['svg', 'png']);
+  let chain;
+  let canvas;
+  if (featureAt(band, n, 'percentRound')) {
+    // Rungs 15-19: the target size is a percent of a size the agent has to read off the live
+    // descriptor, so the house's grid rounding lands twice -- once on the created canvas, once
+    // on the resize -- instead of once.
+    chain = [{ kind: 'lora', name: lora.name }, { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT), format }];
+    canvas = drawImageCanvas(r, { ...canvasPxRange(chainScaleEvents(world, chain), 120), useUnit: true });
   } else {
-    paramsA = makeAudioParams(r, { noteCount: int(r, 2, 4) });
-    paramsB = makeAudioParams(r, { noteCount: int(r, 1, 3) });
+    canvas = drawImageCanvas(r, { minPx: 120, maxPx: 320, useUnit: true });
+    const width = int(r, 120, 400);
+    const height = int(r, 120, 400);
+    chain = [
+      { kind: 'lora', name: lora.name },
+      { kind: 'resize', width, height, format, scaleX: width / canvas.pxWidth, scaleY: height / canvas.pxHeight },
+    ];
   }
-  const plan = [
-    { op: 'create', resultKey: 'a', args: { kind, params: paramsA } },
-    { op: 'create', resultKey: 'b', args: { kind, params: paramsB } },
-    { op: 'diff', resultKey: 'final', args: { a: 'a', b: 'b', verifyEtag: true } },
-  ];
-  return { plan, submitKey: 'final', narrative: { tier: 3, kind, paramsA, paramsB } };
+  const events = chainScaleEvents(world, chain);
+  const params = makeImageParams(world, r, {
+    shapeCount: shapeCountFor(band, r),
+    pxWidth: canvas.pxWidth,
+    pxHeight: canvas.pxHeight,
+    unit: canvas.unit,
+    ...shapeFloors(events),
+  });
+  const { steps, lastKey } = chainSteps(chain, 'a', 'c');
+  const plan = [{ op: 'create', resultKey: 'a', args: { kind: 'image', params } }, ...steps];
+  return {
+    plan,
+    submitKey: lastKey,
+    narrative: { tier: 1, kind: 'image', params, chain, liveTrap: featureAt(band, n, 'liveTrap') },
+  };
 }
 
-function batchTier(world, r, { subsetSize, pageSize, withSideChecks }) {
+function tier2(world, r, band, n) {
+  const format = pick(r, ['svg', 'png']);
+  const chain = [
+    { kind: 'lora', name: pick(r, world.loras).name },
+    { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT), format },
+  ];
+  if (featureAt(band, n, 'secondLora')) chain.push({ kind: 'lora', name: pick(r, world.loras).name });
+  const events = chainScaleEvents(world, chain);
+  const canvas = drawImageCanvas(r, { ...canvasPxRange(events, 140), useUnit: true });
+  const params = makeImageParams(world, r, {
+    shapeCount: shapeCountFor(band, r),
+    pxWidth: canvas.pxWidth,
+    pxHeight: canvas.pxHeight,
+    unit: canvas.unit,
+    ...shapeFloors(events),
+  });
+  const { steps, lastKey } = chainSteps(chain, 'a', 'c');
+  const plan = [{ op: 'create', resultKey: 'a', args: { kind: 'image', params } }, ...steps];
+  return { plan, submitKey: lastKey, narrative: { tier: 2, params, chain, liveTrap: featureAt(band, n, 'liveTrap') } };
+}
+
+function tier3(world, r, band, n) {
+  const format = pick(r, ['svg', 'png']);
+  // Only the FIRST picture's shapes survive a diff (it is a set difference of the primitive
+  // lists), so only the first one carries the chain's scale events; the second is drawn at the
+  // unscaled floor.
+  const chain = [{ kind: 'shrink', percent: int(r, ...SHRINK_PERCENT), format }];
+  if (featureAt(band, n, 'loraLookup')) chain.push({ kind: 'lora', name: pick(r, world.loras).name });
+  const events = chainScaleEvents(world, chain);
+  const shapeCount = shapeCountFor(band, r);
+  const ca = drawImageCanvas(r, { ...canvasPxRange(events, 140), useUnit: true });
+  const paramsA = makeImageParams(world, r, {
+    shapeCount,
+    pxWidth: ca.pxWidth,
+    pxHeight: ca.pxHeight,
+    unit: ca.unit,
+    ...shapeFloors(events),
+  });
+  const cb = drawImageCanvas(r, { minPx: 140, maxPx: 320, useUnit: true });
+  const paramsB = makeImageParams(world, r, {
+    shapeCount: Math.max(1, shapeCount - 1),
+    pxWidth: cb.pxWidth,
+    pxHeight: cb.pxHeight,
+    unit: cb.unit,
+  });
+  const { steps, lastKey } = chainSteps(chain, 'd', 'c');
+  const plan = [
+    { op: 'create', resultKey: 'a', args: { kind: 'image', params: paramsA } },
+    { op: 'create', resultKey: 'b', args: { kind: 'image', params: paramsB } },
+    { op: 'diff', resultKey: 'd', args: { a: 'a', b: 'b', verifyEtag: true } },
+    ...steps,
+  ];
+  return {
+    plan,
+    submitKey: lastKey,
+    narrative: { tier: 3, kind: 'image', paramsA, paramsB, chain, liveTrap: featureAt(band, n, 'liveTrap') },
+  };
+}
+
+function batchTier(world, r, band, n, { withSideChecks }) {
   const store = seedSnapshot(world);
   const { workspaceId, projectId } = pickProject(store, r);
-  // The batch's assets come from the seeded project library, not from a create() this composer
-  // controls the geometry of -- so instead of computing a survival size, only ever pick loras
-  // that provably cannot shrink them (see safeLoraPool).
+  // The batch's items come from the seeded library, not from a create() this composer controls
+  // the geometry of -- so every style it applies comes from safeLoraPool, and every resize in the
+  // chain only ever grows. Neither can drop a shape through the 8px floor.
   const pool = safeLoraPool(world);
   const applyLoraName = pick(r, pool).name;
-  const finalLora = pick(r, pool).name;
+  const subsetSize = subsetFor(band, r);
+  const pageSize = pageSizeFor(band);
   const combineOpts = { mode: 'layer', opacityStep: Number((0.85 + r() * 0.1).toFixed(2)) };
+  const chain = [
+    { kind: 'lora', name: pick(r, pool).name },
+    { kind: 'grow', percent: int(r, ...GROW_PERCENT) },
+  ];
+  if (featureAt(band, n, 'secondLora')) chain.push({ kind: 'lora', name: pick(r, pool).name });
+  if (featureAt(band, n, 'secondGrow')) chain.push({ kind: 'grow', percent: int(r, ...GROW_PERCENT) });
+  if (featureAt(band, n, 'thirdLora')) chain.push({ kind: 'lora', name: pick(r, pool).name });
+  const { steps, lastKey } = chainSteps(chain, 'combined', 'c');
   const plan = [
     {
       op: 'batch',
@@ -453,11 +705,11 @@ function batchTier(world, r, { subsetSize, pageSize, withSideChecks }) {
       },
     },
     { op: 'combine', resultKey: 'combined', args: { from: ['batched'], opts: combineOpts } },
-    { op: 'lora', resultKey: 'final', args: { from: 'combined', loraName: finalLora } },
+    ...steps,
   ];
   return {
     plan,
-    submitKey: 'final',
+    submitKey: lastKey,
     narrative: {
       workspaceId,
       projectId,
@@ -466,106 +718,100 @@ function batchTier(world, r, { subsetSize, pageSize, withSideChecks }) {
       workspaceLabel: store.workspaces.get(workspaceId).name,
       projectLabel: store.projects.get(projectId).name,
       applyLoraName,
-      finalLora,
       combineOpts,
       subsetSize,
       pageSize,
+      chain,
+      liveTrap: featureAt(band, n, 'liveTrap'),
     },
   };
 }
 
-function tier4(world, r) {
-  const { plan, submitKey, narrative } = batchTier(world, r, { subsetSize: 4, pageSize: 4, withSideChecks: false });
+function tier4(world, r, band, n) {
+  const { plan, submitKey, narrative } = batchTier(world, r, band, n, { withSideChecks: false });
   return { plan, submitKey, narrative: { tier: 4, ...narrative } };
 }
 
-function renderTier(world, r, { withPublish }) {
+function renderTier(world, r, band, n, { withPublish }) {
   const store = seedSnapshot(world);
   const workspace = pick(r, listWorkspaces(store));
   const workspaceId = workspace.id;
-  const kind = pick(r, ['image', 'audio']);
-  // render (and publish, which just signs off on the same render) never scale the asset, so no
-  // downstream scale events -- the tier-0 floor applies as-is.
-  let params;
-  if (kind === 'image') {
-    const { unit, pxWidth, pxHeight } = drawImageCanvas(r, { minPx: 100, maxPx: 300, useUnit: true });
-    params = makeImageParams(world, r, { shapeCount: int(r, 2, 4), pxWidth, pxHeight, unit });
-  } else {
-    params = makeAudioParams(r, { noteCount: int(r, 2, 4) });
-  }
-  const plan = [{ op: 'render', resultKey: 'rendered', args: { kind, params, workspaceId } }];
-  let submitKey = 'rendered';
-  if (withPublish) {
-    plan.push({ op: 'publish', resultKey: 'published', args: { renderKey: 'rendered' } });
-    submitKey = 'published';
-  }
-  return { plan, submitKey, narrative: { kind, params, workspaceId, workspaceLabel: workspace.name, withPublish } };
+  const format = pick(r, ['svg', 'png']);
+  // Round 2's render bands were a single call whose whole difficulty was the state machine. The
+  // chain keeps the state machine and hangs the rounding ladder off the far end of it.
+  const chain = [
+    { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
+    { kind: 'lora', name: pick(r, world.loras).name },
+    { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
+  ];
+  if (featureAt(band, n, 'save')) chain.push({ kind: 'save', format });
+  const events = chainScaleEvents(world, chain);
+  const canvas = drawImageCanvas(r, { ...canvasPxRange(events, 160), useUnit: true });
+  const params = makeImageParams(world, r, {
+    shapeCount: shapeCountFor(band, r),
+    pxWidth: canvas.pxWidth,
+    pxHeight: canvas.pxHeight,
+    unit: canvas.unit,
+    ...shapeFloors(events),
+  });
+  const plan = [{ op: 'render', resultKey: 'rendered', args: { kind: 'image', params, workspaceId } }];
+  if (withPublish) plan.push({ op: 'publish', resultKey: 'published', args: { renderKey: 'rendered' } });
+  const { steps, lastKey } = chainSteps(chain, 'rendered', 'c');
+  plan.push(...steps);
+  return {
+    plan,
+    submitKey: lastKey,
+    narrative: { kind: 'image', params, workspaceId, workspaceLabel: workspace.name, withPublish, chain },
+  };
 }
 
-function tier5(world, r) {
-  const { plan, submitKey, narrative } = renderTier(world, r, { withPublish: false });
+function tier5(world, r, band, n) {
+  const { plan, submitKey, narrative } = renderTier(world, r, band, n, { withPublish: false });
   return { plan, submitKey, narrative: { tier: 5, ...narrative } };
 }
 
-function tier6(world, r) {
-  const { plan, submitKey, narrative } = renderTier(world, r, { withPublish: true });
+function tier6(world, r, band, n) {
+  const { plan, submitKey, narrative } = renderTier(world, r, band, n, { withPublish: true });
   return { plan, submitKey, narrative: { tier: 6, ...narrative } };
 }
 
-function tier7(world, r) {
-  const { plan, submitKey, narrative } = batchTier(world, r, { subsetSize: 4, pageSize: 4, withSideChecks: true });
+function tier7(world, r, band, n) {
+  const { plan, submitKey, narrative } = batchTier(world, r, band, n, { withSideChecks: true });
   return { plan, submitKey, narrative: { tier: 7, ...narrative } };
 }
 
-function tier8(world, r) {
-  const { plan, submitKey, narrative } = batchTier(world, r, { subsetSize: 6, pageSize: 4, withSideChecks: true });
+function tier8(world, r, band, n) {
+  const { plan, submitKey, narrative } = batchTier(world, r, band, n, { withSideChecks: true });
   return { plan, submitKey, narrative: { tier: 8, ...narrative } };
 }
 
-function tier9(world, r) {
-  const { unit, pxWidth, pxHeight } = drawImageCanvas(r, { minPx: 200, maxPx: 400, useUnit: true });
-  const percent = int(r, 40, 75);
+function tier9(world, r, band, n) {
+  const format = pick(r, ['svg', 'png']);
   const scaleLora = world.loras.find((l) => l.op === 'scale');
-  // Two shrinking steps in a row is the case the addendum calls out by name -- work out the
-  // exact combined chain (percent, then either the known scale-lora amount or a second percent)
-  // before drawing any shapes.
-  const events = [{ kind: 'convert', scaleX: percent / 100, scaleY: percent / 100 }];
-  let percent2;
-  if (scaleLora) {
-    events.push({ kind: 'loraScale', amount: scaleLora.amount });
-  } else {
-    percent2 = int(r, 40, 75);
-    events.push({ kind: 'convert', scaleX: percent2 / 100, scaleY: percent2 / 100 });
-  }
-  const params = makeImageParams(world, r, {
-    shapeCount: int(r, 2, 4),
-    pxWidth,
-    pxHeight,
-    unit,
-    minShapeW: requiredMin(events, 'x', 8),
-    minShapeH: requiredMin(events, 'y', 8),
-    minShapeR: requiredMin(events, 'r', 4),
-  });
-  const plan = [
-    { op: 'create', resultKey: 'a', args: { kind: 'image', params } },
-    { op: 'compute', resultKey: 'dims', args: { fn: 'percentOfDims', of: { $ref: 'a' }, percent } },
-    {
-      op: 'convert',
-      resultKey: 'b',
-      args: { from: 'a', opts: { width: { $ref: 'dims', field: 'width' }, height: { $ref: 'dims', field: 'height' } } },
-    },
+  // Three shrinks with two style lookups wedged between them, then one growth and a flavor
+  // change: the "rounding order 3" behaviour, with every intermediate size read back off a live
+  // descriptor rather than carried forward from arithmetic the agent did in its head.
+  const chain = [
+    { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
+    { kind: 'lora', name: (scaleLora ?? pick(r, world.loras)).name },
+    { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
+    { kind: 'lora', name: pick(r, world.loras).name },
+    { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
+    { kind: 'grow', percent: int(r, ...GROW_PERCENT) },
+    { kind: 'save', format },
   ];
-  if (scaleLora) {
-    plan.push({ op: 'lora', resultKey: 'final', args: { from: 'b', loraName: scaleLora.name } });
-  } else {
-    plan.push({ op: 'compute', resultKey: 'dims2', args: { fn: 'percentOfDims', of: { $ref: 'b' }, percent: percent2 } });
-    plan.push({
-      op: 'convert',
-      resultKey: 'final',
-      args: { from: 'b', opts: { width: { $ref: 'dims2', field: 'width' }, height: { $ref: 'dims2', field: 'height' } } },
-    });
-  }
-  return { plan, submitKey: 'final', narrative: { tier: 9, params, percent, percent2, scaleLoraName: scaleLora?.name } };
+  const events = chainScaleEvents(world, chain);
+  const canvas = drawImageCanvas(r, { ...canvasPxRange(events, 200), useUnit: true });
+  const params = makeImageParams(world, r, {
+    shapeCount: shapeCountFor(band, r),
+    pxWidth: canvas.pxWidth,
+    pxHeight: canvas.pxHeight,
+    unit: canvas.unit,
+    ...shapeFloors(events),
+  });
+  const { steps, lastKey } = chainSteps(chain, 'a', 'c');
+  const plan = [{ op: 'create', resultKey: 'a', args: { kind: 'image', params } }, ...steps];
+  return { plan, submitKey: lastKey, narrative: { tier: 9, params, chain, liveTrap: featureAt(band, n, 'liveTrap') } };
 }
 
 const TIER_COMPOSERS = [tier0, tier1, tier2, tier3, tier4, tier5, tier6, tier7, tier8, tier9];
@@ -575,6 +821,6 @@ const TIER_COMPOSERS = [tier0, tier1, tier2, tier3, tier4, tier5, tier6, tier7, 
 export function composePlan(world, n) {
   const band = bandFor(n);
   const r = rng(sub(world.seed, `rung:${n}`));
-  const result = TIER_COMPOSERS[band.tier](world, r);
+  const result = TIER_COMPOSERS[band.tier](world, r, band, n);
   return { ...result, band };
 }

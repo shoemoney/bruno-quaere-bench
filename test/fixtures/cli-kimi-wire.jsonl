@@ -1,0 +1,6 @@
+{"type": "metadata", "protocol_version": "1.5", "created_at": 1789215352559}
+{"type": "llm.request", "agentId": "main", "kind": "loop", "provider": "openai", "model": "k3", "modelAlias": "kimi-code/k3", "thinkingEffort": "high", "thinkingKeep": "all", "maxTokens": 1048576, "toolSelect": false, "systemPromptHash": "16442f44d0b56f2b7f52277205d3be1a31de3baeefc7c9b9ae5dabe6312d0253", "toolsHash": "d380b570b3cd8ef9cbad99028b96dc11d56f19f85bf2d4a0e75b050a7784f786", "messageCount": 3, "turnStep": "0.1", "time": 1789215352605}
+{"type": "usage.record", "agentId": "main", "model": "kimi-code/k3", "usage": {"inputOther": 19914, "output": 48, "inputCacheRead": 0, "inputCacheCreation": 0}, "usageScope": "turn", "time": 1789215367110}
+{"type": "turn.ended", "agentId": "main", "turnId": 0, "reason": "completed", "durationMs": 14517, "time": 1789215367112}
+{"type": "token_counting.turn_recorded", "agentId": "main", "turnId": 0, "length": 4, "tokens": 19962, "time": 1789215367112}
+{"type": "prompt.completed", "agentId": "main", "promptId": "msg_01M2ARQ9RCPP67QVFK3AB94H1V", "finishedAt": "2026-09-12T12:16:07.113Z", "reason": "completed", "time": 1789215367113}

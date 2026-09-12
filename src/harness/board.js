@@ -71,11 +71,13 @@ export function renderBoard(results) {
 
   // Addendum D: Novel (what the budget is spent against) and Billed (what the provider actually
   // charges, cumulative resend included) side by side make the 87:1 resend ratio visible per run.
-  lines.push('| Model | Rung | Turns | Fidelity | Trap | Novel | Billed | Trims | Wall ms |');
-  lines.push('|---|---|---|---|---|---|---|---|---|');
+  // Addendum F: Violations (rogue User-Agent hits) and Resumes (CLI drivers picking a killed
+  // session back up) and Stop (why the representative run ended) round out the product-level view.
+  lines.push('| Model | Driver | Rung | Turns | Fidelity | Trap | Novel | Billed | Violations | Resumes | Stop |');
+  lines.push('|---|---|---|---|---|---|---|---|---|---|---|');
   for (const row of rows) {
     lines.push(
-      `| ${row.model} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.trims.toFixed(1)} | ${Math.round(row.wallMs)} |`,
+      `| ${row.model} | ${row.driver} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.violations.toFixed(1)} | ${row.resumes.toFixed(1)} | ${row.stop} |`,
     );
   }
 

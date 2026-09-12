@@ -586,15 +586,37 @@ async function routeHandlers(routeId, ctx) {
       sendProblem(res, 409, { detail: `rung ${n} already submitted` });
       return;
     }
-    const body = json();
-    const submittedIds = readField(world, body, 'assets') || [];
-    // Asset ids are opaque STRINGS in the store for every world.ids.style -- `int` style yields
-    // String(n), so asset 37 is keyed "37". JSON round-trips that id back as the number 37 for any
-    // client that treats an all-digit id as a number, and Map.get(37) misses "37". Without the
-    // coercion the submission silently resolves to nothing: the rung fails with empty
-    // submittedHashes and fidelity 0 even when the artifact is byte-identical to the answer key,
-    // which measures JSON id typing rather than the media work the ladder is supposed to grade.
-    const submittedAssets = submittedIds.map((id) => state.store.assets.get(String(id))).filter(Boolean);
+    // Addendum E: a malformed submission is a 422, not a fall, and NOTHING is recorded for it --
+    // a later, correct submit to the same rung must still be possible. This covers three shapes:
+    // invalid JSON, `assets` missing or not an array, and any id that does not resolve to an
+    // asset the caller can see. Only once every id resolves does this become a real attempt, and
+    // from there on pickiness is about the artifact (count, order, hashes), never JSON transport.
+    let body;
+    try {
+      body = json();
+    } catch {
+      sendProblem(res, 422, { errors: [{ field: 'body', message: 'invalid JSON body' }] });
+      return;
+    }
+    const submittedIds = readField(world, body, 'assets');
+    if (!Array.isArray(submittedIds)) {
+      sendProblem(res, 422, { errors: [{ field: 'assets', message: 'assets is required and must be an array' }] });
+      return;
+    }
+    const submittedAssets = [];
+    for (const id of submittedIds) {
+      // Asset ids are opaque STRINGS in the store for every world.ids.style -- `int` style
+      // yields String(n), so asset 37 is keyed "37". JSON round-trips that id back as the number
+      // 37 for any client that treats an all-digit id as a number, and Map.get(37) misses "37".
+      // Without the coercion a numeric id would look "unresolvable" purely from JSON id typing,
+      // not from the media work the ladder is supposed to grade.
+      const asset = state.store.assets.get(String(id));
+      if (!asset || asset.deleted) {
+        sendProblem(res, 422, { errors: [{ field: 'assets', message: `asset not found: ${id}` }] });
+        return;
+      }
+      submittedAssets.push(asset);
+    }
     const submittedHashes = submittedAssets.map((a) => a.hash);
     const answer = state.rungs.answers.get(n);
     const expectedHashes = answer ? answer.expected : [];
@@ -631,6 +653,11 @@ async function handleRequest(state, publicRouter, req, res) {
       status: res.statusCode,
       ms: Date.now() - startedAt,
       tokenId: ctx.tokenId,
+      // Rule enforcement is by detection, not prevention (ARCHITECTURE Addendum F): the harness
+      // sandbox only lets `bru` reach the network, and every genuine bru invocation sends
+      // `bruno-runtime/<version>`. Anything else on the wire is the agent (or its CLI) reaching
+      // the API directly, and /admin/violations below is how that gets caught.
+      ua: req.headers['user-agent'] || '',
     });
   });
 

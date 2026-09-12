@@ -38,7 +38,7 @@ test('world has the exact top-level shape from the architecture doc', () => {
 });
 
 test('world.version is pinned', () => {
-  assert.equal(makeWorld(1).version, '0.1.0');
+  assert.equal(makeWorld(1).version, '0.2.0');
 });
 
 test('vocab has the four required nouns as non-empty strings', () => {

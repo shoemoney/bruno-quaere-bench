@@ -34,7 +34,7 @@ function testWorld(overrides = {}) {
   };
   return {
     seed: 1,
-    version: '0.1.0',
+    version: '0.2.0',
     vocab: { workspace: 'studio', project: 'scene', asset: 'clip', library: 'library' },
     ids: { style: 'prefixed', prefixes: { workspace: 'ws_1', project: 'pr_1', asset: 'as_1', job: 'jb_1', lora: 'lo_1' } },
     naming: 'snake',

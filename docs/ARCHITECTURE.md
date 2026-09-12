@@ -88,7 +88,7 @@ hashArtifact(bytes: Uint8Array): string    // sha256 of bytes, the only thing th
 
 // world.js
 World = {
-  seed, version: '0.1.0',
+  seed, version: '0.2.0',
   vocab: { workspace, project, asset, library },   // e.g. 'studio','scene','clip','library' (nouns used in paths and spec)
   ids: { style: 'uuid'|'ulid'|'prefixed'|'int', prefixes: {workspace,project,asset,job,lora} },
   naming: 'snake'|'camel',                         // field convention for the API
@@ -252,18 +252,28 @@ them as traps.
 
 `grammar.js` defines bands:
 
-| Rungs | Steps | Params per step | Skill lookups | Quant ops | Behaviors in play |
-|---|---|---|---|---|---|
-| 0-9 | 1 | 3-6 | 0-1 | 0-1 | auth, create |
-| 10-19 | 2 | 6-10 | 1-2 | 1-2 | + convert, idempotency |
-| 20-29 | 3 | 8-12 | 2 | 2 | + combine, lora lookup |
-| 30-39 | 3-4 | 10-14 | 2-3 | 2-3 | + diff, etag |
-| 40-49 | 4-5 | 12-16 | 3 | 3 | + pagination batch, rate limit |
-| 50-59 | 5 | 14-18 | 3-4 | 3-4 | + async render, state machine |
-| 60-69 | 5-6 | 16-20 | 4 | 4 | + token expiry mid-chain, hmac publish |
-| 70-79 | 6-7 | 18-22 | 4-5 | 5 | + content negotiation, soft delete |
-| 80-89 | 7-8 | 20-24 | 5 | 5-6 | + a live trap must be caught to pass |
-| 90-99 | 8-10 | 22-28 | 5-6 | 6-7 | everything, three rounding rules in order |
+Three columns are inputs the composers read (`params`, `kinds`, `features`); `steps`, `lookups`
+and `quant` are the measured envelope of what those inputs produce. `params` is a budget of
+*stated leaves* -- the numbers, colours and words the rung text spells out and the agent has to
+transcribe without drift: a canvas costs 3, a shape or a tone costs 5, a batch item costs 6.
+`features` maps an obligation to the first offset **inside** the band at which it switches on, so
+a band is a ramp rather than a flat shelf.
+
+Values below are the Addendum C round-2 steepening (world version 0.2.0). Round 1's numbers are in
+the git history; a 0.1.x result is not comparable to a 0.2.x one.
+
+| Rungs | Steps | Stated leaves | Skill/API lookups | Quant ops | Kinds | Behaviors in play |
+|---|---|---|---|---|---|---|
+| 0-9 | 1 | 13-18 | 0-1 | 0-1 | picture or sound | auth, create |
+| 10-19 | 3-4 | 18-23 | 1-3 | 1-3 | mostly picture | + convert, idempotency, lora lookup; 15+: percent resize, live trap |
+| 20-29 | 4-5 | 23-28 | 2-4 | 2 | picture | + live trap, rounding order 2; 25+: a second lora |
+| 30-39 | 5-6 | 28-33 | 2-4 | 3 | picture | + diff, etag, live trap; 35+: a lora on the leftover |
+| 40-49 | 5-6 | 30-36 | 3-5 | 1 | picture | + pagination batch (page 3 < subset 5-6), rate limit, live trap; 45+: a second lora |
+| 50-59 | 6-7 | 33-38 | 3-4 | 3-4 | picture | + async render, state machine, post-render rounding chain; 55+: a save |
+| 60-69 | 8 | 36-41 | 4 | 4 | picture | + token expiry mid-chain, hmac publish, post-publish rounding chain |
+| 70-79 | 8 | 38-44 | 5 | 2 | picture | + content negotiation, soft delete, live trap, page 2 < subset 6-7 |
+| 80-89 | 9 | 41-47 | 6 | 2 | picture | + a live trap must be caught to pass, page 2 < subset 7-8 |
+| 90-99 | 12 | 44-53 | 4 | 5 | picture | everything, three shrinks and a growth in order, live trap |
 
 `rung.js`: `makeRung(world, n) -> Rung`:
 
@@ -500,14 +510,26 @@ actually gets. All smoke-tested headless from an isolated home on 2026-09-12 07:
 | gpt-6-astra | `cli:codex` | `codex exec --json -m gpt-6-astra -C <sandbox> --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "<prompt>"` | `CODEX_HOME=<fresh dir>` containing a copy of `~/.codex/auth.json` | `turn.completed.usage` events |
 | qwen3.8-max | `cli:qwen` | `command qwen --approval-mode yolo -o json -m qwen3.8-max "<prompt>"` with `~/.qwen/.env` sourced | `HOME=<fresh dir>`; `QWEN_CODE_SUPPRESS_YOLO_WARNING=1` | result JSON `usage`, `stats.models` |
 | gemini-3.8-flash | `cli:gemini` | `gemini -y -o json -m gemini-3.8-flash -p "<prompt>"` | `HOME=<fresh dir>`, `GEMINI_API_KEY` from aigate `google`, `GEMINI_CLI_TRUST_WORKSPACE=true` | `stats.models.<model>.tokens` |
-| kimi-k3 | `cli:kimi` | `kimi -p "<prompt>" --output-format stream-json` (`-p` cannot combine with `-y`/`--auto`; prompt mode already runs tools) | `HOME=<fresh dir>` with `~/.kimi/credentials` and `~/.kimi/device_id` copied in | stream has tool calls but no usage; read the session file under `<HOME>/.kimi/sessions` after exit, else estimate chars/4 and mark `usageEstimated: true` |
+| kimi-k3 | `cli:kimi` | `kimi -p "<prompt>" --output-format stream-json` (`-p` cannot combine with `-y`/`--auto`; prompt mode already runs tools) | `HOME=<fresh dir>` with `~/.kimi-code/config.toml` and `~/.kimi-code/device_id` copied in (corrected 2026-09-12, see below) | stream has tool calls but no usage; read the session file under `<HOME>/.kimi-code/sessions/*/<id>/agents/*/wire.jsonl` after exit, else estimate chars/4 and mark `usageEstimated: true` |
 | grok-4.6 | `openai` driver | `baseUrl=https://api.x.ai/v1`, key aigate `xai`, model id verified against `GET /v1/models` | n/a | API usage |
 | deepseek-v4.1-flash | `openai` driver | `baseUrl=https://api.deepseek.com`, key aigate `deepseek`, model id verified against `GET /v1/models` | n/a | API usage |
 
 Gemini smoke test reported `gemini-3.5-flash` in `stats.models` when asked for `gemini-3.8-flash`.
 Every adapter records the model the tool actually reports as `modelVersion`; if it differs from
 the requested id the run is marked `modelMismatch: true` and the operator must resolve the alias
-before the run counts. Never silently accept a fallback model.
+before the run counts. Never silently accept a fallback model. Root cause (2026-09-12): the
+installed `@google/gemini-cli` (0.59.0) doesn't recognize the literal id yet -- its own
+`resolveModel()` coerces any unrecognized `*-flash` request to the account's current default flash
+model. Not fixable from a flag; either request `gemini-3.5-flash` directly or wait for a CLI build
+that knows the literal id.
+
+**kimi path corrected 2026-09-12.** `~/.kimi/credentials` + `~/.kimi/device_id` is the PRE-migration
+layout and no longer works: a one-time migrator (kimi-code 0.42.0, ran 2026-09-07 on the build
+machine) moved the CLI's real home to `~/.kimi-code` and explicitly left `device_id` and the
+provider config behind (`migration-report.json`: `deviceIdCopied: false`). `~/.kimi/credentials` is
+just a 0-byte lock file, never a credential store -- auth is device-bound, with no separate token
+file. Seed the sandbox from `~/.kimi-code/{config.toml,device_id}` instead; verified end to end
+(real reply, real session + usage file written).
 
 ### How a CLI climb works
 

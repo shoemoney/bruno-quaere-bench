@@ -8,6 +8,7 @@ import { toSkill } from '../src/skill.js';
 import { makeRung } from '../src/ladder/rung.js';
 import { climb as referenceClimb, answerKey } from '../src/ladder/reference.js';
 import { climb as harnessClimb } from '../src/harness/run.js';
+import { climb as cliClimb } from '../src/harness/run-cli.js';
 import { collectResults, renderBoard } from '../src/harness/board.js';
 
 // parseArgs(['--seed', '42', '--answer', 'runs/']) -> {seed:'42', answer:true, _:['runs/']}
@@ -117,40 +118,69 @@ async function cmdReference(args) {
   }
 }
 
-const KNOWN_DRIVERS = new Set(['anthropic', 'openai', 'openrouter']);
+const KNOWN_DRIVERS = new Set(['anthropic', 'openai', 'openrouter', 'xai', 'deepseek', 'cli']);
 const KNOWN_SKILL_MODES = new Set(['clean', 'sloppy']);
+// Addendum F: "Wall cap --wall-ms default 3 h." Applies to every driver, not just `cli` -- an
+// operator who forgets the flag on a real run gets a run that eventually stops and still writes
+// result.json, rather than one an outer `timeout` can kill mid-write.
+const DEFAULT_WALL_MS = 10_800_000;
 
 async function cmdRun(args) {
   const driverName = args.driver || 'anthropic';
   if (!KNOWN_DRIVERS.has(driverName)) {
-    throw new Error(`--driver must be one of anthropic|openai|openrouter, got: ${driverName}`);
+    throw new Error(`--driver must be one of anthropic|openai|openrouter|xai|deepseek|cli, got: ${driverName}`);
   }
   const skillMode = args['skill-mode'] !== undefined ? args['skill-mode'] : 'sloppy';
   if (!KNOWN_SKILL_MODES.has(skillMode)) {
     throw new Error(`--skill-mode must be one of clean|sloppy, got: ${skillMode}`);
   }
+  const wallMsLimit = args['wall-ms'] !== undefined ? Number(args['wall-ms']) : DEFAULT_WALL_MS;
   const attempts = args.attempts !== undefined ? Number(args.attempts) : 1;
   const results = [];
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    const result = await harnessClimb({
-      driverName,
-      model: args.model,
-      seed: seedFrom(args),
-      attempt,
-      budgetTokens: args.budget !== undefined ? Number(args.budget) : undefined,
-      // Addendum D: proactive context-trim threshold (tokens); defaults to climb()'s own 160000.
-      contextLimit: args['context-limit'] !== undefined ? Number(args['context-limit']) : undefined,
-      maxTurns: args['max-turns'] !== undefined ? Number(args['max-turns']) : undefined,
-      // --wall-ms caps a climb by wall clock so an operator-imposed timeout still produces a
-      // result.json; without it an outer `timeout` kills the process mid-turn and the run is lost.
-      wallMsLimit: args['wall-ms'] !== undefined ? Number(args['wall-ms']) : undefined,
-      outDir: args.out || 'runs',
-      // Addendum A: the skill the agent gets is sloppy (5 MB, buried facts) by default for a real
-      // run; --skill-mode clean and/or a smaller --skill-bytes are for debugging the harness itself.
-      skillMode,
-      skillBytes: args['skill-bytes'] !== undefined ? Number(args['skill-bytes']) : undefined,
-    });
+    let result;
+    if (driverName === 'cli') {
+      // Addendum F: native CLI drivers (--cli ai|codex|qwen|gemini|kimi) run the model through its
+      // own agent CLI as a subprocess, rather than a tool-calling loop this process drives itself.
+      if (!args.cli) {
+        throw new Error('--driver cli requires --cli <name> (e.g. ai|codex|qwen|gemini|kimi)');
+      }
+      // eslint-disable-next-line no-await-in-loop
+      result = await cliClimb({
+        cliName: args.cli,
+        model: args.model,
+        seed: seedFrom(args),
+        attempt,
+        budgetTokens: args.budget !== undefined ? Number(args.budget) : undefined,
+        wallMsLimit,
+        outDir: args.out || 'runs',
+        skillMode,
+        skillBytes: args['skill-bytes'] !== undefined ? Number(args['skill-bytes']) : undefined,
+        // --max-rung N caps the climb: clearing rung N stops it as 'top' instead of climbing to 99.
+        topRung: args['max-rung'] !== undefined ? Number(args['max-rung']) : undefined,
+      });
+    } else {
+      // eslint-disable-next-line no-await-in-loop
+      result = await harnessClimb({
+        driverName,
+        model: args.model,
+        seed: seedFrom(args),
+        attempt,
+        budgetTokens: args.budget !== undefined ? Number(args.budget) : undefined,
+        // Addendum D: proactive context-trim threshold (tokens); defaults to climb()'s own 160000.
+        contextLimit: args['context-limit'] !== undefined ? Number(args['context-limit']) : undefined,
+        maxTurns: args['max-turns'] !== undefined ? Number(args['max-turns']) : undefined,
+        // --wall-ms caps a climb by wall clock so an operator-imposed timeout still produces a
+        // result.json; without it an outer `timeout` kills the process mid-turn and the run is lost.
+        wallMsLimit,
+        outDir: args.out || 'runs',
+        // Addendum A: the skill the agent gets is sloppy (5 MB, buried facts) by default for a real
+        // run; --skill-mode clean and/or a smaller --skill-bytes are for debugging the harness itself.
+        skillMode,
+        skillBytes: args['skill-bytes'] !== undefined ? Number(args['skill-bytes']) : undefined,
+        topRung: args['max-rung'] !== undefined ? Number(args['max-rung']) : undefined,
+      });
+    }
     results.push(result);
     console.log(JSON.stringify(result));
   }

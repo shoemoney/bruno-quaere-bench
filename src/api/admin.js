@@ -5,6 +5,12 @@ import { createRouter } from './router.js';
 import { sendProblem } from './problem.js';
 import { rng, sub, pick } from '../seed.js';
 
+// The one rule (ARCHITECTURE Addendum F): nothing but `bru` opens a socket, and every genuine
+// bru invocation sends this as its User-Agent. `count` is exhaustive over the whole log; `samples`
+// is capped so a long, badly-behaved run can't blow up the admin/violations response body.
+const BRUNO_RUNTIME_PREFIX = 'bruno-runtime/';
+const MAX_VIOLATION_SAMPLES = 20;
+
 export const MUTATION_NAMES = [
   'statusCode',
   'dropField',
@@ -80,6 +86,7 @@ const ADMIN_ROUTES = [
   { method: 'POST', path: '/admin/mutate', id: 'admin.mutate' },
   { method: 'POST', path: '/admin/reset', id: 'admin.reset' },
   { method: 'GET', path: '/admin/log', id: 'admin.log' },
+  { method: 'GET', path: '/admin/violations', id: 'admin.violations' },
   { method: 'POST', path: '/admin/rungs', id: 'admin.rungs.set' },
   { method: 'POST', path: '/admin/rungs/advance', id: 'admin.rungs.advance' },
   { method: 'GET', path: '/admin/submissions', id: 'admin.submissions' },
@@ -128,6 +135,13 @@ async function dispatch(id, state, { req, res, reset }) {
 
   if (id === 'admin.log') {
     sendJson(res, 200, { data: state.log });
+    return;
+  }
+
+  if (id === 'admin.violations') {
+    const offenders = state.log.filter((entry) => !(entry.ua || '').startsWith(BRUNO_RUNTIME_PREFIX));
+    const samples = offenders.slice(0, MAX_VIOLATION_SAMPLES).map((entry) => ({ ua: entry.ua, path: entry.path }));
+    sendJson(res, 200, { count: offenders.length, samples });
     return;
   }
 

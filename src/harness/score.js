@@ -29,11 +29,16 @@ function billedOf(r) {
   return (r.tokensIn || 0) + (r.tokensOut || 0);
 }
 
-// scoreModel(model, runs) -> {model, rung, turns, fidelity, trap, novel, billed, trims, wallMs}
+// scoreModel(model, runs) -> {model, driver, rung, turns, fidelity, trap, novel, billed,
+// violations, resumes, stop, trims, wallMs}
 export function scoreModel(model, runs) {
   const rep = medianRun(runs);
   return {
     model,
+    // Addendum F: which driver produced the representative run -- older result.json files (and
+    // any hand-built fake-driver test result) never recorded one, so fall back to the model name
+    // rather than surface `undefined` in the board.
+    driver: rep.driver != null ? rep.driver : rep.model,
     rung: rep.rung,
     turns: rep.turns,
     fidelity: mean(runs.map((r) => r.fidelity)),
@@ -42,6 +47,12 @@ export function scoreModel(model, runs) {
     // actually charges (cumulative resend included).
     novel: mean(runs.map((r) => (r.tokensNovel != null ? r.tokensNovel : billedOf(r)))),
     billed: mean(runs.map((r) => (r.tokensBilled != null ? r.tokensBilled : billedOf(r)))),
+    // Addendum F: violations (rogue User-Agent hits on the admin log) and resumes (CLI drivers
+    // only, per Addendum F -- a message-loop run always resumes 0) default to 0 for pre-Addendum-F
+    // result.json files rather than propagate NaN through the mean.
+    violations: mean(runs.map((r) => r.violations || 0)),
+    resumes: mean(runs.map((r) => r.resumes || 0)),
+    stop: rep.stoppedBecause,
     trims: mean(runs.map((r) => r.trims || 0)),
     wallMs: mean(runs.map((r) => r.wallMs)),
   };

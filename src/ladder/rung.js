@@ -77,6 +77,43 @@ function describeKind(kind, kindOption) {
 }
 
 // ---------------------------------------------------------------------------
+// chain text
+//
+// grammar.js hands the narrative the SAME chain it expanded into plan steps, so a rung's prose
+// and its answer key cannot drift apart: every lookup and every resize in the plan is rendered
+// here, in plan order, and nothing that is not in the plan is.
+// ---------------------------------------------------------------------------
+
+const ROUND_NOTE = 'The house rounds every size to its usual grid; do that after every resize, in the order you do them, not just once at the end.';
+
+// Trap-dependence, pulled down into rungs 15-39 (and kept at the top) by Addendum C's round-2
+// steepening. The written reference is wrong about at least one call each of these rungs needs,
+// and the only way through is to look at what the live house actually hands back.
+const TRAP_NOTE = "Take nothing here on the written reference's word: at least one thing it says about the calls this needs is wrong about the live house, so check what actually comes back.";
+
+const TURN_IN_LAST = 'Turn in the last piece that leaves you with.';
+
+function describeChainStep(step) {
+  if (step.kind === 'lora') return `look up the house style called "${step.name}" and give what you have that look`;
+  if (step.kind === 'save') return `save what you have as ${describeKind('image', step.format)}`;
+  const saved = step.format !== undefined ? `, saved as ${describeKind('image', step.format)}` : '';
+  if (step.kind === 'resize') return `resize what you have so it comes out ${step.width} by ${step.height} pixels${saved}`;
+  const verb = step.kind === 'grow' ? 'blow what you have up to' : 'shrink what you have down to';
+  return `${verb} ${step.percent} percent of its own size, keeping its shape the same${saved}`;
+}
+
+function describeChain(chain) {
+  if (!chain || chain.length === 0) return '';
+  const body = chain.map((s, i) => `(${i + 1}) ${describeChainStep(s)}`).join('; ');
+  const resizes = chain.some((s) => s.kind !== 'lora' && s.kind !== 'save');
+  return ` Then, in this order: ${body}.${resizes ? ` ${ROUND_NOTE}` : ''}`;
+}
+
+function trapNote(narrative) {
+  return narrative.liveTrap ? ` ${TRAP_NOTE}` : '';
+}
+
+// ---------------------------------------------------------------------------
 // per-tier text
 // ---------------------------------------------------------------------------
 
@@ -84,20 +121,21 @@ function text0(world, narrative) {
   return `Make ${describeCreate(world, narrative.kind, narrative.params)}. Turn in exactly that piece.`;
 }
 
+const IDEMPOTENCY_NOTE = "Use a fresh repeat-safe request the house won't double-book if you send it twice.";
+
 function text1(world, narrative) {
-  const kindWord = narrative.kind === 'image' ? 'picture' : 'sound';
-  const target = narrative.kind === 'image'
-    ? `resized so it comes out ${narrative.opts.width} by ${narrative.opts.height} pixels, saved as ${describeKind('image', narrative.opts.format)}`
-    : `re-encoded as ${describeKind('audio', narrative.opts.format)} at ${narrative.opts.sampleRate} samples a second`;
-  return `Make ${describeCreate(world, narrative.kind, narrative.params)}. Then turn that ${kindWord} into a second version: ${target}. Turn in the second version, and use a fresh repeat-safe request the house won't double-book if you send it twice.`;
+  if (narrative.kind === 'audio') {
+    return `Make ${describeCreate(world, 'audio', narrative.params)}. Then, in this order: (1) re-encode it as ${describeKind('audio', narrative.format)}; (2) re-cut what you have to ${narrative.sampleRate} samples a second. ${TURN_IN_LAST} ${IDEMPOTENCY_NOTE}`;
+  }
+  return `Make ${describeCreate(world, 'image', narrative.params)}.${describeChain(narrative.chain)} ${TURN_IN_LAST} ${IDEMPOTENCY_NOTE}${trapNote(narrative)}`;
 }
 
 function text2(world, narrative) {
-  return `Make ${describeCreate(world, 'image', narrative.params)}. Look up the house style called "${narrative.loraName}" and give the picture that look. Then save the result as ${describeKind('image', narrative.opts.format)} at ${narrative.opts.width} by ${narrative.opts.height} pixels. Turn in that final piece.`;
+  return `Make ${describeCreate(world, 'image', narrative.params)}.${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 function text3(world, narrative) {
-  return `Make ${describeCreate(world, narrative.kind, narrative.paramsA)}. Then make a second one: ${describeCreate(world, narrative.kind, narrative.paramsB)}. Work out everything the first one has that the second one does not -- that leftover piece is what you turn in. (Ask for the first one back before you compare, and don't ask twice for the same thing you already have.)`;
+  return `Make ${describeCreate(world, 'image', narrative.paramsA)}. Then make a second one: ${describeCreate(world, 'image', narrative.paramsB)}. Work out everything the first one has that the second one does not -- that leftover piece is what you carry on with. (Ask for the first one back before you compare, and don't ask twice for the same thing you already have.)${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 // The stacking step is a bare number on purpose: what the house *does* with it (compound it down
@@ -108,33 +146,34 @@ function describeStack(narrative) {
   return `stack all of those into one, oldest at the bottom, fading each layer against the one below it with a stacking step of ${narrative.combineOpts.opacityStep}`;
 }
 
+// The page size is deliberately smaller than the run of items to get through, so the listing
+// really does come back in several goes and a one-shot read quietly misses most of the work.
 function describeHaul(world, narrative) {
   return `Work through the pictures held in ${labelled(world.vocab.project, narrative.projectLabel)}, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, ${narrative.pageSize} at a time`;
 }
 
 function text4(world, narrative) {
-  return `${describeHaul(world, narrative)}. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them, ${describeStack(narrative)}, then finish by giving the stacked result the house style called "${narrative.finalLora}". ${STACK_NOTE} Turn in that final piece.`;
+  return `${describeHaul(world, narrative)}. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them, then ${describeStack(narrative)}. ${STACK_NOTE}${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 function text5(world, narrative) {
-  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, narrative.kind, narrative.params)}. Walk it all the way through the house's usual stages -- lock it in, kick off the finishing run, and don't call it done until you check back and it actually says finished. Turn in the original piece.`;
+  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params)}. Walk it all the way through the house's usual stages -- lock it in, kick off the finishing run, and don't call it done until you check back and it actually says finished.${describeChain(narrative.chain)} ${TURN_IN_LAST}`;
 }
 
 function text6(world, narrative) {
-  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, narrative.kind, narrative.params)}. Walk it through the house's usual stages until the finishing run is done, then sign and send the release notice the house requires before anything can go out the door. Turn in the original piece.`;
+  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params)}. Walk it through the house's usual stages until the finishing run is done, then sign and send the release notice the house requires before anything can go out the door.${describeChain(narrative.chain)} ${TURN_IN_LAST}`;
 }
 
 function text7(world, narrative) {
-  return `${describeHaul(world, narrative)}. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them. Before you stack anything: pull that same listing as a spreadsheet instead of the usual reply, then clear out the last of the ${narrative.subsetSize} you just worked on -- confirm it really is gone from the ordinary listing, and that it still turns up when you ask for the cleared-out ones as well. Then ${describeStack(narrative)}, and give the stack the house style called "${narrative.finalLora}". ${STACK_NOTE} Turn in the final stacked piece.`;
+  return `${describeHaul(world, narrative)}. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them. Before you stack anything: pull that same listing as a spreadsheet instead of the usual reply, then clear out the last of the ${narrative.subsetSize} you just worked on -- confirm it really is gone from the ordinary listing, and that it still turns up when you ask for the cleared-out ones as well. Then ${describeStack(narrative)}. ${STACK_NOTE}${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 function text8(world, narrative) {
-  return `${describeHaul(world, narrative)} -- there are more of them to get through this time. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them. Before you stack anything: pull that same listing as a spreadsheet instead of the usual reply, then clear out the last of the ${narrative.subsetSize} you just worked on -- don't take the written reference's word for how the house confirms a clean-up, check what actually comes back, and make sure it is gone from the ordinary listing but still turns up when you ask for the cleared-out ones. Then ${describeStack(narrative)}, and give the stack the house style called "${narrative.finalLora}". ${STACK_NOTE} Turn in the final stacked piece.`;
+  return `${describeHaul(world, narrative)} -- there are more of them to get through this time. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them. Before you stack anything: pull that same listing as a spreadsheet instead of the usual reply, then clear out the last of the ${narrative.subsetSize} you just worked on -- don't take the written reference's word for how the house confirms a clean-up, check what actually comes back, and make sure it is gone from the ordinary listing but still turns up when you ask for the cleared-out ones. Then ${describeStack(narrative)}. ${STACK_NOTE}${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 function text9(world, narrative) {
-  const roundNote = 'The house rounds every size to its usual grid; do that after every resize, in the order you do them, not just once at the end.';
-  return `Make ${describeCreate(world, 'image', narrative.params)}. Shrink it down to ${narrative.percent} percent of its own size, keeping its shape the same. Then shrink whatever that gives you down again${narrative.scaleLoraName ? `, this time by giving it the house style called "${narrative.scaleLoraName}"` : ` to ${narrative.percent2} percent of the size that leaves you with`}. ${roundNote} Turn in the twice-shrunk piece.`;
+  return `Make ${describeCreate(world, 'image', narrative.params)}.${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 const TEXT_BUILDERS = [text0, text1, text2, text3, text4, text5, text6, text7, text8, text9];

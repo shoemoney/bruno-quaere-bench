@@ -4,7 +4,10 @@
 
 import { rng, sub, pick, int, shuffle } from './seed.js';
 
-export const VERSION = '0.1.0';
+// Bumped to 0.2.0 by Addendum C round-2 steepening: the difficulty grammar's band parameters
+// changed, so the same seed no longer yields the same ladder as a 0.1.x run did. Results from the
+// two versions are not comparable and the version is what says so.
+export const VERSION = '0.2.0';
 
 const WORKSPACE_NOUNS = ['studio', 'fleet', 'lab', 'yard', 'shop', 'depot', 'guild', 'forge', 'atelier', 'bureau'];
 const PROJECT_NOUNS = ['scene', 'vehicle', 'sensor', 'mission', 'reel', 'session', 'build', 'sketch', 'spread', 'rig'];
