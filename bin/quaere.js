@@ -115,6 +115,9 @@ async function cmdRun(args) {
       attempt,
       budgetTokens: args.budget !== undefined ? Number(args.budget) : undefined,
       maxTurns: args['max-turns'] !== undefined ? Number(args['max-turns']) : undefined,
+      // --wall-ms caps a climb by wall clock so an operator-imposed timeout still produces a
+      // result.json; without it an outer `timeout` kills the process mid-turn and the run is lost.
+      wallMsLimit: args['wall-ms'] !== undefined ? Number(args['wall-ms']) : undefined,
       outDir: args.out || 'runs',
     });
     results.push(result);

@@ -143,7 +143,11 @@ test('every rule value from the world appears literally in the document', () => 
       assert.ok(md.includes(lora.name), `seed ${seed}: missing lora name ${lora.name}`);
     }
     for (const exception of world.namingExceptions) {
-      assert.ok(md.includes(exception), `seed ${seed}: missing naming exception ${exception}`);
+      // The skill must print the WIRE spelling (fieldName flips an exception to the opposite
+      // convention), not the canonical snake_case key -- that key is the one spelling the API
+      // never sends for these fields.
+      const wire = fieldName(world, exception);
+      assert.ok(md.includes(wire), `seed ${seed}: missing naming exception ${wire}`);
     }
     for (const words of Object.values(world.rules.unitWords)) {
       for (const w of words) {
@@ -268,7 +272,8 @@ test('the pagination, auth and naming sections each state their own value, not a
       `seed ${seed}: naming convention`,
     );
     for (const exception of world.namingExceptions) {
-      assert.ok(naming.includes(exception), `seed ${seed}: exception ${exception} outside its section`);
+      const wire = fieldName(world, exception);
+      assert.ok(naming.includes(wire), `seed ${seed}: exception ${wire} outside its section`);
     }
   }
 });

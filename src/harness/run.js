@@ -177,10 +177,21 @@ function trapNeedle(lie) {
   }
 }
 
-async function computeTrap(world, collectionDir) {
+// Files the HARNESS planted in the sandbox, not the agent. SKILL.md states every override in
+// plain text (that is its job) and spec.json carries the lied-about paths, so scanning them for
+// the real values credits the agent for reading nothing: before this exclusion every run scored
+// Trap 1.0 regardless of behavior, because the needles were always sitting in the copied SKILL.md.
+// Only files the agent actually authored count as evidence it went looking.
+const PLANTED_FILES = new Set(['spec.json', 'SKILL.md']);
+
+// Exported for test/harness.test.js: the planted-file exclusion is the whole reason Trap means
+// anything, so it needs a direct regression test rather than only running inside a full climb.
+export async function computeTrap(world, collectionDir) {
   const lies = listLies(world);
   if (lies.length === 0) return 1;
-  const files = await walkTextFiles(collectionDir);
+  const files = (await walkTextFiles(collectionDir)).filter(
+    (f) => !PLANTED_FILES.has(path.relative(collectionDir, f)),
+  );
   let text = '';
   for (const file of files) {
     try {
@@ -195,6 +206,32 @@ async function computeTrap(world, collectionDir) {
     if (needle && text.includes(needle)) caught += 1;
   }
   return caught / lies.length;
+}
+
+// A provider failure is transient if retrying the identical request could plausibly succeed:
+// rate limits, gateway/overload 5xx, and socket-level resets. Anything else (401 bad key, 400 bad
+// request, 404 unknown model) will fail identically forever, so retrying only burns wall clock.
+const TRANSIENT = /\b(429|500|502|503|504|529)\b|overloaded|rate.?limit|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up/i;
+
+const RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000];
+
+async function stepWithRetry(driver, messages, tools, msLeft) {
+  let lastErr;
+  for (let i = 0; i <= RETRY_DELAYS_MS.length; i += 1) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      return await driver.step(messages, tools);
+    } catch (err) {
+      lastErr = err;
+      if (!TRANSIENT.test(err.message) || i === RETRY_DELAYS_MS.length) throw err;
+      const delay = RETRY_DELAYS_MS[i];
+      // Don't sleep past the run's own deadline -- surface the error instead of stalling out.
+      if (Number.isFinite(msLeft) && delay >= msLeft) throw err;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
 }
 
 async function adminPost(adminBase, pathname, body) {
@@ -228,6 +265,7 @@ export async function climb({
   attempt = 1,
   budgetTokens = 3_000_000,
   maxTurns = 5000,
+  wallMsLimit = Infinity,
   outDir = 'runs',
   driver: providedDriver,
   publicPort = 0,
@@ -248,6 +286,7 @@ export async function climb({
   const transcript = [];
   const submissions = [];
   let stoppedBecause = 'error';
+  let driverError = null;
 
   try {
     await adminPost(adminBase, '/admin/rungs', answerKey(world));
@@ -277,8 +316,26 @@ export async function climb({
     let noToolStreak = 0;
 
     turnLoop: while (turns < maxTurns) {
+      if (Date.now() - startedAt >= wallMsLimit) {
+        stoppedBecause = 'time';
+        break;
+      }
       turns += 1;
-      const stepResult = await driver.step(messages, TOOLS);
+
+      // A live provider call is the one step here that fails for reasons that have nothing to do
+      // with the climb: 429s, 5xx, and socket resets. Letting those throw out of climb() loses the
+      // whole run -- the transcript and result.json below never get written, so a two-hour climb
+      // that tripped one rate limit on its last turn scores nothing. Retry the transient ones with
+      // backoff, and on anything fatal stop the loop cleanly so the partial run is still recorded.
+      let stepResult;
+      try {
+        stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - (Date.now() - startedAt));
+      } catch (err) {
+        stoppedBecause = 'error';
+        driverError = err.message;
+        transcript.push({ turn: turns, error: err.message });
+        break;
+      }
       const usage = stepResult.usage || {};
       tokensIn += usage.input_tokens || 0;
       tokensOut += usage.output_tokens || 0;
@@ -372,6 +429,7 @@ export async function climb({
       trap,
       submissions,
       stoppedBecause,
+      driverError,
     };
 
     await writeFile(path.join(runDir, 'transcript.jsonl'), `${transcript.map((t) => JSON.stringify(t)).join('\n')}\n`);

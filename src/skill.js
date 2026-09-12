@@ -5,7 +5,7 @@
 // spec it is paired with does not.
 
 import { listLies } from './spec.js';
-import { resolvePath } from './world.js';
+import { resolvePath, fieldName } from './world.js';
 
 const TRAP_OVERRIDE_TEXT = {
   fieldCase: (l) => `- The reference lists a field as \`${l.detail.spec}\` on \`${l.detail.method.toUpperCase()} ${l.path}\`. What the response actually carries is \`${l.detail.real}\`. Read field names off a real response body, never off memory of the docs.`,
@@ -101,13 +101,22 @@ function roundingWorkedExample(world) {
     rounded === rawPx
       ? ` (with a ${roundTo}px grid every whole pixel is already on the grid, so this step only ever changes a value when \`roundTo\` is greater than 1)`
       : '';
-  return `A ${sampleInches}-inch dimension at ${dpi} DPI is ${rawPx}px raw. Rounded ${roundMode} to the nearest multiple of ${roundTo}px, that becomes **${rounded}px**${note}. Every width, height, and offset in a create or convert call goes through this same conversion before it reaches the descriptor.`;
+  // The closing sentence must stay CONDITIONAL. An unconditional "every width, height and offset
+  // goes through this conversion" contradicts the paragraph above it and the answer key: a rung
+  // states its canvas in a house unit but its shape geometry as bare numbers, which are already
+  // pixels. Observed live -- a model converted the shape coordinates too and fell at rung 3 with
+  // a correct canvas and correctly-scaled nothing else.
+  return `A ${sampleInches}-inch dimension at ${dpi} DPI is ${rawPx}px raw. Rounded ${roundMode} to the nearest multiple of ${roundTo}px, that becomes **${rounded}px**${note}. Any width, height, or offset **stated in a house unit** goes through this same conversion before it reaches the descriptor. A bare number carrying no unit word is already in pixels -- pass it through untouched, and never scale shape geometry just because the canvas around it was given in a unit.`;
 }
 
 function namingSection(world) {
   const other = world.naming === 'snake' ? 'camelCase' : 'snake_case';
+  // world.namingExceptions stores the CANONICAL snake_case key, which is the one spelling that is
+  // guaranteed wrong on the wire for an exception field. The agent needs the literal it will
+  // actually send and receive, so run each through fieldName() -- otherwise this section claims
+  // "these are camelCase" and then prints the snake_case name directly underneath.
   const exceptions = world.namingExceptions.length
-    ? world.namingExceptions.map((f) => `\`${f}\``).join(', ')
+    ? world.namingExceptions.map((f) => `\`${fieldName(world, f)}\``).join(', ')
     : '(none this instance)';
   return [
     `Body fields follow **${world.naming === 'snake' ? 'snake_case' : 'camelCase'}** house-wide, with one carve-out: the fields below are deliberately spelled in ${other} instead, everywhere they appear, request or response:`,

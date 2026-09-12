@@ -6,14 +6,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { makeWorld } from '../src/world.js';
+import { toSkill } from '../src/skill.js';
+import { toOpenApi } from '../src/spec.js';
 import { makeRung } from '../src/ladder/rung.js';
 import { makeSandbox, parseCommandLine } from '../src/harness/sandbox.js';
-import { climb } from '../src/harness/run.js';
+import { climb, computeTrap } from '../src/harness/run.js';
 
 function hasBru() {
   const result = spawnSync('bru', ['--version'], { stdio: 'ignore' });
@@ -225,6 +227,29 @@ function makeScriptedDriver(steps) {
     },
   };
 }
+
+// Trap must measure what the AGENT wrote, not what the harness handed it. SKILL.md spells out
+// every override in plain text, so when it was included in the scan every run scored Trap 1.0 --
+// the metric was a constant. Seed 11's needles ("running", "job_id") appear in SKILL.md and in no
+// file this fake agent authored, which makes the two cases cleanly separable.
+test('computeTrap: credit comes from agent-authored files, never the planted SKILL.md/spec.json', async () => {
+  const world = makeWorld(11);
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'quaere-trap-'));
+  try {
+    // Exactly what copyCollection() leaves behind: the harness's own files plus the agent's.
+    await writeFile(path.join(dir, 'SKILL.md'), toSkill(world), 'utf8');
+    await writeFile(path.join(dir, 'spec.json'), JSON.stringify(toOpenApi(world)), 'utf8');
+    await writeFile(path.join(dir, 'notes.bru'), 'the agent never went looking for anything\n', 'utf8');
+
+    assert.equal(await computeTrap(world, dir), 0, 'planted files must not earn trap credit');
+
+    // Now the agent itself records both real values it had to discover.
+    await writeFile(path.join(dir, 'notes.bru'), 'poll status running, then read job_id\n', 'utf8');
+    assert.equal(await computeTrap(world, dir), 1, 'agent-authored evidence must earn full credit');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test(
   'run.js climb(): a scripted driver climbs rungs 0-2 through a real server via bru, then fails rung 3',

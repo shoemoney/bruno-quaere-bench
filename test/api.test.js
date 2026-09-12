@@ -645,6 +645,74 @@ test('rungs: current rung, submit pass/fail, one submission per rung', async () 
   assert.ok(submissions.some((s) => s.pass === true));
 });
 
+// A client that JSON-decodes an `int`-style id ("37") into the number 37 and submits that must
+// still be graded on its artifact. Before the String() coercion in rungs.submit the lookup missed,
+// so a byte-identical artifact scored pass:false with empty submittedHashes and fidelity 0 -- the
+// benchmark reported a perfect descriptor as a total miss. Observed live on seed 11, rung 0.
+// Needs an `int`-style world (seed 11), where ids are all-digit strings like "37" -- that is the
+// only shape a JSON client can silently turn back into a number. SEED 7's ids carry a prefix, so
+// Number() on them is NaN and the bug cannot appear.
+test('rungs: a numeric asset id grades the same as the string the API handed out', async () => {
+  const intWorld = makeWorld(11);
+  assert.equal(intWorld.ids.style, 'int', 'this test needs digit-only ids to be meaningful');
+  const intServer = createServer({ world: intWorld, publicPort: 0, adminPort: 0 });
+  const ports = await intServer.start();
+  const intBase = `http://127.0.0.1:${ports.publicPort}`;
+  const intAdmin = `http://127.0.0.1:${ports.adminPort}`;
+
+  try {
+    const tok = await (
+      await fetch(`${intBase}/auth/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ [fieldName(intWorld, 'api_key')]: intWorld.auth.apiKey }),
+      })
+    ).json();
+    const headers = {
+      'content-type': 'application/json',
+      authorization: `Bearer ${tok[fieldName(intWorld, 'access_token')]}`,
+    };
+
+    const created = await (
+      await fetch(`${intBase}${resolvePath(intWorld, routes.find((r) => r.id === 'audio.create').path)}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          durationMs: 708,
+          notes: [{ freq: 596, startMs: 0, durMs: 197, amp: 0.58, wave: 'saw' }],
+        }),
+      })
+    ).json();
+    assert.equal(typeof created.id, 'string', 'ids leave the API as strings');
+    assert.match(created.id, /^\d+$/, 'int-style ids are all digits');
+
+    await fetch(`${intAdmin}/admin/rungs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        rungs: [{ n: 0, text: 'submit it', expected: [created.hash], expectedDescriptors: [created.descriptor] }],
+      }),
+    });
+
+    const submitPath = resolvePath(intWorld, routes.find((r) => r.id === 'rungs.submit').path).replace('{n}', '0');
+    const body = await (
+      await fetch(`${intBase}${submitPath}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ assets: [Number(created.id)] }),
+      })
+    ).json();
+    assert.equal(body.pass, true, 'numeric id must resolve to the same asset');
+
+    const submissions = (await (await fetch(`${intAdmin}/admin/submissions`)).json()).data;
+    const mine = submissions[submissions.length - 1];
+    assert.deepEqual(mine.submittedHashes, [created.hash], 'hashes must be recorded, not empty');
+    assert.equal(mine.fidelity, 1, 'an exact descriptor must score fidelity 1, not 0');
+  } finally {
+    await intServer.stop();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // admin mutations
 // ---------------------------------------------------------------------------

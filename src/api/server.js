@@ -588,7 +588,13 @@ async function routeHandlers(routeId, ctx) {
     }
     const body = json();
     const submittedIds = readField(world, body, 'assets') || [];
-    const submittedAssets = submittedIds.map((id) => state.store.assets.get(id)).filter(Boolean);
+    // Asset ids are opaque STRINGS in the store for every world.ids.style -- `int` style yields
+    // String(n), so asset 37 is keyed "37". JSON round-trips that id back as the number 37 for any
+    // client that treats an all-digit id as a number, and Map.get(37) misses "37". Without the
+    // coercion the submission silently resolves to nothing: the rung fails with empty
+    // submittedHashes and fidelity 0 even when the artifact is byte-identical to the answer key,
+    // which measures JSON id typing rather than the media work the ladder is supposed to grade.
+    const submittedAssets = submittedIds.map((id) => state.store.assets.get(String(id))).filter(Boolean);
     const submittedHashes = submittedAssets.map((a) => a.hash);
     const answer = state.rungs.answers.get(n);
     const expectedHashes = answer ? answer.expected : [];
