@@ -338,3 +338,57 @@ quaere board      runs/ > board.md
 5. A single attempt of `quaere run` completes against a real model with a real transcript, even
    if it falls at rung 3. The run is not scored tonight; it proves the loop.
 6. README.md written per the house style, with the one-rule, the axes, the CLI, and the board.
+
+## Addendum A: the skill is accurate but sloppy
+
+Added 2026-09-12 00:55 after the first build phase started. Implemented as a follow-up
+workstream; the clean generator above stays and becomes the ground truth the sloppy one wraps.
+
+The skill the agent gets is not a tidy document. It is the kind of internal doc a real team has:
+every rule is in there and correct, and it is buried in megabytes of noise. Reading it carefully
+is the test. Skimming it is how you fall off the ladder.
+
+`skill.js` gains `toSkill(world, {mode: 'clean'|'sloppy', targetBytes})`. Clean is the 200 to 400
+line version and is the source of truth. Sloppy expands it deterministically (seeded, same seed
+same bytes) to `targetBytes` (default 5 MB for a real run, 64 KB in tests) using these layers:
+
+- **Every rule stated once canonically** somewhere in the document, under a heading that does not
+  say what it contains ("Misc", "Notes from the migration", "READ THIS (old)").
+- **Decoys that a careful reader can resolve.** Older, wrong values for the same rule, each one
+  dated or versioned, with the document's own precedence convention stated once near the top
+  ("newest dated entry wins", or "entries marked v4 supersede v3"). A rule stated three times with
+  different values is answerable only by applying that convention.
+- **Filler that is plausibly real:** changelogs, meeting notes, Slack pastes, an FAQ that answers
+  questions nobody asked, tables of unrelated config, a long section about a retired feature
+  clearly marked retired, duplicated sections with typos, TODOs, commented-out YAML.
+- **Noise never contradicts the truth without a resolvable marker.** Sloppy is not the same as
+  wrong. If two statements conflict and neither is dated or versioned, that is a generator bug.
+- **The precedence convention, the unit words, the lora names, and the signing recipe** are the
+  four things the agent must find. They are placed by seed, never in the first 10 percent of the
+  file.
+
+Export `truthTable(world)`: the list of rules with their true values and the byte offsets where
+the canonical statement and each decoy sit in the sloppy output, so tests can assert that the
+truth is present, the decoys are all marked, and nothing before the precedence convention
+contradicts it unresolvably.
+
+## Addendum B: the sandbox has an editor, and only bru opens sockets
+
+The one rule stands: nothing but `bru` opens a socket. But a 5 MB skill cannot be read in one
+turn, and an agent with only `bru` cannot author request files. So the sandbox exposes an editor,
+and the editor is deliberately dumb:
+
+| Tool | Args | Limits |
+|---|---|---|
+| `bru` | `{args}` | the CLI, the only thing that reaches the network |
+| `write_file` | `{path, content}` | inside the sandbox only |
+| `read_file` | `{path, offset, limit}` | max 200 lines per call |
+| `grep` | `{pattern, path}` | regex, returns line numbers and lines, max 100 hits |
+| `ls` | `{path}` | inside the sandbox only |
+
+No shell. No pipes. No `cat`. Finding the DPI in 5 MB means choosing search terms well, reading
+the hits, and noticing that three of them are decoys. That is on the reasoning axis, and every
+tool call is a turn, so it costs on the Turns column too.
+
+`harness/prompt.md` names all five tools, states the one rule, and does not hint at the
+precedence convention. Finding it is part of the climb.
