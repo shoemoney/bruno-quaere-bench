@@ -247,17 +247,89 @@ The agent gets five tools, not just `bru`:
 
 ## 📈 Live Results
 
-```
-| Model | Rung | Turns | Fidelity | Trap | Tokens | Wall ms |
-|---|---|---|---|---|---|---|
-| 🤖 anthropic/claude-sonnet-5 | 2 | 63 | 89.5% | 0.0% | 1,905,687 | 320,660 |
-```
+| Model | Driver | Rung | Turns | Fidelity | Trap | Novel Tokens | Billed Tokens | Violations | Resumes | Stop Reason |
+|---|---|---|---|---|---|---|---|---|---|---|
+| openai/gpt-6-astra | openai/gpt-6-astra | 59 | 446 | 100.0% | 33.3% | 212,073 | 41,478,037 | 0.0 | 0.0 | error |
+| deepseek/deepseek-v4-flash-0731 | deepseek/deepseek-v4-flash-0731 | 59 | 983 | 100.0% | 100.0% | 492,341 | 119,295,729 | 0.0 | 0.0 | error |
+| google/gemini-3.8-flash | google/gemini-3.8-flash | 44 | 608 | 98.7% | 66.7% | 318,004 | 61,821,372 | 0.0 | 0.0 | fail |
+| deepseek-flash | deepseek | 28 | 138 | 91.9% | 33.3% | 143,527 | 12,020,096 | 0.0 | 0.0 | fail |
+| grok-4.6 | xai | 27 | 288 | 99.6% | 100.0% | 138,467 | 27,257,128 | 0.0 | 0.0 | fail |
+| gemini-3.8-flash | cli:gemini | 16 | 69 | 92.8% | 66.7% | 0 | 0 | 0.0 | 0.0 | fail |
+| gpt-6-astra | cli:codex | 15 | 0 | 99.4% | 91.7% | 127,795 | 5,593,779 | 0.0 | 1.5 | fail |
+| moonshotai/kimi-k3 | moonshotai/kimi-k3 | 11 | 83 | 100.0% | 50.0% | 87,122 | 4,433,321 | 0.0 | 0.0 | error |
+| kimi-code/k3 | cli:kimi | 3 | 23 | 98.9% | 66.7% | 80,189 | 80,189 | 0.0 | 0.0 | fail |
+| anthropic/claude-sonnet-5 | anthropic/claude-sonnet-5 | 2 | 63 | 89.5% | 0.0% | 1,905,687 | 1,905,687 | 0.0 | 0.0 | fail |
+| x-ai/grok-4.20-multi-agent | x-ai/grok-4.20-multi-agent | -1 | 1 | 0.0% | 0.0% | 0 | 0 | 0.0 | 0.0 | error |
+| claude-fable-5-1 | cli:ai | -1 | 12 | 95.2% | 50.0% | 0 | 0 | 0.0 | 0.0 | fail |
+| anthropic/claude-fable-5.1 | anthropic/claude-fable-5.1 | -1 | 26 | 0.0% | 50.0% | 69,460 | 1,121,663 | 0.0 | 0.0 | fail |
 
 **Expected vs produced at the fall rung:**
-- **anthropic/claude-sonnet-5**: fell at rung 3
-  - Expected hash: `1156febfe003a96a02bb671eadb7e0ca8e37d921380657a57fad040f05fe1f21`
-  - Produced hash: `eca23715e1291388c02062df41c1612acea4becadf0465f1c7f68dd151bf8bf1`
-  - Fidelity: 57.9%
+- **openai/gpt-6-astra**: stopped (error) after clearing rung 59
+- **deepseek/deepseek-v4-flash-0731**: stopped (error) after clearing rung 59
+- **google/gemini-3.8-flash**: fell at rung 45 — fidelity 38.6%
+- **deepseek-flash**: fell at rung 29 — fidelity 77.8%
+- **grok-4.6**: fell at rung 28 — fidelity 89.5%
+- **gemini-3.8-flash**: fell at rung 17 — fidelity 71.4%
+- **gpt-6-astra**: fell at rung 16 — fidelity 78.8%
+- **moonshotai/kimi-k3**: stopped (error) after clearing rung 11
+- **kimi-code/k3**: fell at rung 4 — fidelity 94.4%
+- **anthropic/claude-sonnet-5**: fell at rung 3 — fidelity 57.9%
+
+---
+
+## 🔬 Calibration Rounds
+
+### Round 1: OpenRouter (Superseded)
+Round 1 results with OpenRouter providers are superseded by round 2. Ladder version 0.1.0 discovered bugs in the harness and generator. Results: kimi-k3 rung 11, gemini-3.8-flash rung 44, gpt-6-astra rung 59 (interrupted by harness context bug), fable voided, grok voided.
+
+### Round 2: Native CLI Drivers
+
+#### claude-fable-5-1 (cli:ai)
+- **Fall rung**: 0 (seed 220)
+- **Rungs cleared**: none (fell on first submission)
+- **Turns**: 12
+- **Tokens**: novel 0, billed 0
+- **Violations**: 0
+- **Resumes**: 0
+- **Stop reason**: fail
+
+**Why it fell**: Harness float bug in `src/seed.js` → `src/ladder/grammar.js` roundOnGrid() + `src/skill.js` dpi conversion. Seed 220 rules specify `dpi=300, roundMode=up, roundTo=2`. Rung 0 asks for "0.33 by 0.56 in". Model correctly dug dpi=300 out of the 5 MB skill, applied ceil-to-even correctly, and submitted `width=100 height=168` (exact arithmetic). Expected answer: `height=170` because `0.56 * 300 = 168.00000000000003` in IEEE-754, so `Math.ceil(168.00000000000003 / 2) * 2 = 170`. A rung with no correct solution is a generator bug. **Fix**: src/ladder/grammar.js px conversion needs epsilon snap (round raw px to ~1e-6 before ceil) before seed 220 is used for calibration.
+
+**Blockers resolved**: 
+- Stale fixture (test/harness.test.js). NOW: accumulates created ids in `made[]` and submits `made[0]` to rung 3 as a resolvable-but-wrong input.
+- Usage parsing (src/harness/cli/ai.js parseUsage()). NOW: newer `ai` CLI emits `--output-format json` as a stream array of events rather than a single result object. normalizes: if Array.isArray, take the last `result` event.
+- Process kill path (src/harness/run-cli.js). NOW: when supervise.js SIGKILLs a fall/top/wall, the child never prints JSON. Sets `usage = {}` and `usageEstimated = true` so killedFor handling sets stoppedBecause without crashing on undefined usage.
+
+#### gpt-6-astra (cli:codex)
+- **Fall rung**: 59 (seed 221, cleared all 60 rungs with fidelity 1.0)
+- **Rungs cleared**: 0-59
+- **Turns**: 0 (login shell PATH rebuild; real usage via Python wrapper generating .bru files)
+- **Tokens**: novel 255,589, billed 11,187,557
+- **Violations**: 0
+- **Resumes**: 3 (recovered once per resume; no new failures)
+- **Stop reason**: stalled
+- **Wall time**: 1,187,694 ms (~19.8 min)
+
+**Why it fell**: Harness bug in `src/harness/supervise.js` submissions baseline reset per spawn. On each resume, superviseProcess locally re-initialized `submissions = []`, re-read /admin/submissions (seeing all 60 prior submissions as "fresh"), and called POST /admin/rungs/advance once for each. Result: `state.rungs.current` went 60 → 120 → 180 → 240 while answer key only covers 0-99. GET /admin/rungs response served `{"n":180,"text":""}` and later `{"n":240,"text":""}`. Agent correctly recognized the conflict, asked for a restore, and wrote STATUS.md instead of fabricating. Three resumes with no forward progress → stalled. **Fix**: src/harness/supervise.js now accepts caller-supplied baseline (allSubmissions.length at first spawn) instead of resetting to [] per spawn.
+
+**Harness fixes in this round**:
+- src/harness/run-cli.js:197 — runDir now `path.resolve(...)` not `path.join(...)`. Run got `-C runs/gpt-6-astra/221/1/sandbox` while cwd was already sandbox; relative path resolved against itself → `ENOENT` in ~220 ms, no JSON.
+- src/harness/cli/index.js loadAdapter() — NOW includes `copyAuth`. run-cli.js:256 calls `adapter.copyAuth(homeDir)` before first spawn so CODEX_HOME gets a ~/.codex/auth.json copy.
+- src/harness/run-cli.js:~318 — parseUsage throw no longer crashes before result.json is written. Records `usage-parse-error` transcript entry with exit code and stderr tails, ends climb as stoppedBecause "error".
+- Added `spawn` transcript entry logging cmd/args/cwd/env, exposing the relative-path bug.
+
+#### gemini-3.8-flash (cli:gemini)
+- **Fall rung**: 17 (seed 220)
+- **Rungs cleared**: 0-16
+- **Turns**: 69
+- **Tokens**: novel 0, billed 0
+- **Violations**: 0
+- **Resumes**: 0
+- **Stop reason**: fail
+
+**Why it fell**: Task reasoning, not tooling. Rung 17 text: "Make a picture 1.08 by 2.26 INCHES ... then resized so it comes out 217 by 206 pixels". Answer key expects raw figures with unit tag: `{"width":1.08,"height":2.26,"unit":"in"}`, letting server do dpi conversion. Model applied server dpi rules client-side and submitted processed pixel dimensions instead of raw inches. Mean fidelity rungs 0-16: 0.928. Trap 0.667 (caught 2 of 3 traps in that band).
+
+**Steepened after**: Clarified rung 17 spec to rule out client-side unit conversion; tightened skill section on unit handling with explicit examples.
 
 ---
 
