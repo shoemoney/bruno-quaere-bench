@@ -564,3 +564,43 @@ file. Seed the sandbox from `~/.kimi-code/{config.toml,device_id}` instead; veri
 polling loop, `bin/quaere.js run --driver cli --cli <name>`. Tests: adapter build() and
 parseUsage() on captured fixtures; a live smoke per CLI that runs rung 0 only, skipped when the
 binary is missing.
+
+## Addendum G: exact arithmetic in the answer key, supervisor baseline, drained usage, whole-round rule
+
+Added 2026-09-12 12:05 after native round two.
+
+- **The answer key must never depend on float error.** Seed 220 rung 0: `0.56 in × 300 dpi` is
+  `168.00000000000003` in IEEE-754, so ceil-to-even gave 170 while exact arithmetic gives 168.
+  claude-fable-5.1 computed 168, matched every other byte, and fell. That rung was unpassable by
+  a correct agent, which violates the reference-gates-everything promise (the reference passes
+  because it shares the bug). Rule: every unit-to-pixel conversion in `media.js` and the ladder
+  snaps the raw product to 6 decimals (`Math.round(x * 1e6) / 1e6`) before any rounding rule, in
+  the API, the reference, and the key alike. The skill states the snap as a house rule. The
+  ladder generator additionally rejects any dimension whose exact product lies within 1e-6 of a
+  grid boundary and draws again. Test: for seeds 1..50 and every rung, recompute each conversion
+  with integer arithmetic (inches × 100 × dpi, etc.) and assert equality with the key. Rebaseline.
+- **Supervisor baseline is per run, not per spawn.** On each resume `superviseProcess` re-read
+  `/admin/submissions`, treated all prior submissions as new, and advanced the rung once per
+  old submission: 60 clean submissions became rung 240 and an empty task. gpt-6-astra, clean at
+  rung 59 with fidelity 1.0, asked the harness to restore rung 60, wrote a status file, and was
+  marked `stalled`. Rule: the caller passes the baseline count; advance only on submissions
+  newer than it; assert `current <= 99` and treat any overshoot as a harness error, never a fall.
+- **Drain usage before the kill.** Killing the CLI the instant a fall appears loses its usage
+  output, so every fallen run reports zero tokens and no model version. Rule: on a fall, send
+  SIGTERM, wait up to 20 s for the process to print its result, then SIGKILL. For `ai` and
+  `qwen`, additionally read usage from the session files under the isolated home. Mark
+  `usageEstimated` only when both fail.
+- **Model id facts (verified against provider `/v1/models`).** DeepSeek serves `deepseek-flash`
+  and `deepseek-v4-pro` only; `deepseek-v4.1-flash` does not exist there. Record the served id as
+  the model name on the board and say so. Gemini's reported model must be captured from the
+  drained result, not left null.
+- **Whole-round rule.** A board row is comparable only with rows from the same ladder version.
+  After any steepening, every model in the lineup reruns; never rerun only the passers. The board
+  groups rows by ladder version and marks the current one.
+- **Gate the calibration on verification.** The orchestration script must not start climbs
+  unless the verify stage returned green with fresh output.
+- **Unit-tag rung failures are real falls.** grok-4.6 (rung 28), gemini-3.8-flash (rung 17), and
+  kimi-k3 (rung 4) all hand-converted a unit-tagged dimension with the wrong dpi, rounding rule,
+  or layer, while the skill states the house rules. Those stand. The skill must, however, state
+  plainly once that the API accepts `unit` and converts server-side, so the choice to convert by
+  hand is the agent's.
