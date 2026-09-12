@@ -392,3 +392,24 @@ tool call is a turn, so it costs on the Turns column too.
 
 `harness/prompt.md` names all five tools, states the one rule, and does not hint at the
 precedence convention. Finding it is part of the climb.
+
+## Addendum C: calibration against OpenRouter, steepen until nobody passes 30
+
+Added 2026-09-12 01:20. Runs after the suite is green and Addenda A and B are implemented.
+
+- `drivers/openai.js` must accept `baseUrl` and extra headers; `--driver openrouter` is that
+  driver with `baseUrl=https://openrouter.ai/api/v1`, key from env `OPENROUTER_API_KEY` (or the
+  aigate vault via the add-key skill), headers `HTTP-Referer: https://git.shoemoney.ai` and
+  `X-Title: Bruno QUAERE`. Model ids are OpenRouter ids and MUST be verified against
+  `GET https://openrouter.ai/api/v1/models` before a run; never guess an id.
+- Model choice for a calibration round: the current flagship from each of Anthropic, OpenAI,
+  Google, xAI, DeepSeek, Moonshot, Qwen as listed by OpenRouter that day, five to seven models.
+- Round rule: one attempt each with the full 3M budget and sloppy 5 MB skill. If ANY model's
+  rung >= 30, steepen `src/ladder/grammar.js` band parameters (more steps, more params, more
+  lookups, more quant ops per band, and the trap and rounding requirements pulled into lower
+  bands), rerun the reference on seeds 1, 2, 3 (must still be 100/100), rerun ONLY the models that
+  cleared 30. Repeat up to three rounds. Never hand-edit a rung.
+- Also enforce the bottom-band spread: if every model falls at the same rung ±2, the bottom is a
+  wall, not a ladder; flatten rungs 0-29 (fewer axes rising at once) and rerun.
+- Publish `board.md` after every round with a `## Round N` section, the grammar parameters used,
+  and each model's fall rung, turns, tokens, fidelity, trap.
