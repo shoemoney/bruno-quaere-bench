@@ -69,13 +69,24 @@ export function seedKimiHome(home, { realHome = REAL_KIMI_CODE_HOME } = {}) {
 // `kimiRealHome` is an optional override (default ~/.kimi-code) passed to seedKimiHome(), same
 // spirit as the codex adapter's `copyAuth({from})`, so a test can seed from a fixture dir instead
 // of the operator's real one.
+// resolveModelAlias(model) -> alias to pass to `-m`. config.toml namespaces every model id under
+// the "kimi-code/" provider prefix (e.g. "kimi-code/k3"), but callers (and this bench's own
+// --model flag) pass the bare model id ("k3") -- verified live: `kimi -m k3` fails with
+// `Model "k3" is not configured in config.toml.` while `kimi -m kimi-code/k3` runs. Bug fix
+// 2026-09-12: prefix bare ids so the CLI can actually resolve them; leave anything that already
+// has a "/" (an already-namespaced alias, or a future non-kimi-code provider) untouched.
+function resolveModelAlias(model) {
+  if (!model || model.includes('/')) return model;
+  return `kimi-code/${model}`;
+}
+
 export function build(opts = {}) {
   const sandbox = requireOpt(opts, 'sandbox');
   const prompt = requireOpt(opts, 'prompt');
   const home = requireOpt(opts, 'home', 'home (fresh HOME)');
   seedKimiHome(home, { realHome: opts.kimiRealHome });
   const args = [];
-  if (opts.model) args.push('-m', opts.model);
+  if (opts.model) args.push('-m', resolveModelAlias(opts.model));
   // Addendum B/E: -p cannot combine with -y/--auto (prompt mode already runs tools on its own).
   args.push('-p', prompt, '--output-format', 'stream-json');
   return { cmd: 'kimi', args, env: { HOME: path.resolve(home) }, cwd: sandbox };
@@ -90,7 +101,7 @@ export function resume(sessionId, opts = {}) {
   const home = requireOpt(opts, 'home', 'home (fresh HOME)');
   seedKimiHome(home, { realHome: opts.kimiRealHome });
   const args = ['-S', sessionId];
-  if (opts.model) args.push('-m', opts.model);
+  if (opts.model) args.push('-m', resolveModelAlias(opts.model));
   args.push('-p', prompt, '--output-format', 'stream-json');
   return { cmd: 'kimi', args, env: { HOME: path.resolve(home) }, cwd: sandbox };
 }

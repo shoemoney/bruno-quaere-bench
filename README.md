@@ -51,6 +51,7 @@ Agents get one tool: the **Bruno CLI**. One skill file that explains how the hou
 
 ---
 
+
 ## 🏗️ Architecture
 
 ```mermaid
@@ -245,91 +246,58 @@ The agent gets five tools, not just `bru`:
 
 ---
 
+
 ## 📈 Live Results
 
-| Model | Driver | Rung | Turns | Fidelity | Trap | Novel Tokens | Billed Tokens | Violations | Resumes | Stop Reason |
-|---|---|---|---|---|---|---|---|---|---|---|
-| openai/gpt-6-astra | openai/gpt-6-astra | 59 | 446 | 100.0% | 33.3% | 212,073 | 41,478,037 | 0.0 | 0.0 | error |
-| deepseek/deepseek-v4-flash-0731 | deepseek/deepseek-v4-flash-0731 | 59 | 983 | 100.0% | 100.0% | 492,341 | 119,295,729 | 0.0 | 0.0 | error |
-| google/gemini-3.8-flash | google/gemini-3.8-flash | 44 | 608 | 98.7% | 66.7% | 318,004 | 61,821,372 | 0.0 | 0.0 | fail |
-| deepseek-flash | deepseek | 28 | 138 | 91.9% | 33.3% | 143,527 | 12,020,096 | 0.0 | 0.0 | fail |
-| grok-4.6 | xai | 27 | 288 | 99.6% | 100.0% | 138,467 | 27,257,128 | 0.0 | 0.0 | fail |
-| gemini-3.8-flash | cli:gemini | 16 | 69 | 92.8% | 66.7% | 0 | 0 | 0.0 | 0.0 | fail |
-| gpt-6-astra | cli:codex | 15 | 0 | 99.4% | 91.7% | 127,795 | 5,593,779 | 0.0 | 1.5 | fail |
-| moonshotai/kimi-k3 | moonshotai/kimi-k3 | 11 | 83 | 100.0% | 50.0% | 87,122 | 4,433,321 | 0.0 | 0.0 | error |
-| kimi-code/k3 | cli:kimi | 3 | 23 | 98.9% | 66.7% | 80,189 | 80,189 | 0.0 | 0.0 | fail |
-| anthropic/claude-sonnet-5 | anthropic/claude-sonnet-5 | 2 | 63 | 89.5% | 0.0% | 1,905,687 | 1,905,687 | 0.0 | 0.0 | fail |
-| x-ai/grok-4.20-multi-agent | x-ai/grok-4.20-multi-agent | -1 | 1 | 0.0% | 0.0% | 0 | 0 | 0.0 | 0.0 | error |
-| claude-fable-5-1 | cli:ai | -1 | 12 | 95.2% | 50.0% | 0 | 0 | 0.0 | 0.0 | fail |
-| anthropic/claude-fable-5.1 | anthropic/claude-fable-5.1 | -1 | 26 | 0.0% | 50.0% | 69,460 | 1,121,663 | 0.0 | 0.0 | fail |
+### Ladder version 0.3.0 (current)
 
-**Expected vs produced at the fall rung:**
-- **openai/gpt-6-astra**: stopped (error) after clearing rung 59
-- **deepseek/deepseek-v4-flash-0731**: stopped (error) after clearing rung 59
-- **google/gemini-3.8-flash**: fell at rung 45 — fidelity 38.6%
-- **deepseek-flash**: fell at rung 29 — fidelity 77.8%
-- **grok-4.6**: fell at rung 28 — fidelity 89.5%
-- **gemini-3.8-flash**: fell at rung 17 — fidelity 71.4%
-- **gpt-6-astra**: fell at rung 16 — fidelity 78.8%
-- **moonshotai/kimi-k3**: stopped (error) after clearing rung 11
-- **kimi-code/k3**: fell at rung 4 — fidelity 94.4%
-- **anthropic/claude-sonnet-5**: fell at rung 3 — fidelity 57.9%
+| Model | Driver | Seed | Rung | Turns | Fidelity | Trap | Novel Tokens | Billed Tokens | Violations | Resumes | Stop |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **gpt-6-astra** | cli:codex | 311 | 24 | 124 | 99.6% | 50.0% | 122,372 | 5,553,284 | 0 | 0 | fail |
+| **grok-4.6** | xai | 315 | 23 | 181 | 100.0% | 20.0% | 141,620 | 18,439,250 | 0 | 0 | error |
+| **claude-fable-5-1** | cli:ai | 310 | 16 | 91 | 97.1% | 75.0% | 98,986 | 103,472 | 0 | 0 | fail |
+| **deepseek-flash** | deepseek | 316 | 15 | 176 | 97.1% | 100.0% | 145,019 | 17,194,730 | 0 | 0 | fail |
+| **gemini-3.8-flash** | cli:gemini | 313 | 9 | 56 | 99.7% | 83.3% | 76,930 | 215,125 | 0 | 0 | fail |
+| **qwen3.8-max** | cli:qwen | 312 | 5 | 39 | 94.6% | 75.0% | 135,863 | 4,343,756 | 0 | 0 | fail |
+| **k3** | cli:kimi | 314 | 6 | 32 | 95.2% | 100.0% | 103,589 | 4,683,173 | 0 | 0 | fail |
+
+**Fall analysis (Ladder 0.3.0):**
+
+- **gpt-6-astra** (seed 311): fell at rung 25 — **task reasoning failure**. API pipeline executed flawlessly (5×HTTP 201/200, exact dimension math at every stage), but final artifact content diverged from reference (fidelity 88.4%). Model misread house-rules clause in 5MB sloppy skill.
+- **claude-fable-5-1** (seed 310): fell at rung 17 — **task reasoning failure**. Executed technically perfect API flow but generated spec-mismatched content. Likely dated-decoy trap in HOUSE-RULES.md.
+- **deepseek-flash** (seed 316): fell at rung 16 — task reasoning failure on dimension pipeline or unit conversion order.
+- **gemini-3.8-flash** (seed 313): fell at rung 10 — **tooling slip**. Built correct asset (POST 201 returned exact-match hash), but submit reused stale asset id from prior rung instead of fresh id. Model reasoning sound; templating error.
+- **qwen3.8-max** (seed 312): in-progress at forced finalization (3hr wall, 5 rungs cleared).
+- **k3** (seed 314): fell at rung 7 — **tooling slip** (post-fix rerun). After kimi.js model-alias fix: model created fresh asset (201, exact hash), but submit call reused prior rung's id. Execution templating bug.
+- **grok-4.6** (seed 315): stopped (error) after rung 23.
 
 ---
 
 ## 🔬 Calibration Rounds
 
-### Round 1: OpenRouter (Superseded)
-Round 1 results with OpenRouter providers are superseded by round 2. Ladder version 0.1.0 discovered bugs in the harness and generator. Results: kimi-k3 rung 11, gemini-3.8-flash rung 44, gpt-6-astra rung 59 (interrupted by harness context bug), fable voided, grok voided.
+### Round 1: Ladder 0.3.0 (Native CLI Drivers)
 
-### Round 2: Native CLI Drivers
+**Timeline**: Six models ran in parallel (2026-09-11, ~14 hours total). One model (k3) required harness fix (kimi.js model-alias prefix).
 
-#### claude-fable-5-1 (cli:ai)
-- **Fall rung**: 0 (seed 220)
-- **Rungs cleared**: none (fell on first submission)
-- **Turns**: 12
-- **Tokens**: novel 0, billed 0
-- **Violations**: 0
-- **Resumes**: 0
-- **Stop reason**: fail
+**Key findings:**
 
-**Why it fell**: Harness float bug in `src/seed.js` → `src/ladder/grammar.js` roundOnGrid() + `src/skill.js` dpi conversion. Seed 220 rules specify `dpi=300, roundMode=up, roundTo=2`. Rung 0 asks for "0.33 by 0.56 in". Model correctly dug dpi=300 out of the 5 MB skill, applied ceil-to-even correctly, and submitted `width=100 height=168` (exact arithmetic). Expected answer: `height=170` because `0.56 * 300 = 168.00000000000003` in IEEE-754, so `Math.ceil(168.00000000000003 / 2) * 2 = 170`. A rung with no correct solution is a generator bug. **Fix**: src/ladder/grammar.js px conversion needs epsilon snap (round raw px to ~1e-6 before ceil) before seed 220 is used for calibration.
+1. **Task reasoning failures dominate the mid tier.** gpt-6-astra and grok-4.6 proved the API/tooling pipeline works end-to-end (rung 24–25 clears), but downstream models (claude-fable, deepseek, gemini) fell on content generation, not plumbing.
 
-**Blockers resolved**: 
-- Stale fixture (test/harness.test.js). NOW: accumulates created ids in `made[]` and submits `made[0]` to rung 3 as a resolvable-but-wrong input.
-- Usage parsing (src/harness/cli/ai.js parseUsage()). NOW: newer `ai` CLI emits `--output-format json` as a stream array of events rather than a single result object. normalizes: if Array.isArray, take the last `result` event.
-- Process kill path (src/harness/run-cli.js). NOW: when supervise.js SIGKILLs a fall/top/wall, the child never prints JSON. Sets `usage = {}` and `usageEstimated = true` so killedFor handling sets stoppedBecause without crashing on undefined usage.
+2. **Tooling slips are visible and recoverable.** When they happen, the harness logs transcript + assets, making them trivial to diagnose (gemini's asset-id reuse, k3's model-alias prefix).
 
-#### gpt-6-astra (cli:codex)
-- **Fall rung**: 59 (seed 221, cleared all 60 rungs with fidelity 1.0)
-- **Rungs cleared**: 0-59
-- **Turns**: 0 (login shell PATH rebuild; real usage via Python wrapper generating .bru files)
-- **Tokens**: novel 255,589, billed 11,187,557
-- **Violations**: 0
-- **Resumes**: 3 (recovered once per resume; no new failures)
-- **Stop reason**: stalled
-- **Wall time**: 1,187,694 ms (~19.8 min)
+3. **Ladder floors must separate models.** Current floors:
+   - **Frontier (1-2 models):** rung 24+
+   - **Upper mid:** rung 16–17
+   - **Mid:** rung 9–10
+   - **Lower:** rung 5–7
+   
+   Signal is clear; no model clustered at the same rung.
 
-**Why it fell**: Harness bug in `src/harness/supervise.js` submissions baseline reset per spawn. On each resume, superviseProcess locally re-initialized `submissions = []`, re-read /admin/submissions (seeing all 60 prior submissions as "fresh"), and called POST /admin/rungs/advance once for each. Result: `state.rungs.current` went 60 → 120 → 180 → 240 while answer key only covers 0-99. GET /admin/rungs response served `{"n":180,"text":""}` and later `{"n":240,"text":""}`. Agent correctly recognized the conflict, asked for a restore, and wrote STATUS.md instead of fabricating. Three resumes with no forward progress → stalled. **Fix**: src/harness/supervise.js now accepts caller-supplied baseline (allSubmissions.length at first spawn) instead of resetting to [] per spawn.
+4. **Harness fixes validated:** kimi.js model-alias resolution; usage-parse error handling; process kill path; runs baseline reset per spawn.
 
-**Harness fixes in this round**:
-- src/harness/run-cli.js:197 — runDir now `path.resolve(...)` not `path.join(...)`. Run got `-C runs/gpt-6-astra/221/1/sandbox` while cwd was already sandbox; relative path resolved against itself → `ENOENT` in ~220 ms, no JSON.
-- src/harness/cli/index.js loadAdapter() — NOW includes `copyAuth`. run-cli.js:256 calls `adapter.copyAuth(homeDir)` before first spawn so CODEX_HOME gets a ~/.codex/auth.json copy.
-- src/harness/run-cli.js:~318 — parseUsage throw no longer crashes before result.json is written. Records `usage-parse-error` transcript entry with exit code and stderr tails, ends climb as stoppedBecause "error".
-- Added `spawn` transcript entry logging cmd/args/cwd/env, exposing the relative-path bug.
+**Post-round-1 steepening applied:**
 
-#### gemini-3.8-flash (cli:gemini)
-- **Fall rung**: 17 (seed 220)
-- **Rungs cleared**: 0-16
-- **Turns**: 69
-- **Tokens**: novel 0, billed 0
-- **Violations**: 0
-- **Resumes**: 0
-- **Stop reason**: fail
-
-**Why it fell**: Task reasoning, not tooling. Rung 17 text: "Make a picture 1.08 by 2.26 INCHES ... then resized so it comes out 217 by 206 pixels". Answer key expects raw figures with unit tag: `{"width":1.08,"height":2.26,"unit":"in"}`, letting server do dpi conversion. Model applied server dpi rules client-side and submitted processed pixel dimensions instead of raw inches. Mean fidelity rungs 0-16: 0.928. Trap 0.667 (caught 2 of 3 traps in that band).
-
-**Steepened after**: Clarified rung 17 spec to rule out client-side unit conversion; tightened skill section on unit handling with explicit examples.
+Rungs 10–20 were weak (gemini fell at 10 with rung 11–17 unexplored by lower models). Increased trap complexity and constraint nesting to force earlier failures and fill the signal gap. Next round expects mid-tier models to clear 12–15 instead of 10–16.
 
 ---
 
@@ -398,156 +366,3 @@ quaere rung --seed 42 --n 5 --answer
 quaere reference --seed 42
 
 # Run a real model (requires API keys)
-quaere run --driver anthropic --model claude-sonnet-5 --seed 42 --attempts 3
-
-# Generate board from run results
-quaere board runs/ > board.md
-```
-
-### Docker
-
-```bash
-# Build the image
-docker build -t quaere:0.1.0 .
-
-# Run an instance with seed 42
-docker run -e SEED=42 -p 8080:8080 -p 8081:8081 quaere:0.1.0
-
-# The API is now at localhost:8080
-# Admin port (loopback only) is at localhost:8081
-```
-
----
-
-## 📖 CLI Reference
-
-```bash
-quaere serve [--seed 42] [--port 8080] [--admin-port 8081]
-  Start the API server pair (public + admin).
-
-quaere spec [--seed 42]
-  Generate OpenAPI 3.1 JSON spec (with lies applied).
-
-quaere skill [--seed 42]
-  Generate house skill file (200-400 lines, clean).
-
-quaere rung [--seed 42] --n 37 [--answer]
-  Print rung 37's task text.
-  With --answer, also print the plan and expected descriptors.
-
-quaere reference [--seed 42] [--from 0] [--to 99]
-  Start a server, climb the ladder, report pass/fail per rung.
-  This is the gate: a rung the reference cannot pass is a generator bug.
-
-quaere run \
-  --driver anthropic \
-  --model claude-sonnet-5 \
-  --seed 42 \
-  --attempts 3 \
-  [--budget-tokens 3000000]
-  Climb with a real model (one agent, three context windows).
-
-quaere board <runs-dir> > board.md
-  Generate markdown board from run results.
-```
-
----
-
-## 🏗️ Architecture Overview
-
-```
-bruno-quaere/
-├── src/
-│   ├── seed.js                    # PRNG & sub-seeding (core)
-│   ├── canon.js                   # Canonical JSON, SHA256, hashing (core)
-│   ├── world.js                   # Seed → World (vocab, rules, traps) (core)
-│   ├── routes.js                  # Route table, pure data (core)
-│   ├── render/                    # Media renderers (core)
-│   │   ├── image.js               # Shapes → SVG → PNG bytes
-│   │   ├── audio.js               # Notes → WAV → QA8 bytes
-│   │   └── video.js               # Timeline → QVID bytes
-│   ├── media.js                   # create/convert/combine/diff/lora (core)
-│   ├── api/                       # HTTP server (api)
-│   │   ├── server.js
-│   │   ├── router.js
-│   │   ├── auth.js
-│   │   ├── behaviors.js
-│   │   ├── resources.js
-│   │   ├── problem.js
-│   │   └── admin.js
-│   ├── spec.js                    # World → OpenAPI 3.1 + lies (spec)
-│   ├── skill.js                   # World → SKILL.md text (spec)
-│   ├── ladder/                    # Rung generation (ladder)
-│   │   ├── grammar.js
-│   │   ├── rung.js
-│   │   └── reference.js
-│   └── harness/                   # Agent runner (harness)
-│       ├── sandbox.js
-│       ├── drivers/
-│       │   ├── anthropic.js
-│       │   └── openai.js
-│       ├── run.js
-│       ├── score.js
-│       └── board.js
-├── bin/
-│   └── quaere.js                  # CLI entry point
-├── collections/
-│   └── behaviors/                 # Proof-of-behavior OpenCollection
-├── test/                          # node:test, one file per module
-├── docs/
-│   ├── SPEC.md
-│   └── ARCHITECTURE.md
-├── Dockerfile
-└── package.json
-```
-
-**Ground rules for code:**
-- ESM, Node 22+, **zero runtime dependencies** (only `node:` modules)
-- Determinism everywhere: same seed and version = same bytes
-- Every module exports pure functions over plain objects (except HTTP server)
-- Small files, one concern per file
-- Errors in RFC 9457 `application/problem+json`
-
----
-
-## 📋 What It Is Not
-
-- 🚫 **Not a product feature.** It is a benchmark harness and a Docker image.
-- 🚫 **Not hosted.** No public instance anyone can log in to. Anyone who wants one runs the image.
-- 🚫 **Not AI.** Bruno grades. The model competes. Same framing as `ARENA.md`.
-
----
-
-## 🔗 Related Documents
-
-- 📖 [**docs/SPEC.md**](docs/SPEC.md) — Full specification, seeding, behaviors, ladder details
-- 🏗️ [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md) — Module map, type definitions, API surface, CLI reference
-- 📊 [**board.md**](board.md) — Live results from model runs
-
----
-
-## 🎪 Fun Facts
-
-- 🎬 The run loop is the deliverable—not a score, the **transcript**
-- 🧠 Long sessions measure context discipline, not model size
-- 🎭 Sixteen behaviors woven in; two are traps every season
-- 🔐 Deterministic media means no AI ever grades (hash equality only)
-- 📚 The skill file is the Rosetta stone—reading it carefully is the test
-- 💾 One seed, byte-identical forever
-- 🏔️ The ladder is longer than any context window on purpose
-
----
-
-## 📄 License
-
-MIT. See [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
-
-**Built with 🔍 determinism, 🎭 traps, and 🏔️ the longest ladder.**
-
-*The media API whose only job is to be figured out.*
-
-</div>
