@@ -413,3 +413,34 @@ Added 2026-09-12 01:20. Runs after the suite is green and Addenda A and B are im
   wall, not a ladder; flatten rungs 0-29 (fewer axes rising at once) and rerun.
 - Publish `board.md` after every round with a `## Round N` section, the grammar parameters used,
   and each model's fall rung, turns, tokens, fidelity, trap.
+
+## Addendum D: budget counts novel tokens, the harness trims context, drivers cache
+
+Added 2026-09-12 04:10 after the first live climb (claude-sonnet-5 via OpenRouter, seed 11):
+63 turns cost 1.88M input tokens against 21.5K output, an 87:1 ratio, because the full
+conversation is resent every turn. At that rate the 3M budget dies near rung 5, which measures
+the harness, not the model.
+
+- **Budget = novel tokens.** Per turn, count `output_tokens` plus the input delta
+  `max(0, input_tokens_t - (input_tokens_{t-1} + output_tokens_{t-1}))`, which is the new content
+  appended (tool results, trims, notes). Cumulative resend is NOT charged. Report cumulative
+  provider input tokens and dollars separately as `tokensBilled` and `cost`. `RunResult` gains
+  `tokensNovel`, `tokensBilled`. The 3M cap applies to `tokensNovel`.
+- **The harness trims context.** When the estimated context (last `input_tokens` from the
+  provider, or chars/4 before the first call) exceeds `--context-limit` (default 160000), drop the
+  oldest non-system turns until it is under 60 percent of the limit, and append one user note:
+  `[context trimmed: N earlier turns removed. Files you wrote in the sandbox persist.]`. Log every
+  trim in the transcript and count trims in `RunResult.trims`. This is the "context outlives the
+  window" measurement: the agent that used the collection as its notebook keeps climbing.
+- **Provider context-length errors are not a fall.** On a 400 context-length error, trim harder
+  (to 40 percent) and retry once; only if that fails is `stoppedBecause = 'error'`.
+- **Drivers use prompt caching where the provider offers it.** Anthropic and OpenRouter-to-
+  Anthropic: `cache_control: {type: 'ephemeral'}` on the system prompt block and on the last tool
+  result. OpenAI-compatible: nothing to do, automatic. Cache read tokens are reported, never
+  charged to the budget.
+- **Degenerate geometry is a generator bug.** Tiers 2 and 9 create at physical units and high
+  DPI then convert down to a few hundred px, collapsing shapes to w:1 h:0. `rung.js` must keep
+  every shape at least 8 px on each axis after every step in the plan; assert it in the ladder
+  test for all 100 rungs on seeds 1..3. Re-baselining hashes is fine; nothing is published yet.
+- **Admin bind.** `ADMIN_BIND` env (default `127.0.0.1`); the Dockerfile sets `0.0.0.0` so the
+  mapped 8081 answers. The harness always uses loopback.
