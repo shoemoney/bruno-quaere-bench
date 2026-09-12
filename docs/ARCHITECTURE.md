@@ -613,3 +613,25 @@ Added 2026-09-12 12:05 after native round two.
   rows from superseded versions sit under a "superseded" heading with the version they ran on.
 - **qwen never ran in round two** (the operator agent errored before launching). Every model in
   the lineup gets a row or an explicit "did not run: <reason>" line; silence is not allowed.
+
+## Addendum H: Gemini 3.8 is not reachable through the Gemini CLI; x.ai team is blocked
+
+Added 2026-09-12 14:45 after the first full native round on ladder 0.3.0.
+
+- **gemini-cli 0.59.0 (latest) does not know `gemini-3.8-flash`.** Its bundle names only 3.5 and
+  3.1 models, and an unknown `-m` silently becomes `gemini-3.5-flash`. The vaulted Google key CAN
+  reach `gemini-3.8-flash` (present in `GET /v1beta/models`), and Google's OpenAI-compatible
+  endpoint `https://generativelanguage.googleapis.com/v1beta/openai` answers it with tool calls.
+  Rule: add `--driver google` (openai driver preset, that baseUrl, key env `GEMINI_API_KEY`
+  from aigate provider `google`). The Gemini row runs on `google` direct until a Gemini CLI
+  release knows 3.8 (check the nightly tag first; if it does, prefer the CLI per Jeremy's
+  ruling). The round-one 0.3.0 gemini row (served 3.5-flash) is marked `modelMismatch` and is
+  not a lineup result.
+- **x.ai key status: `team_blocked: true`.** Every chat call returns 403. grok-4.6's 0.3.0 run
+  was cut at rung 23 by that 403, not by the task; `stoppedBecause: 'error'` is correct and the
+  row is not a fall. Unblocking is on Jeremy's console. Until then grok runs through OpenRouter
+  (`x-ai/grok-4.6`, verified tool-capable), which is the "lab not reachable through aigate"
+  case, and the board says so in the Driver column.
+- **Provider 403 handling.** A 403 or 401 mid-climb is a provider error: retry once after 30 s,
+  then stop with `stoppedBecause: 'provider'` and the status code in `driverError`. Never
+  classify it as a fall.
