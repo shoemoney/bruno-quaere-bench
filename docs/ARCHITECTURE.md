@@ -472,3 +472,10 @@ Added 2026-09-12 06:10 after calibration round 1.
   answered `404 No endpoints found that support tool use`. Choose that vendor's tool-capable
   flagship instead.
 - Runs affected by the 422 rule (round 1 fable) are rerun, not rescored.
+
+### Calibration lineup (Jeremy, 2026-09-12 06:33)
+
+Fixed seven, OpenRouter ids verified with `tools` in `supported_parameters`:
+`openai/gpt-6-astra`, `x-ai/grok-4.6`, `deepseek/deepseek-v4.1-flash`, `moonshotai/kimi-k3`,
+`qwen/qwen3.8-max-0902`, `anthropic/claude-fable-5.1`, `google/gemini-3.8-flash`.
+Never the `:batch`, `-pro`, or `multi-agent` variants.
