@@ -604,3 +604,12 @@ Added 2026-09-12 12:05 after native round two.
   or layer, while the skill states the house rules. Those stand. The skill must, however, state
   plainly once that the API accepts `unit` and converts server-side, so the choice to convert by
   hand is the agent's.
+- **Turns are counted at the API, not by the shim.** codex's native round-three run reported
+  0 turns because its shell did not inherit the shim PATH. Rule: Turns = number of requests in
+  the admin log whose User-Agent starts with `bruno-runtime/`, uniform across every driver. The
+  shim stays as a secondary log only.
+- **The board is grouped by ladder version and lists one row per (model, driver, seed).** No
+  medians across versions, no `undefined` rows (skip result.json files missing `model`), and
+  rows from superseded versions sit under a "superseded" heading with the version they ran on.
+- **qwen never ran in round two** (the operator agent errored before launching). Every model in
+  the lineup gets a row or an explicit "did not run: <reason>" line; silence is not allowed.
