@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // quaere: serve, spec, skill, rung, reference, run, board. Minimal arg parsing, zero deps.
 
+import { writeFile } from 'node:fs/promises';
+
 import { makeWorld } from '../src/world.js';
 import { createServer } from '../src/api/server.js';
 import { toOpenApi } from '../src/spec.js';
@@ -9,7 +11,7 @@ import { makeRung } from '../src/ladder/rung.js';
 import { climb as referenceClimb, answerKey } from '../src/ladder/reference.js';
 import { climb as harnessClimb } from '../src/harness/run.js';
 import { climb as cliClimb } from '../src/harness/run-cli.js';
-import { collectResults, readDnr, renderBoard } from '../src/harness/board.js';
+import { collectResults, readDnr, renderBoard, renderResultsData } from '../src/harness/board.js';
 
 // parseArgs(['--seed', '42', '--answer', 'runs/']) -> {seed:'42', answer:true, _:['runs/']}
 export function parseArgs(argv) {
@@ -199,6 +201,12 @@ async function cmdBoard(args) {
   // errored out before ever producing a result.json still gets a "did not run" line instead of
   // silently vanishing from the board.
   const [results, dnr] = await Promise.all([collectResults(dir), readDnr(dir)]);
+  // --json publishes the same board as structured data next to the markdown, built from the
+  // results already in hand rather than through writeResultsData, which would re-read the whole
+  // runs/ tree off disk for the second rendering. Without the flag nothing is written.
+  if (args.json !== undefined) {
+    await writeFile(args.json, `${JSON.stringify(renderResultsData(results, { dnr }), null, 2)}\n`, 'utf8');
+  }
   process.stdout.write(renderBoard(results, { dnr }));
 }
 

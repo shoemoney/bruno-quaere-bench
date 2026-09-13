@@ -6,13 +6,18 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { collectResults, readDnr, renderBoard, writeBoard } from '../src/harness/board.js';
+import { collectResults, readDnr, renderBoard, renderResultsData, writeBoard, writeResultsData } from '../src/harness/board.js';
 import { scoreRuns } from '../src/harness/score.js';
 import { VERSION as CURRENT_LADDER_VERSION } from '../src/world.js';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const binPath = path.join(repoRoot, 'bin', 'quaere.js');
 
 function freshRunsDir() {
   return mkdtemp(path.join(os.tmpdir(), 'quaere-board-'));
@@ -240,6 +245,118 @@ test('readDnr returns [] for a missing DNR.json and for one that is not a JSON a
     assert.deepEqual(await readDnr(runsDir), []);
     await writeFile(path.join(runsDir, 'DNR.json'), '{"not": "an array"}');
     assert.deepEqual(await readDnr(runsDir), []);
+  } finally {
+    await rm(runsDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// renderResultsData: the board as structured data. Pins that it agrees with board.md on section
+// order and row order, that it publishes no version with no rows, and that it hands out no row
+// internals -- a consumer reading the JSON must never see a whole RunResult.
+// ---------------------------------------------------------------------------
+
+test('renderResultsData leads with the current version and follows with superseded ones ascending', () => {
+  const data = renderResultsData([
+    fixture({ model: 'older-model', version: '0.2.0' }),
+    fixture({ model: 'oldest-model', version: '0.1.0' }),
+    fixture({ model: 'slow-model', version: CURRENT_LADDER_VERSION, rung: 10 }),
+    fixture({ model: 'fast-model', version: CURRENT_LADDER_VERSION, rung: 40 }),
+  ]);
+  assert.equal(data.currentVersion, CURRENT_LADDER_VERSION);
+  assert.ok(!Number.isNaN(Date.parse(data.generatedAt)), 'generatedAt is an ISO timestamp');
+  assert.deepEqual(
+    data.versions.map((v) => [v.version, v.current]),
+    [
+      [CURRENT_LADDER_VERSION, true],
+      ['0.1.0', false],
+      ['0.2.0', false],
+    ],
+  );
+  // Same sortRows board.md uses: best rung first.
+  assert.deepEqual(
+    data.versions[0].rows.map((r) => r.model),
+    ['fast-model', 'slow-model'],
+  );
+});
+
+test('renderResultsData reports versions [] when there are no rows at all', () => {
+  const data = renderResultsData([]);
+  assert.deepEqual(data.versions, []);
+  assert.deepEqual(data.didNotRun, []);
+});
+
+test('renderResultsData rows carry neither `representative` nor a version repeated from the section', () => {
+  const [section] = renderResultsData([fixture({ model: 'model-a', version: CURRENT_LADDER_VERSION })]).versions;
+  const [row] = section.rows;
+  assert.equal(Object.hasOwn(row, 'representative'), false, 'a whole RunResult is not for publication');
+  assert.equal(Object.hasOwn(row, 'version'), false, 'the version is the key of the enclosing section');
+  assert.equal(row.model, 'model-a');
+  assert.equal(row.rung, 10);
+  assert.equal(row.stop, 'fail');
+});
+
+test('renderResultsData passes the dnr list through to didNotRun verbatim', () => {
+  const dnr = [{ model: 'qwen3.8-max', driver: 'cli:qwen', reason: 'operator agent errored before launching' }];
+  assert.deepEqual(renderResultsData([], { dnr }).didNotRun, dnr);
+});
+
+test('writeResultsData writes parseable JSON to outPath and returns the same object', async () => {
+  const runsDir = await freshRunsDir();
+  try {
+    await putResult(runsDir, 'model-a', 1, 1, fixture({ model: 'model-a', version: CURRENT_LADDER_VERSION }));
+    await writeFile(path.join(runsDir, 'DNR.json'), JSON.stringify([{ model: 'qwen3.8-max', reason: 'crashed on launch' }]));
+
+    const outPath = path.join(runsDir, 'results.json');
+    const data = await writeResultsData(runsDir, outPath);
+
+    assert.deepEqual(JSON.parse(await readFile(outPath, 'utf8')), data);
+    assert.equal(data.versions[0].rows[0].model, 'model-a');
+    assert.deepEqual(data.didNotRun, [{ model: 'qwen3.8-max', reason: 'crashed on launch' }]);
+  } finally {
+    await rm(runsDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// quaere board --json: the JSON sibling is written only when asked for, and asking for it never
+// changes what the markdown redirect (`quaere board runs/ > board.md`) receives.
+// ---------------------------------------------------------------------------
+
+test('quaere board <dir> --json <path> writes the JSON sibling and still prints the markdown board', async () => {
+  const runsDir = await freshRunsDir();
+  try {
+    await putResult(runsDir, 'model-a', 1, 1, fixture({ model: 'model-a', version: CURRENT_LADDER_VERSION }));
+    const jsonPath = path.join(runsDir, 'results.json');
+
+    const result = spawnSync('node', [binPath, 'board', runsDir, '--json', jsonPath], { cwd: repoRoot, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^# Bruno QUAERE board/);
+    assert.match(result.stdout, /model-a/);
+
+    const data = JSON.parse(await readFile(jsonPath, 'utf8'));
+    assert.equal(data.currentVersion, CURRENT_LADDER_VERSION);
+    assert.deepEqual(
+      data.versions.map((v) => v.version),
+      [CURRENT_LADDER_VERSION],
+    );
+    assert.equal(data.versions[0].current, true);
+    assert.equal(data.versions[0].rows[0].model, 'model-a');
+  } finally {
+    await rm(runsDir, { recursive: true, force: true });
+  }
+});
+
+test('quaere board <dir> without --json writes no JSON file', async () => {
+  const runsDir = await freshRunsDir();
+  try {
+    await putResult(runsDir, 'model-a', 1, 1, fixture({ model: 'model-a', version: CURRENT_LADDER_VERSION }));
+    const jsonPath = path.join(runsDir, 'results.json');
+
+    const result = spawnSync('node', [binPath, 'board', runsDir], { cwd: repoRoot, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /model-a/);
+    await assert.rejects(readFile(jsonPath, 'utf8'), /ENOENT/);
   } finally {
     await rm(runsDir, { recursive: true, force: true });
   }

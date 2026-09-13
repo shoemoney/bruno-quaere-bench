@@ -24,7 +24,7 @@ node bin/quaere.js reference --seed N [--from A --to B]   # scripted climb, must
 node bin/quaere.js serve --seed N    # public + admin ports; admin needs X-Admin-Token
 node bin/quaere.js rung --seed N --n K [--answer]
 node bin/quaere.js skill --seed N [--mode sloppy --bytes 5000000]
-node bin/quaere.js board runs/ > board.md
+node bin/quaere.js board runs/ [--json results.json] > board.md
 ```
 
 `node --test` exits 0 even when tests fail, and the rtk shell hook mangles its output when

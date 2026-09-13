@@ -134,6 +134,26 @@ function sortRows(rows) {
   );
 }
 
+// groupRowsByVersion(rows) -> {current: {version, rows}|null, superseded: [{version, rows}]}.
+// Addendum G's grouping on its own, so the markdown board and the JSON sibling below agree on
+// which version leads and how the rest are ordered by construction rather than by two copies of
+// the same sort drifting apart.
+function groupRowsByVersion(rows) {
+  const byVersion = new Map();
+  for (const row of rows) {
+    if (!byVersion.has(row.version)) byVersion.set(row.version, []);
+    byVersion.get(row.version).push(row);
+  }
+  const currentRows = byVersion.get(CURRENT_LADDER_VERSION);
+  return {
+    current: currentRows ? { version: CURRENT_LADDER_VERSION, rows: currentRows } : null,
+    superseded: [...byVersion.keys()]
+      .filter((v) => v !== CURRENT_LADDER_VERSION)
+      .sort()
+      .map((version) => ({ version, rows: byVersion.get(version) })),
+  };
+}
+
 function renderVersionSection(rows) {
   const showSuspended = rows.some((row) => row.suspendedMs > 0);
   const lines = [tableHeader(showSuspended), tableRule(showSuspended)];
@@ -169,24 +189,18 @@ export function renderBoard(results, { dnr = [] } = {}) {
   if (rows.length === 0) {
     lines.push('No runs yet.');
   } else {
-    const byVersion = new Map();
-    for (const row of rows) {
-      if (!byVersion.has(row.version)) byVersion.set(row.version, []);
-      byVersion.get(row.version).push(row);
-    }
+    const { current, superseded } = groupRowsByVersion(rows);
 
-    const currentRows = byVersion.get(CURRENT_LADDER_VERSION);
-    if (currentRows) {
+    if (current) {
       lines.push(`## Ladder version ${CURRENT_LADDER_VERSION} (current)`, '');
-      lines.push(...renderVersionSection(currentRows));
+      lines.push(...renderVersionSection(current.rows));
     }
 
-    const supersededVersions = [...byVersion.keys()].filter((v) => v !== CURRENT_LADDER_VERSION).sort();
-    if (supersededVersions.length > 0) {
+    if (superseded.length > 0) {
       lines.push('', '## Superseded', '');
-      for (const version of supersededVersions) {
-        lines.push(`### Ladder version ${version}`, '');
-        lines.push(...renderVersionSection(byVersion.get(version)));
+      for (const section of superseded) {
+        lines.push(`### Ladder version ${section.version}`, '');
+        lines.push(...renderVersionSection(section.rows));
         lines.push('');
       }
     }
@@ -200,12 +214,54 @@ export function renderBoard(results, { dnr = [] } = {}) {
   return `${lines.join('\n')}\n`;
 }
 
+// A board row as it goes out to a consumer that isn't board.js: `representative` is the whole
+// RunResult medianRun picked (transcript and submission internals included, not something to
+// publish) and `version` is already the key of the section the row sits in. Shallow-copied so the
+// rows scoreRuns() returned are never mutated -- renderBoard reads the same objects.
+function publicRow(row) {
+  const { representative, version, ...rest } = row;
+  return rest;
+}
+
+function versionEntry({ version, rows }, isCurrent) {
+  return { version, current: isCurrent, rows: sortRows(rows).map(publicRow) };
+}
+
+// renderResultsData(RunResult[], {dnr?}) -> the same board as a plain JSON-serializable object,
+// for anything that wants the numbers without parsing a markdown table. Pure, like renderBoard,
+// and deliberately derived from the same groupRowsByVersion/sortRows: section order (current
+// first, then superseded ascending) and row order match board.md exactly. No entry is emitted for
+// a version with no rows, so an empty board is `versions: []`.
+export function renderResultsData(results, { dnr = [] } = {}) {
+  const { current, superseded } = groupRowsByVersion(scoreRuns(results));
+  const versions = [];
+  if (current) versions.push(versionEntry(current, true));
+  for (const section of superseded) versions.push(versionEntry(section, false));
+  return {
+    generatedAt: new Date().toISOString(),
+    currentVersion: CURRENT_LADDER_VERSION,
+    versions,
+    didNotRun: dnr,
+  };
+}
+
 // writeBoard(runsDir, outPath) -> board.md text, also written to outPath. Used by the calibration
 // workflow (Addendum C) to publish a `## Round N` board after each round; the CLI's `board`
 // subcommand prints to stdout instead so `quaere board runs/ > board.md` works as documented.
+// writeResultsData below is its JSON sibling, and the CLI reaches the same data through
+// `quaere board runs/ --json results.json`, which writes the file and still prints the markdown.
 export async function writeBoard(runsDir, outPath) {
   const [results, dnr] = await Promise.all([collectResults(runsDir), readDnr(runsDir)]);
   const md = renderBoard(results, { dnr });
   await writeFile(outPath, md, 'utf8');
   return md;
+}
+
+// writeResultsData(runsDir, outPath) -> the renderResultsData object, also written to outPath as
+// pretty-printed JSON. Same shape of call as writeBoard, same runs/DNR.json folded in.
+export async function writeResultsData(runsDir, outPath) {
+  const [results, dnr] = await Promise.all([collectResults(runsDir), readDnr(runsDir)]);
+  const data = renderResultsData(results, { dnr });
+  await writeFile(outPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  return data;
 }
