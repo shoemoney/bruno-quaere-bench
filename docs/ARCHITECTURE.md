@@ -684,7 +684,7 @@ Added 2026-09-12 19:20. Full native round on 0.4.0, one attempt each, 5 MB slopp
 | x-ai/grok-4.6 | openrouter | 59 | 1057 | 0.64M | fell at 60; **40 rule violations** (see below) |
 | deepseek-flash | direct | 57 | 285 | 0.34M | fell at 58, fidelity 0.98 |
 | gpt-6-astra | codex | 29 | 151 | 0.11M | trap rung 30, trusted the docs |
-| kimi-k3 | kimi | running at 19:20 | | | |
+| kimi-k3 | kimi CLI | 94, stopped by the 3 h wall | 1146 | 0.54M | fidelity 1.0, trap 1.0, 0 resumes, 0 violations, still clean at the wall |
 
 The calibration promise ("no current model past rung 30") is false on the honest ladder by a
 wide margin, and one model cleared it entirely. The bottom band still discriminates (29 to 99).
