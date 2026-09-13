@@ -814,3 +814,13 @@ bug, never a "hard seed".
   `ETIMEDOUT`, `socket hang up`, `fetch failed`, and 5xx are retried up to 3 times with 5/15/45 s
   backoff before `stoppedBecause: 'provider'`; never `'error'` with the raw message. Voided and
   rerun on seed 528.
+
+## Addendum N: a submission to a rung that is not current is a 409, never a recorded fall
+
+Added 2026-09-13 01:40. deepseek-flash (seed 526) was clean at rung 59 and still scanning its
+library for rung 60 when it sent a probe `POST /rungs/999/submit` to learn the endpoint's error
+shape. The server recorded it as `{rung: 999, pass: false}` and the harness killed the run as a
+fall. Rule: `POST /rungs/{n}/submit` with `n` not equal to the current rung returns 409
+problem+json (`detail: "rung 999 is not the current rung (60)"`) and records nothing; the
+current-rung one-submission rule is unchanged. Test both. The seed-526 run is voided and rerun.
+Fable's rung-60 submission (seed 520) was to the current rung with a real asset and stands.
