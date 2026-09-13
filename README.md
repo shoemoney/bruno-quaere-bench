@@ -172,7 +172,7 @@ climb with it. Each adapter records the model the tool actually served; a mismat
 
 | Command | What it checks |
 |---|---|
-| `node bin/quaere.js doctor [--json] [--no-smoke]` | scans this Mac for every CLI above (login-shell alias resolution, `--version`, a live headless smoke through the same adapters `run` uses), finds a fallback OpenRouter key, and writes `.quaere/settings.json` mapping each lineup id to the driver it should actually run through; exits non-zero if a lineup CLI is missing or fails its smoke |
+| `node bin/quaere.js doctor [--json] [--no-smoke] [--no-network]` | scans this Mac for every CLI above (login-shell alias resolution, `--version`, a live headless smoke through the same adapters `run` uses), probes every direct-provider key (google/deepseek/xai) and the fallback OpenRouter key against their own APIs so a found-but-blocked key (e.g. an xai key with `team_blocked: true`) is never trusted, and writes `.quaere/settings.json` mapping each lineup id to the driver it should actually run through -- a direct provider driver is only picked when its key actually works, otherwise it falls back to openrouter; `--no-network` skips the key probes; exits non-zero if a lineup CLI is missing or fails its smoke |
 
 ## 🚀 Quick start
 

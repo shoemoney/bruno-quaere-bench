@@ -1,7 +1,10 @@
 // harness/doctor.js + harness/settings.js: CLI detection order (login shell -> PATH -> known
 // dirs), the settings.json shape doctor writes, the openrouter key search order (first hit wins,
-// recorded by FILE PATH only, never value), the model->driver resolution rule, and the `run`
-// command's openrouter-consent prompt (fake TTY, no real terminal).
+// recorded by FILE PATH only, never value), the direct-provider key search/probe (google/
+// deepseek/xai: env var or aigate, then a real read-only API call to prove it actually works --
+// the xai team_blocked gap this addendum closes), the model->driver resolution rule (a direct
+// driver is only chosen when its key is working), and the `run` command's openrouter-consent
+// prompt (fake TTY, no real terminal).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,6 +16,7 @@ import {
   resolveBinary,
   getVersion,
   probeOne,
+  probeKeys,
   runDoctor,
   renderDoctorTable,
   anyLineupCliFailed,
@@ -22,6 +26,9 @@ import {
 import {
   findOpenrouterKey,
   readOpenrouterKey,
+  findProviderKey,
+  readProviderKey,
+  probeProviderKey,
   resolveModels,
   openrouterConsentQuestion,
   ensureOpenrouterConsent,
@@ -206,7 +213,22 @@ test('runDoctor() writes .quaere/settings.json with the documented shape and res
     };
     await writeFile(path.join(repoRoot, '.env'), 'OPENROUTER_API_KEY=sk-or-fake-test-value\n');
 
-    const { settings, table } = await runDoctor({ repoRoot, execFileSyncImpl, smokeTestImpl });
+    // No real network here: xai's key is present (env var) but its probe reports the exact gap
+    // this addendum closes (team_blocked); openrouter's key probes clean.
+    const fetchImpl = async (url) => {
+      const u = String(url);
+      if (u.includes('api.x.ai')) return { ok: true, status: 200, json: async () => ({ team_blocked: true }) };
+      if (u.includes('openrouter.ai')) return { ok: true, status: 200, json: async () => ({ data: {} }) };
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const { settings, table } = await runDoctor({
+      repoRoot,
+      execFileSyncImpl,
+      smokeTestImpl,
+      env: { XAI_API_KEY: 'fake-xai-key' },
+      fetchImpl,
+    });
 
     assert.equal(typeof settings.generatedAt, 'string');
     assert.ok(Object.keys(settings.clis).length === CLI_LIST.length);
@@ -222,13 +244,28 @@ test('runDoctor() writes .quaere/settings.json with the documented shape and res
     assert.equal(settings.keys.openrouter.found, true);
     assert.equal(settings.keys.openrouter.source, 'dotenv');
     assert.equal(settings.keys.openrouter.file, path.join(repoRoot, '.env'));
+    assert.equal(settings.keys.openrouter.working, true);
     assert.ok(!JSON.stringify(settings).includes('sk-or-fake-test-value'), 'settings.json must never carry the key value');
+    assert.ok(!JSON.stringify(settings).includes('fake-xai-key'), 'settings.json must never carry the key value');
 
-    // models: qwen has no direct-provider fallback in this lineup -> openrouter; grok does (xai).
+    // xai's key is FOUND (env var) but NOT working (team_blocked) -- the gap this addendum closes.
+    assert.equal(settings.keys.xai.found, true);
+    assert.equal(settings.keys.xai.source, 'env');
+    assert.equal(settings.keys.xai.working, false);
+    assert.equal(settings.keys.xai.reason, 'team_blocked');
+    // google/deepseek: no key anywhere in this fixture.
+    assert.equal(settings.keys.google.found, false);
+    assert.equal(settings.keys.google.working, false);
+    assert.equal(settings.keys.deepseek.found, false);
+
+    // models: qwen has no direct-provider fallback in this lineup -> openrouter; grok's direct
+    // fallback (xai) is found but not working (team_blocked), so it ALSO falls to openrouter now.
     assert.equal(settings.models['qwen3.8-max'].driver, 'openrouter');
-    assert.equal(settings.models['x-ai/grok-4.6'].driver, 'xai');
+    assert.equal(settings.models['x-ai/grok-4.6'].driver, 'openrouter');
+    assert.match(settings.models['x-ai/grok-4.6'].reason, /team_blocked/);
     assert.equal(settings.models['gpt-6-astra'].driver, 'cli');
-    assert.equal(settings.models['deepseek-flash'].driver, 'deepseek');
+    // deepseek-flash has no CLI at all and no working deepseek key in this fixture -> openrouter.
+    assert.equal(settings.models['deepseek-flash'].driver, 'openrouter');
 
     // it was actually written to disk, and read() would see the same JSON.
     const onDisk = JSON.parse(await (await import('node:fs/promises')).readFile(path.join(repoRoot, '.quaere', 'settings.json'), 'utf8'));
@@ -236,7 +273,175 @@ test('runDoctor() writes .quaere/settings.json with the documented shape and res
 
     assert.match(table, /CLI\s+Found\s+Path/);
     assert.match(table, /grok/);
+    assert.match(table, /Providers:/);
+    assert.match(table, /xai\s+✅\s+env\s+❌/);
     assert.equal(anyLineupCliFailed(settings), true); // qwen and grok both fail their lineup check
+  }));
+
+// ---------------------------------------------------------------------------
+// findProviderKey() / readProviderKey() / probeProviderKey(): the google/deepseek/xai gap
+// ---------------------------------------------------------------------------
+
+test('findProviderKey(): env var wins, recorded with no file (nothing to point at)', async () => {
+  const record = await findProviderKey('google', { env: { GEMINI_API_KEY: 'fake-key' } });
+  assert.deepEqual(record, { found: true, source: 'env', file: null });
+});
+
+test('findProviderKey(): falls back to aigate provider "<name>" when the env var is absent', () =>
+  withTempDir(async (dir) => {
+    const aigateEnvPath = path.join(dir, 'aigate.env');
+    await writeFile(aigateEnvPath, 'AIGATE_URL=https://aigate.example.invalid\nAIGATE_TOKEN=fake-token\n');
+    const fetchImpl = async (url) => {
+      assert.match(String(url), /\/api\/keys\/xai$/);
+      return { ok: true, json: async () => ({ key: 'sk-xai-from-aigate' }) };
+    };
+    const record = await findProviderKey('xai', { env: {}, aigateEnvPath, fetchImpl });
+    assert.equal(record.found, true);
+    assert.equal(record.source, 'aigate');
+    assert.equal(record.file, aigateEnvPath);
+  }));
+
+test('findProviderKey(): not found when neither source has it', async () => {
+  const record = await findProviderKey('deepseek', { env: {}, aigateEnvPath: '/no/such/file' });
+  assert.deepEqual(record, { found: false, source: null, file: null });
+});
+
+test('findProviderKey(): --no-network skips the aigate lookup entirely', async () => {
+  const record = await findProviderKey('deepseek', {
+    env: {},
+    noNetwork: true,
+    fetchImpl: async () => {
+      throw new Error('should never be called');
+    },
+  });
+  assert.deepEqual(record, { found: false, source: null, file: null });
+});
+
+test('readProviderKey(): reads the env var value only at the point of use', async () => {
+  const record = { found: true, source: 'env', file: null };
+  const key = await readProviderKey('deepseek', record, { env: { DEEPSEEK_API_KEY: 'sk-real-value' } });
+  assert.equal(key, 'sk-real-value');
+});
+
+test('probeProviderKey("xai"): 2xx with team_blocked:true is NOT working -- the exact reported gap', async () => {
+  const fetchImpl = async (url) => {
+    assert.equal(String(url), 'https://api.x.ai/v1/api-key');
+    return { ok: true, status: 200, json: async () => ({ team_blocked: true }) };
+  };
+  const result = await probeProviderKey('xai', 'sk-blocked', { fetchImpl });
+  assert.equal(result.working, false);
+  assert.equal(result.status, 200);
+  assert.equal(result.reason, 'team_blocked');
+});
+
+test('probeProviderKey("xai"): a clean key with no blocked flags is working', async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ team_blocked: false }) });
+  const result = await probeProviderKey('xai', 'sk-fine', { fetchImpl });
+  assert.equal(result.working, true);
+});
+
+test('probeProviderKey("xai"): any non-2xx is not working', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 403, json: async () => ({ error: 'forbidden' }) });
+  const result = await probeProviderKey('xai', 'sk-bad', { fetchImpl });
+  assert.equal(result.working, false);
+  assert.equal(result.status, 403);
+  assert.equal(result.reason, 'forbidden');
+});
+
+test('probeProviderKey("google"): hits the models endpoint with the key as a query param', async () => {
+  const fetchImpl = async (url) => {
+    assert.match(String(url), /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\?pageSize=1&key=sk-g$/);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const result = await probeProviderKey('google', 'sk-g', { fetchImpl });
+  assert.equal(result.working, true);
+});
+
+test('probeProviderKey("deepseek"): hits GET /models with a bearer header', async () => {
+  const fetchImpl = async (url, opts) => {
+    assert.equal(String(url), 'https://api.deepseek.com/models');
+    assert.equal(opts.headers.authorization, 'Bearer sk-d');
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const result = await probeProviderKey('deepseek', 'sk-d', { fetchImpl });
+  assert.equal(result.working, true);
+});
+
+test('probeProviderKey("openrouter"): hits GET auth/key with a bearer header', async () => {
+  const fetchImpl = async (url, opts) => {
+    assert.equal(String(url), 'https://openrouter.ai/api/v1/auth/key');
+    assert.equal(opts.headers.authorization, 'Bearer sk-or');
+    return { ok: true, status: 200, json: async () => ({ data: {} }) };
+  };
+  const result = await probeProviderKey('openrouter', 'sk-or', { fetchImpl });
+  assert.equal(result.working, true);
+});
+
+test('probeProviderKey(): a network throw is caught and reported as not working, never rethrown', async () => {
+  const fetchImpl = async () => {
+    throw new Error('fetch failed: ECONNRESET');
+  };
+  const result = await probeProviderKey('xai', 'sk-x', { fetchImpl });
+  assert.equal(result.working, false);
+  assert.equal(result.status, null);
+  assert.match(result.reason, /ECONNRESET/);
+});
+
+// ---------------------------------------------------------------------------
+// probeKeys(): found-but-not-found, --no-network, and the full found+working shape
+// ---------------------------------------------------------------------------
+
+test('probeKeys(): a key that is not found anywhere is working:false with a plain reason', () =>
+  withTempDir(async (repoRoot) => {
+    // Isolate from this machine's real ~/.claude/settings.json / vaulted openrouter key --
+    // otherwise findOpenrouterKey's (b)/(e) steps would find a real key on Jeremy's box.
+    const keys = await probeKeys({
+      repoRoot,
+      env: {},
+      aigateEnvPath: '/no/such/file',
+      claudeSettingsPath: path.join(repoRoot, 'no-such-claude-settings.json'),
+    });
+    for (const provider of ['google', 'deepseek', 'xai', 'openrouter']) {
+      assert.equal(keys[provider].found, false);
+      assert.equal(keys[provider].working, false);
+      assert.equal(keys[provider].reason, 'no key found');
+    }
+  }));
+
+test('probeKeys(): --no-network finds env-var keys but never probes them (working:null)', () =>
+  withTempDir(async (repoRoot) => {
+    const keys = await probeKeys({
+      repoRoot,
+      noNetwork: true,
+      claudeSettingsPath: path.join(repoRoot, 'no-such-claude-settings.json'),
+      env: { GEMINI_API_KEY: 'sk-g', OPENROUTER_API_KEY: 'sk-or' },
+      fetchImpl: async () => {
+        throw new Error('should never be called under --no-network');
+      },
+    });
+    assert.equal(keys.google.found, true);
+    assert.equal(keys.google.working, null);
+    assert.match(keys.google.reason, /--no-network/);
+    assert.equal(keys.openrouter.found, true);
+    assert.equal(keys.openrouter.working, null);
+  }));
+
+test('probeKeys(): found + working end to end for a clean google key via env var', () =>
+  withTempDir(async (repoRoot) => {
+    const fetchImpl = async (url) => {
+      if (String(url).includes('generativelanguage.googleapis.com')) return { ok: true, status: 200, json: async () => ({}) };
+      return { ok: false, status: 401, json: async () => ({ error: 'no key' }) };
+    };
+    const keys = await probeKeys({
+      repoRoot,
+      claudeSettingsPath: path.join(repoRoot, 'no-such-claude-settings.json'),
+      env: { GEMINI_API_KEY: 'sk-g' },
+      fetchImpl,
+    });
+    assert.equal(keys.google.found, true);
+    assert.equal(keys.google.source, 'env');
+    assert.equal(keys.google.working, true);
+    assert.equal(keys.google.status, 200);
   }));
 
 test('anyLineupCliFailed() is false only when every lineup CLI is found and headless-ok', () => {
@@ -358,10 +563,12 @@ test('readOpenrouterKey() reads the actual value only at the point of use, from 
   }));
 
 // ---------------------------------------------------------------------------
-// resolveModels(): cli headless-ok -> cli; else direct provider driver; else openrouter
+// resolveModels(): cli headless-ok -> cli; else a direct provider driver, but ONLY when its key
+// is working; else openrouter. This is the doctor addendum's core rule -- the grok/xai gap
+// (a direct driver picked purely because the CLI failed, with no check that the key even works).
 // ---------------------------------------------------------------------------
 
-test('resolveModels() picks cli when headless-ok, a direct driver when one exists, else openrouter', () => {
+test('resolveModels() picks cli when headless-ok, a direct driver when its key is working, else openrouter', () => {
   const clis = {
     ai: { found: true, headless: true },
     codex: { found: false, headless: false },
@@ -370,14 +577,28 @@ test('resolveModels() picks cli when headless-ok, a direct driver when one exist
     kimi: { found: true, headless: true },
     grok: { found: true, headless: false },
   };
-  const models = resolveModels(clis, LINEUP);
+  const keys = {
+    google: { found: true, working: true, reason: 'ok' },
+    xai: { found: true, working: false, reason: 'team_blocked' }, // the reported gap
+    deepseek: { found: true, working: true, reason: 'ok' },
+  };
+  const models = resolveModels(clis, keys, LINEUP);
   assert.deepEqual(models['claude-fable-5-1'], { driver: 'cli', cli: 'ai', reason: 'CLI found and headless smoke passed' });
   assert.equal(models['gpt-6-astra'].driver, 'openrouter'); // codex missing, no direct fallback
   assert.equal(models['qwen3.8-max'].driver, 'openrouter'); // qwen not headless-ok, no direct fallback
-  assert.equal(models['gemini-3.8-flash'].driver, 'google'); // direct fallback exists
+  assert.equal(models['gemini-3.8-flash'].driver, 'google'); // direct fallback exists and works
   assert.equal(models['kimi-code/k3'].driver, 'cli');
-  assert.equal(models['x-ai/grok-4.6'].driver, 'xai'); // direct fallback exists
-  assert.equal(models['deepseek-flash'].driver, 'deepseek'); // no cli at all for this lab
+  // grok's CLI failed AND its direct fallback key (xai) is team_blocked -> openrouter, not xai.
+  assert.equal(models['x-ai/grok-4.6'].driver, 'openrouter');
+  assert.match(models['x-ai/grok-4.6'].reason, /team_blocked/);
+  assert.equal(models['deepseek-flash'].driver, 'deepseek'); // no cli at all for this lab, key works
+});
+
+test('resolveModels() falls back to openrouter for a direct-driver entry whose key was never found', () => {
+  const clis = { grok: { found: false, headless: false } };
+  const models = resolveModels(clis, {}, LINEUP);
+  assert.equal(models['x-ai/grok-4.6'].driver, 'openrouter');
+  assert.match(models['x-ai/grok-4.6'].reason, /key not found/);
 });
 
 // ---------------------------------------------------------------------------

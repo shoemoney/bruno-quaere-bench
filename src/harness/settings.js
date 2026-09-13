@@ -1,10 +1,12 @@
-// .quaere/settings.json: doctor's findings (CLI scan + resolved openrouter key source + per-model
-// driver resolution) and the `run` command's openrouter-key confirmation prompt. Zero deps.
+// .quaere/settings.json: doctor's findings (CLI scan + resolved provider key sources/working
+// status for google/deepseek/xai/openrouter + per-model driver resolution) and the `run`
+// command's openrouter-key confirmation prompt. Zero deps.
 //
-// Nothing in this file ever returns, logs, or writes a KEY VALUE -- only file paths and an env
-// var name. `readOpenrouterKey()` is the one function that touches an actual key value, and only
-// at the caller's request (immediately before using it), never as a return value that gets
-// printed or persisted.
+// Nothing in this file ever returns, logs, or writes a KEY VALUE -- only file paths, an env var
+// name, and (for the provider-key probes) an HTTP status/reason string. `readOpenrouterKey()`
+// and `readProviderKey()` are the only functions that touch an actual key value, and only at the
+// caller's request (immediately before using it), never as a return value that gets printed or
+// persisted.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -66,7 +68,8 @@ function readJsonSafe(filePath) {
 // exactly per Jeremy's spec: (a) .quaere/settings.json's own `openrouterKeyFile`/`openrouterKey`,
 // (b) ~/.claude/settings.json env.OPENROUTER_API_KEY, (c) ./.env OPENROUTER_API_KEY, (d) the
 // OPENROUTER_API_KEY env var itself, (e) aigate provider "openrouter" via ~/.claude/aigate/env.
-// `file` is a PATH only -- never the key -- and null for the bare env-var source.
+// `file` is a PATH only -- never the key -- and null for the bare env-var source. `noNetwork`
+// skips step (e), the only one of the five that touches the network.
 export async function findOpenrouterKey({
   repoRoot = process.cwd(),
   settingsPath,
@@ -76,6 +79,7 @@ export async function findOpenrouterKey({
   env = process.env,
   fetchImpl = fetch,
   aigateBaseUrl,
+  noNetwork = false,
 } = {}) {
   const resolvedSettingsPath = settingsPath || settingsPathFor(repoRoot);
   const resolvedDotenvPath = dotenvPath || path.join(repoRoot, '.env');
@@ -118,7 +122,8 @@ export async function findOpenrouterKey({
     return { found: true, source: 'env', file: null };
   }
 
-  // (e) aigate provider "openrouter"
+  // (e) aigate provider "openrouter" -- the only step that touches the network
+  if (noNetwork) return { found: false, source: null, file: null };
   try {
     const aigateEnv = parseDotEnv(fs.readFileSync(aigateEnvPath, 'utf8'));
     const token = aigateEnv.AIGATE_TOKEN;
@@ -175,10 +180,139 @@ export async function readOpenrouterKey(record, { env = process.env, fetchImpl =
   throw new Error(`no OPENROUTER_API_KEY found in ${record.file}`);
 }
 
-// resolveModels(clis, lineup?) -> {<lineup id>: {driver, cli|null, reason}}. cli found + headless
-// smoke ok -> driver "cli"; else a direct provider driver if this lab has one (google/deepseek/
-// xai); else "openrouter" with reason "no working CLI".
-export function resolveModels(clis, lineup = LINEUP) {
+// --- direct provider keys (google/deepseek/xai): same idea as the openrouter helpers above, ---
+// --- just a two-source search (env var, then aigate) instead of openrouter's five. -------------
+
+// The env var each direct driver reads at run time (src/harness/run.js resolveDriver) -- doctor
+// checks the same var so "doctor says it works" and "run actually uses this" never diverge.
+export const DIRECT_PROVIDER_ENV_VAR = {
+  google: 'GEMINI_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  xai: 'XAI_API_KEY',
+};
+
+// findProviderKey(provider, opts) -> Promise<{found, source, file}>. (a) the provider's own env
+// var (source "env", file null -- nothing to point at), (b) aigate provider `<provider>` via
+// ~/.claude/aigate/env (source "aigate", file the env-file path). `noNetwork` skips (b).
+export async function findProviderKey(
+  provider,
+  { env = process.env, aigateEnvPath = DEFAULT_AIGATE_ENV_PATH, fetchImpl = fetch, aigateBaseUrl, noNetwork = false } = {},
+) {
+  const envVar = DIRECT_PROVIDER_ENV_VAR[provider];
+  if (!envVar) throw new Error(`unknown direct provider: ${provider}`);
+  if (env[envVar]) return { found: true, source: 'env', file: null };
+  if (noNetwork) return { found: false, source: null, file: null };
+  try {
+    const aigateEnv = parseDotEnv(fs.readFileSync(aigateEnvPath, 'utf8'));
+    const token = aigateEnv.AIGATE_TOKEN;
+    const base = (aigateBaseUrl || aigateEnv.AIGATE_URL || '').replace(/\/$/, '');
+    if (token && base) {
+      const res = await fetchImpl(`${base}/api/keys/${provider}`, { headers: { authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data.key === 'string' && data.key) {
+          return { found: true, source: 'aigate', file: aigateEnvPath };
+        }
+      }
+    }
+  } catch {
+    // aigate unreachable/unconfigured -- genuinely not found
+  }
+  return { found: false, source: null, file: null };
+}
+
+// readProviderKey(provider, record, opts) -> Promise<string>. Reads the KEY VALUE from wherever
+// findProviderKey() said it lives, at the point of use only -- never persisted, logged, or
+// returned by findProviderKey() itself.
+export async function readProviderKey(provider, record, { env = process.env, fetchImpl = fetch, aigateBaseUrl } = {}) {
+  if (!record || !record.found) throw new Error(`no ${provider} key source recorded`);
+  if (record.source === 'env') {
+    const envVar = DIRECT_PROVIDER_ENV_VAR[provider];
+    if (!env[envVar]) throw new Error(`${envVar} not set in the environment`);
+    return env[envVar];
+  }
+  if (record.source === 'aigate') {
+    const aigateEnv = parseDotEnv(fs.readFileSync(record.file, 'utf8'));
+    const base = (aigateBaseUrl || aigateEnv.AIGATE_URL || '').replace(/\/$/, '');
+    const res = await fetchImpl(`${base}/api/keys/${provider}`, {
+      headers: { authorization: `Bearer ${aigateEnv.AIGATE_TOKEN}` },
+    });
+    if (!res.ok) throw new Error(`aigate GET /api/keys/${provider} -> ${res.status} ${res.statusText}`);
+    const data = await res.json();
+    if (!data || typeof data.key !== 'string' || !data.key) {
+      throw new Error(`aigate returned no working key for provider "${provider}"`);
+    }
+    return data.key;
+  }
+  throw new Error(`unknown key source: ${record.source}`);
+}
+
+async function safeJson(res) {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function describeErrorBody(body) {
+  if (!body) return null;
+  if (typeof body.error === 'string') return body.error;
+  if (body.error && typeof body.error.message === 'string') return body.error.message;
+  if (typeof body.message === 'string') return body.message;
+  return null;
+}
+
+function truncateReason(text, max = 300) {
+  const s = String(text || '');
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+// probeProviderKey(provider, apiKey, opts) -> Promise<{working, status, reason}>. The one place
+// an actual key VALUE is used over the wire; the caller never logs or persists it -- only this
+// return value (a boolean, an HTTP status, and free text) makes it into settings.json.
+export async function probeProviderKey(provider, apiKey, { fetchImpl = fetch } = {}) {
+  try {
+    if (provider === 'google') {
+      const res = await fetchImpl(
+        `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=${encodeURIComponent(apiKey)}`,
+      );
+      if (res.ok) return { working: true, status: res.status, reason: 'ok' };
+      const body = await safeJson(res);
+      return { working: false, status: res.status, reason: describeErrorBody(body) || `HTTP ${res.status}` };
+    }
+    if (provider === 'deepseek') {
+      const res = await fetchImpl('https://api.deepseek.com/models', { headers: { authorization: `Bearer ${apiKey}` } });
+      if (res.ok) return { working: true, status: res.status, reason: 'ok' };
+      const body = await safeJson(res);
+      return { working: false, status: res.status, reason: describeErrorBody(body) || `HTTP ${res.status}` };
+    }
+    if (provider === 'xai') {
+      const res = await fetchImpl('https://api.x.ai/v1/api-key', { headers: { authorization: `Bearer ${apiKey}` } });
+      const body = await safeJson(res);
+      if (!res.ok) return { working: false, status: res.status, reason: describeErrorBody(body) || `HTTP ${res.status}` };
+      if (body && body.team_blocked === true) return { working: false, status: res.status, reason: 'team_blocked' };
+      if (body && body.api_key_blocked === true) return { working: false, status: res.status, reason: 'api_key_blocked' };
+      if (body && body.api_key_disabled === true) return { working: false, status: res.status, reason: 'api_key_disabled' };
+      return { working: true, status: res.status, reason: 'ok' };
+    }
+    if (provider === 'openrouter') {
+      const res = await fetchImpl('https://openrouter.ai/api/v1/auth/key', { headers: { authorization: `Bearer ${apiKey}` } });
+      if (res.ok) return { working: true, status: res.status, reason: 'ok' };
+      const body = await safeJson(res);
+      return { working: false, status: res.status, reason: describeErrorBody(body) || `HTTP ${res.status}` };
+    }
+    throw new Error(`unknown provider to probe: ${provider}`);
+  } catch (err) {
+    return { working: false, status: null, reason: truncateReason(err.message || String(err)) };
+  }
+}
+
+// resolveModels(clis, keys, lineup?) -> {<lineup id>: {driver, cli|null, reason}}. cli found +
+// headless smoke ok -> driver "cli"; else a direct provider driver (google/deepseek/xai) but
+// ONLY when doctor found that provider's key working; else "openrouter" (with a reason that says
+// why the direct driver was skipped, when it was).
+export function resolveModels(clis, keys = {}, lineup = LINEUP) {
   const models = {};
   for (const entry of lineup) {
     if (entry.cli) {
@@ -189,10 +323,22 @@ export function resolveModels(clis, lineup = LINEUP) {
       }
     }
     if (entry.directDriver) {
+      const keyInfo = keys[entry.directDriver];
+      if (keyInfo && keyInfo.working) {
+        models[entry.id] = {
+          driver: entry.directDriver,
+          cli: null,
+          reason: entry.cli ? 'no working CLI; using the direct provider driver' : 'no CLI for this lab; direct provider driver',
+        };
+        continue;
+      }
+      const keyReason = keyInfo && keyInfo.reason ? keyInfo.reason : 'key not found';
       models[entry.id] = {
-        driver: entry.directDriver,
+        driver: 'openrouter',
         cli: null,
-        reason: entry.cli ? 'no working CLI; using the direct provider driver' : 'no CLI for this lab; direct provider driver',
+        reason: entry.cli
+          ? `no working CLI; ${entry.directDriver} key not working (${keyReason}); falling back to openrouter`
+          : `${entry.directDriver} key not working (${keyReason}); falling back to openrouter`,
       };
       continue;
     }

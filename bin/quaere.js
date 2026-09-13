@@ -236,12 +236,17 @@ async function cmdBoard(args) {
   process.stdout.write(renderBoard(results, { dnr }));
 }
 
-// `quaere doctor [--json] [--no-smoke]`: scans this Mac for every lineup CLI (a login-shell
-// binary resolve + `--version` + a trivial headless smoke through the adapter's own build()/
-// parseUsage()), finds an OpenRouter key as the last-resort driver, and writes
+// `quaere doctor [--json] [--no-smoke] [--no-network]`: scans this Mac for every lineup CLI (a
+// login-shell binary resolve + `--version` + a trivial headless smoke through the adapter's own
+// build()/parseUsage()), probes every direct-provider key (google/deepseek/xai) and the
+// OpenRouter key against their own APIs (skipped by `--no-network`), and writes
 // `.quaere/settings.json`. Exits non-zero if any lineup CLI is missing or fails its smoke.
 async function cmdDoctor(args) {
-  const { settings, table } = await runDoctor({ repoRoot: REPO_ROOT, noSmoke: args['no-smoke'] !== undefined });
+  const { settings, table } = await runDoctor({
+    repoRoot: REPO_ROOT,
+    noSmoke: args['no-smoke'] !== undefined,
+    noNetwork: args['no-network'] !== undefined,
+  });
   if (args.json !== undefined) {
     process.stdout.write(`${JSON.stringify(settings, null, 2)}\n`);
   } else {

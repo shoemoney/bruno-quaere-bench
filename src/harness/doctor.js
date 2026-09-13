@@ -1,9 +1,11 @@
 // `quaere doctor`: scan this Mac for every lineup CLI, run a trivial headless smoke test through
-// each adapter's own build()/parseUsage(), find an OpenRouter key (for whatever the lineup can't
-// reach any other way), resolve a driver per lineup model, and write .quaere/settings.json.
+// each adapter's own build()/parseUsage(), probe every direct-provider key (google/deepseek/xai)
+// and the OpenRouter key against their own APIs, resolve a driver per lineup model, and write
+// .quaere/settings.json.
 //
 // Zero deps; every child process is spawned in the foreground with a hard timeout -- doctor never
-// backgrounds a CLI and waits.
+// backgrounds a CLI and waits. `--no-network` skips the provider-key probes (CLI smoke tests are
+// skipped separately by `--no-smoke`).
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -11,7 +13,20 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { loadAdapter } from './cli/index.js';
-import { LINEUP, findOpenrouterKey, resolveModels, writeSettings } from './settings.js';
+import {
+  LINEUP,
+  findOpenrouterKey,
+  readOpenrouterKey,
+  findProviderKey,
+  readProviderKey,
+  probeProviderKey,
+  resolveModels,
+  writeSettings,
+} from './settings.js';
+
+// The direct-provider drivers this lineup can fall back to (google/deepseek/xai), derived from
+// LINEUP itself so this list can never drift out of sync with settings.js's own mapping.
+const DIRECT_PROVIDERS = [...new Set(LINEUP.filter((entry) => entry.directDriver).map((entry) => entry.directDriver))];
 
 // The six CLIs this bench's lineup can run through (deepseek-flash has no CLI at all).
 export const CLI_LIST = ['ai', 'codex', 'qwen', 'gemini', 'kimi', 'grok'];
@@ -169,18 +184,81 @@ export async function probeOne(cliName, { noSmoke = false, execFileSyncImpl, spa
   }
 }
 
-// runDoctor({repoRoot, noSmoke, cliList, ...findOpenrouterKeyOpts}) -> Promise<{settings, table}>.
+// resolveKeyStatus(record, {noNetwork, probe}) -> Promise<record & {working, status, reason}>.
+// Shared by every provider below: not found -> working:false with a plain reason; --no-network
+// -> working:null (never probed, never claimed working); otherwise runs `probe()` (which reads
+// the key VALUE and throws it away the moment probeProviderKey returns) and folds its result in.
+// A probe that throws (e.g. aigate unreachable at read time) is recorded as not-working, not
+// thrown further -- one bad key must never abort the rest of doctor's scan.
+async function resolveKeyStatus(record, { noNetwork, probe }) {
+  if (!record.found) return { ...record, working: false, status: null, reason: 'no key found' };
+  if (noNetwork) return { ...record, working: null, status: null, reason: 'network probe skipped (--no-network)' };
+  try {
+    const result = await probe();
+    return { ...record, ...result };
+  } catch (err) {
+    return { ...record, working: false, status: null, reason: truncate(err.message || String(err)) };
+  }
+}
+
+// probeKeys({repoRoot, noNetwork, env, ...keyOpts}) -> Promise<{google, deepseek, xai,
+// openrouter}>, each {found, source, file, working, status, reason}. Every direct-provider
+// driver this lineup can fall back to, plus openrouter (the universal last resort) -- probed the
+// same way doctor smokes a CLI: a real, cheap, read-only call against the provider's own API.
+export async function probeKeys({
+  repoRoot = process.cwd(),
+  noNetwork = false,
+  env,
+  fetchImpl,
+  aigateEnvPath,
+  aigateBaseUrl,
+  findOpenrouterKeyImpl = findOpenrouterKey,
+  findProviderKeyImpl = findProviderKey,
+  readOpenrouterKeyImpl = readOpenrouterKey,
+  readProviderKeyImpl = readProviderKey,
+  probeProviderKeyImpl = probeProviderKey,
+  ...openrouterFindOpts
+} = {}) {
+  const keys = {};
+  for (const provider of DIRECT_PROVIDERS) {
+    // eslint-disable-next-line no-await-in-loop -- probed one at a time, in the foreground.
+    const record = await findProviderKeyImpl(provider, { env, fetchImpl, aigateEnvPath, aigateBaseUrl, noNetwork });
+    // eslint-disable-next-line no-await-in-loop
+    keys[provider] = await resolveKeyStatus(record, {
+      noNetwork,
+      probe: async () => {
+        const key = await readProviderKeyImpl(provider, record, { env, fetchImpl, aigateBaseUrl });
+        return probeProviderKeyImpl(provider, key, { fetchImpl });
+      },
+    });
+  }
+
+  const orRecord = await findOpenrouterKeyImpl({ repoRoot, env, fetchImpl, aigateEnvPath, aigateBaseUrl, noNetwork, ...openrouterFindOpts });
+  keys.openrouter = await resolveKeyStatus(orRecord, {
+    noNetwork,
+    probe: async () => {
+      const key = await readOpenrouterKeyImpl(orRecord, { env, fetchImpl, aigateBaseUrl });
+      return probeProviderKeyImpl('openrouter', key, { fetchImpl });
+    },
+  });
+
+  return keys;
+}
+
+// runDoctor({repoRoot, noSmoke, noNetwork, cliList, ...opts}) -> Promise<{settings, table}>.
 // Writes .quaere/settings.json as a side effect (via settings.js's writeSettings()).
 export async function runDoctor({
   repoRoot = process.cwd(),
   noSmoke = false,
+  noNetwork = false,
   cliList = CLI_LIST,
   execFileSyncImpl,
   spawnSyncImpl,
   smokeTestImpl,
   probeOneImpl = probeOne,
+  probeKeysImpl = probeKeys,
   env,
-  ...openrouterOpts
+  ...keyOpts
 } = {}) {
   const clis = {};
   for (const cliName of cliList) {
@@ -189,13 +267,13 @@ export async function runDoctor({
     clis[cliName] = await probeOneImpl(cliName, { noSmoke, execFileSyncImpl, spawnSyncImpl, smokeTestImpl, env });
   }
 
-  const openrouter = await findOpenrouterKey({ repoRoot, ...openrouterOpts });
-  const models = resolveModels(clis);
+  const keys = await probeKeysImpl({ repoRoot, noNetwork, env, ...keyOpts });
+  const models = resolveModels(clis, keys);
 
   const settings = {
     generatedAt: new Date().toISOString(),
     clis,
-    keys: { openrouter },
+    keys,
     models,
   };
 
@@ -244,6 +322,32 @@ export function renderDoctorTable(settings) {
       ? `openrouter key: found via ${settings.keys.openrouter.source}${settings.keys.openrouter.file ? ` (${settings.keys.openrouter.file})` : ''}`
       : 'openrouter key: not found',
   );
+
+  lines.push('');
+  lines.push('Providers:');
+  const providerRows = Object.entries(settings.keys).map(([provider, info]) => ({
+    provider,
+    found: info.found ? '✅' : '❌',
+    source: info.source || '—',
+    working: info.working === true ? '✅' : info.working === false ? '❌' : '—',
+    status: info.status !== null && info.status !== undefined ? String(info.status) : '—',
+    reason: info.reason || '',
+  }));
+  const providerCols = [
+    { key: 'provider', label: 'Provider' },
+    { key: 'found', label: 'Found' },
+    { key: 'source', label: 'Source' },
+    { key: 'working', label: 'Working' },
+    { key: 'status', label: 'Status' },
+    { key: 'reason', label: 'Reason' },
+  ];
+  const providerWidths = providerCols.map((c) => Math.max(c.label.length, ...providerRows.map((r) => String(r[c.key]).length)));
+  lines.push(providerCols.map((c, i) => pad(c.label, providerWidths[i])).join('  '));
+  lines.push(providerWidths.map((w) => '-'.repeat(w)).join('  '));
+  for (const row of providerRows) {
+    lines.push(providerCols.map((c, i) => pad(row[c.key], providerWidths[i])).join('  '));
+  }
+
   lines.push('');
   lines.push('models:');
   for (const [id, m] of Object.entries(settings.models)) {
