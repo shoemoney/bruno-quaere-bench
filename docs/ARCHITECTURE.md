@@ -888,3 +888,95 @@ the harness records `suspendedMs` (sum of gaps between consecutive turns over 5 
 subtracts it from the wall check, so a sleep can never end a run by itself. And the Addendum M
 transient rule is implemented, not just written: grok died on `terminated` a second time (seed
 605, clean at rung 29).
+
+## Addendum Q: 0.6.0 was cleared by one 261-line program; 0.7.0 attacks the program, not the arithmetic
+
+Added 2026-09-13 12:30 from an Opus forensic read of gpt-6-astra's seed-701 climb (rollout,
+sandbox scripts, per-band timing) and the four falls beside it.
+
+**What Astra did.** 261 lines of Python in 23 tool calls, 20 of them at or below rung 73; the
+last 51 tool calls of the climb contain no new code. `client.py` wraps `bru run` and discards
+every response header; `solve.py` parses rung text with literal-string regexes; `history.json`
+is a forward-only ledger that resolves every cross-rung recall; the 5 MB skill was opened on 10
+of 373 tool calls, 7 of them at rung 0, and reduced to 34 KB by dropping sections BY HEADING NAME
+(Changelog, Sync notes, Pasted from, FAQ, RETIRED, TODO). Seed 701 announced 33 mutations; every
+one landed on a GET route the POST-driven pipeline never reads, so they cost zero. Rungs 70-99
+burned 78 percent of turns and 67 percent of wall paging a reel Astra's own earlier rungs kept
+growing: the top third is longer, not harder. It used 12 percent of the token budget and 18
+percent of the wall. All 100 submissions passed first try.
+
+**Every recorded fall is `hash:false, project_state:true, label:true`.** The two chain checks
+from Addendum O have a 100 percent pass rate on failures; they do not discriminate. Fable (71):
+its own shell-to-Python interpolation broke silently and it computed 141 − 3×0. Gemini (60):
+drafted the If-Match PATCH and never ran it. Grok (40): saw "pageSize was ignored (got 8)" and
+moved on. Kimi (3): lost a `--env-var` handoff and submitted rung 0's hash. Three of four are
+strategy or tooling, one is disposition; Astra's edge is a stateful, self-asserting program, and
+the ladder rewards exactly that because nothing on it changes after rung 0.
+
+**Seven assumptions a replayable solver rests on, all granted by 0.6.0:** (A1) the clause grammar
+is a closed set of published surface strings; (A2) house constants are ladder-constant, so the
+skill is read once; (A3) response shapes on the routes the pipeline uses never move; (A4) every
+derived number is a `len()` of a body already held; (A5) recall resolves from the script's own
+ledger; (A6) only the terminal artifact is graded, never the path; (A7) nothing is failed by doing
+extra and no rung revisits an earlier artifact. 0.7.0 breaks each. Generator-only; keys derivable
+from `docs/RULES-0.7.md`; docsolver, reference, sandbox-fidelity gates stay; no hand-written rungs;
+no model judge.
+
+1. **Paraphrase the clause surface (all bands).** Each clause kind renders as one of k ≥ 4 seeded
+   phrasings of identical meaning. RULES publishes clause KINDS and obligations, never surface
+   strings. `test/phrasing.test.js`: every rendering resolves to the same plan on seeds 1..300.
+   Zero cost to a reader; pure anti-template tax. Highest leverage change on this list.
+2. **Mutations on the fields a solver parses (40+, density 0.6 rising to 0.9 by 70).** Target
+   pool moves to load-bearing fields on write and list routes: `assets.create.id` renamed,
+   `descriptor.width` retyped to string, `descriptor.shapes` returned as a count, `jobs.create`
+   id dropped (recoverable from `Location`), listing cursor renamed. Rule 27 holds: the artifact
+   never changes, only the parse. Re-picked per rung so one normalization layer is not enough.
+3. **Load-bearing values in headers only (50+).** ETag lives only in the `ETag` header; the
+   listing's next cursor in `Link: rel="next"`; `Retry-After` as a real header, not a body field.
+4. **Dated mid-ladder amendments, written to disk at rungs 30, 55, 78.** The harness rewrites
+   HOUSE-RULES.md in the sandbox at announced rungs; the rung text says the house amended a rule
+   as of this piece, dated today, read it first. One item from a closed set: grid step, rounding
+   direction, compounding rule, default fps, or field order of the signing canonical string.
+   `world.amendments = [{atRung, rule, from, to}]`; `rulesAt(world, n)` in docsolver and
+   reference; `test/amendment.test.js`. The only mechanism that makes the 5 MB document keep
+   costing after rung 0.
+5. **Truth inside noise-headed sections.** A seeded subset of true rules, and every amendment,
+   is placed inside `### Sync notes`, `### Changelog`, `### Pasted from` blocks: still stated
+   once, dated, resolvable, so "sloppy is never wrong" holds, but a heading filter now deletes
+   the truth. Truth-table placement test.
+6. **Regression rungs (40-49, 60-69, 85-99).** Name an earlier submitted piece, state that a rule
+   governing its kind has since been amended, ask for it as it should be now: fetch, diff,
+   rebuild under current rules, resubmit under the same project. Turns a forward-only ledger
+   into the graded failure mode.
+7. **Negative-space grading (70-99, about 1 in 4).** The text demands something a numbered house
+   rule forbids (style a clip; write the word onto the leftover; send the release before the
+   check-back says done). New rule: where the task asks for something a house rule forbids, the
+   house rule wins, the act must not be performed, and a fourth check `refusal` asserts the
+   forbidden artifact or state is absent. The docsolver fails loudly if the conflict does not
+   resolve to exactly one reading. The first check invisible in the submitted hash.
+8. **Byte-budget search (55-69, 80-99).** "At or under N bytes, using the largest sample rate
+   that still fits." The render layer already produces the bytes; expose the length. The first
+   parameter whose value requires a search over live responses.
+9. **Rate-limit-aware counting that 429s into a wrong total (40-49, 70-99).** Tighter bucket on
+   the listing that feeds the derived count; `Retry-After` in the header; on one pooled route a
+   short page inside the throttle window instead of an error. Documented rule: a short page is
+   not the end; only the absence of a next cursor is.
+10. **Grade the path (50-99).** Replace `project_state` and `label` with an audit check: the
+    house records ordered stage transitions and signed notices per project; the key records the
+    required sequence including the 409 recovery. The HMAC canonical string binds a digest of the
+    artifact being released, so it must be recomputed per rung from a live value.
+11. **Kill the O(n²) listing tax.** Each batch rung works a freshly seeded reel, or the derived
+    count is server-scoped to the rung's own copies by a documented filter. Spend the recovered
+    turns on rules 6 and 8.
+12. **Season novelty: cross-kind and three-way diff (60-79).** Ship for novelty; one script-write
+    defeats it, so do not count it as steepening.
+13. **Calibration and columns.** Keep the 3M novel-token budget; a clearing climb should cost
+    about 1.5M so the budget binds, not the clock. New gates: phrasing, amendment, refusal
+    (reference passes with the refusal honoured and FAILS with it performed), truth placement.
+    Docsolver seeds include the round's block. `RunResult` gains `codeWrites` (tool calls that
+    create or patch a solver file) and `docReads` (tool calls that open the house rules); Astra's
+    were 23 and 10. Those two separate templating from reasoning better than turns.
+
+Asymmetry: rules 1, 2, 5, 7, 9 are near-free for a correct agent and fatal to replay. Rules 4
+and 6 tax everyone and are the first that make the long-session axis measure something. Rule 11
+pays for 6 and 8 out of turns that currently buy nothing.
