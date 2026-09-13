@@ -436,6 +436,10 @@ export async function climb({
   // and retried once by the driver itself (see resolveDriver/createDriver), and the value it
   // actually settled on is logged onto RunResult.maxOutputTokens below.
   maxOutputTokens = 32_768,
+  // Addendum P: injectable clock, purely for tests -- a fake `now()` lets a test jump the clock
+  // forward (simulating a multi-hour sleep) between two turns without actually waiting. A real
+  // run never passes this and gets the real Date.now.
+  now = Date.now,
 } = {}) {
   const world = makeWorld(seed);
   const runDir = path.join(outDir, String(model || driverName), String(seed), String(attempt));
@@ -452,11 +456,38 @@ export async function climb({
   const baseUrl = `http://127.0.0.1:${boundPorts.publicPort}`;
   const adminBase = `http://127.0.0.1:${boundPorts.adminPort}`;
 
-  const startedAt = Date.now();
+  const startedAt = now();
   const transcript = [];
   const submissions = [];
   let stoppedBecause = 'error';
   let driverError = null;
+
+  // Addendum P: "the machine slept." A climb's wall check used to compare raw elapsed real time
+  // against wallMsLimit, so a laptop sleeping mid-run counted every minute of sleep as if the
+  // agent had been burning wall clock -- round three's 371-wall-minute runs against a 180-minute
+  // cap were 344 of those minutes suspended, not spent. Any gap between two consecutive turns
+  // over SUSPEND_GAP_MS is assumed to be a sleep/suspend, not the model thinking, and is folded
+  // into `suspendedMs`, which is subtracted from elapsed before every wall-ms comparison below.
+  const SUSPEND_GAP_MS = 5 * 60 * 1000;
+  let suspendedMs = 0;
+  let lastTickAt = startedAt;
+  // tick(): call once per turn (never mid-turn) -- folds the gap since the last tick into
+  // suspendedMs when it exceeds SUSPEND_GAP_MS, then moves the tick forward. Returns the elapsed
+  // ACTIVE time so far (wall time minus everything folded into suspendedMs), which is what every
+  // wallMsLimit comparison in this file is measured against.
+  function tick() {
+    const t = now();
+    const gap = t - lastTickAt;
+    if (gap > SUSPEND_GAP_MS) suspendedMs += gap;
+    lastTickAt = t;
+    return t - startedAt - suspendedMs;
+  }
+  // elapsedMs(): the same active-time figure as tick(), without folding in a new gap -- used
+  // between ticks (e.g. computing how much budget a retry has left mid-turn) so a slow provider
+  // call itself is never mistaken for a suspend.
+  function elapsedMs() {
+    return now() - startedAt - suspendedMs;
+  }
 
   try {
     await adminPost(adminBase, '/admin/rungs', answerKey(world), adminToken);
@@ -512,7 +543,9 @@ export async function climb({
     let degenerateStreak = 0;
 
     turnLoop: while (turns < maxTurns) {
-      if (Date.now() - startedAt >= wallMsLimit) {
+      // Addendum P: tick() first so a gap since the previous turn (a sleeping machine) is folded
+      // into suspendedMs BEFORE it's checked against the wall, never after.
+      if (tick() >= wallMsLimit) {
         stoppedBecause = 'time';
         break;
       }
@@ -544,14 +577,14 @@ export async function climb({
       // backoff, and on anything fatal stop the loop cleanly so the partial run is still recorded.
       let stepResult;
       try {
-        stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - (Date.now() - startedAt));
+        stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - elapsedMs());
       } catch (err) {
         // Addendum H: a 401/403 is the provider itself, not the agent or the harness -- exactly
         // one retry after a fixed delay (never stepWithRetry's escalating backoff), then stop as
         // 'provider' with the status in driverError. Checked before the context-length regexes
         // below since 400/413 and 401/403 never overlap.
         if (PROVIDER_AUTH_ERROR.test(err.message)) {
-          const msLeftForRetry = wallMsLimit - (Date.now() - startedAt);
+          const msLeftForRetry = wallMsLimit - elapsedMs();
           if (Number.isFinite(msLeftForRetry) && providerRetryDelayMs >= msLeftForRetry) {
             stoppedBecause = 'provider';
             driverError = err.message;
@@ -562,7 +595,7 @@ export async function climb({
           await new Promise((r) => setTimeout(r, providerRetryDelayMs));
           try {
             // eslint-disable-next-line no-await-in-loop
-            stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - (Date.now() - startedAt));
+            stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - elapsedMs());
           } catch (err2) {
             stoppedBecause = 'provider';
             driverError = err2.message;
@@ -585,7 +618,7 @@ export async function climb({
             });
             contextEstimate = null;
             try {
-              stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - (Date.now() - startedAt));
+              stepResult = await stepWithRetry(driver, messages, TOOLS, wallMsLimit - elapsedMs());
             } catch (err2) {
               stoppedBecause = 'error';
               driverError = err2.message;
@@ -729,7 +762,7 @@ export async function climb({
       if (turns >= maxTurns) stoppedBecause = 'budget';
     }
 
-    const wallMs = Date.now() - startedAt;
+    const wallMs = now() - startedAt;
     const passedNs = submissions.filter((s) => s.pass).map((s) => s.rung);
     const rung = passedNs.length ? Math.max(...passedNs) : -1;
     const fidelityScores = submissions.map((s) => s.fidelity).filter((v) => typeof v === 'number');
@@ -813,6 +846,10 @@ export async function climb({
       cacheReadTokens,
       trims,
       wallMs,
+      // Addendum P: total gap time folded out of the wall check as "the machine slept," not the
+      // agent working -- 0 for every ordinary run, nonzero only when a turn-to-turn gap exceeded
+      // SUSPEND_GAP_MS (5 minutes).
+      suspendedMs,
       fidelity,
       trap,
       submissions,

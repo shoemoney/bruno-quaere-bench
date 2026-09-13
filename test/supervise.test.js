@@ -306,6 +306,67 @@ test('superviseProcess: a wall-clock deadline kills the tree and reports killedF
   assert.equal(outcome.timedOut, true);
 });
 
+// ---------------------------------------------------------------------------
+// Addendum P: suspended time -- a fake `now()` simulates a multi-hour sleep landing between two
+// wall-check ticks without the test actually waiting for it. The tick sequence inside
+// superviseProcess is deterministic and synchronous up to the first real setTimeout: call 1 is
+// spawnStartedAt, call 2 is the wall timer's own synchronous first tick (scheduleWallCheck() is
+// invoked once, immediately, right after the timer is armed), and call 3 is that timer's first
+// real firing. Numbering the fake clock's return values against that sequence lets a "6-hour
+// sleep" land exactly on call 3 -- as if the machine slept right after the first check -- while
+// every real setTimeout delay involved stays tiny, so the test itself runs in well under a second.
+// ---------------------------------------------------------------------------
+
+test('superviseProcess: a 6-hour gap between wall-check ticks does not kill a process whose active time is under the wall (Addendum P)', async () => {
+  const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+  let n = 0;
+  function now() {
+    n += 1;
+    if (n === 1) return 0; // spawnStartedAt
+    if (n === 2) return 10; // the wall timer's own synchronous first tick -- 10ms of "active" time
+    // Every firing from here on parks the clock at the same instant, 6 hours past call 2 -- the
+    // machine "slept" starting right after the first check and never wakes for the rest of the
+    // test, so active elapsed time (and thus how close the run is to the wall) never changes no
+    // matter how many more times the wall timer re-fires while waiting for the process to exit.
+    return 10 + SIX_HOURS_MS;
+  }
+  const outcome = await superviseProcess({
+    cmd: process.execPath,
+    // Real exit around 250ms -- long enough for a couple of post-jump wall-check re-firings (each
+    // a real ~90ms apart, from the 100ms wallMsLeft budget below) to prove the run keeps going.
+    args: ['-e', 'setTimeout(() => {}, 250)'],
+    env: process.env,
+    adminBase: 'http://127.0.0.1:1', // never reached: nothing to submit in this test
+    wallMsLeft: 100,
+    pollMs: 5000,
+    now,
+  });
+  assert.equal(outcome.killedFor, null, 'a 6-hour gap must not read as 6 hours of active wall time');
+  assert.ok(
+    outcome.suspendedMs >= SIX_HOURS_MS,
+    `expected suspendedMs to include the 6h gap, got ${outcome.suspendedMs}`,
+  );
+});
+
+test('superviseProcess: via the same fake clock, active time (no sleep) over the wall still kills the process as "wall" (Addendum P)', async () => {
+  let clock = 0;
+  function now() {
+    clock += 40; // pure active time, every call -- never a gap over SUSPEND_GAP_MS
+    return clock;
+  }
+  const outcome = await superviseProcess({
+    cmd: process.execPath,
+    args: ['-e', 'setTimeout(() => {}, 60000)'],
+    env: process.env,
+    adminBase: 'http://127.0.0.1:1',
+    wallMsLeft: 100,
+    pollMs: 5000,
+    now,
+  });
+  assert.equal(outcome.killedFor, 'wall');
+  assert.equal(outcome.suspendedMs, 0);
+});
+
 test('superviseProcess: a process that just exits on its own resolves with killedFor null', async () => {
   const outcome = await superviseProcess({
     cmd: process.execPath,

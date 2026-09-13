@@ -163,6 +163,19 @@ test('renderBoard columns are Model/Driver/Seed/Rung/Turns/Fidelity/Trap/Novel/B
   assert.match(md, /\| model-a \| anthropic \| 7 \| 10 \| 20 \| 100\.0% \| 100\.0% \| 150 \| 150 \| 1\.0 \| 2\.0 \| budget \|/);
 });
 
+// Addendum P: Suspended is a column only when at least one row in the section actually has any --
+// an ordinary clean round's board never grows a column of zeroes.
+test('renderBoard: no Suspended column when every run has suspendedMs 0 (Addendum P)', () => {
+  const md = renderBoard([fixture({ model: 'model-a' })]);
+  assert.doesNotMatch(md, /Suspended/);
+});
+
+test('renderBoard: a Suspended column (in minutes) appears once any run reports suspendedMs > 0 (Addendum P)', () => {
+  const md = renderBoard([fixture({ model: 'model-a', seed: 7, rung: 10, turns: 20, suspendedMs: 6 * 60 * 60 * 1000 })]);
+  assert.match(md, /\| Stop \| Probes \| Script \| Suspended \|/);
+  assert.match(md, /\| model-a \| anthropic \| 7 \| 10 \| 20 \| .* \| 360\.0m \|/);
+});
+
 test('renderBoard prints "No runs yet." when there are no results and no DNR entries', () => {
   const md = renderBoard([]);
   assert.match(md, /No runs yet\./);

@@ -117,8 +117,13 @@ export function gracefulKillTree(child, { drainMs = DEFAULT_DRAIN_MS } = {}) {
 }
 
 // superviseProcess({cmd, args, env, cwd, adminBase, adminToken, topRung, wallMsLeft, pollMs,
-// drainMs, knownSubmissionsCount, maxBruTurns, onEvent}) -> Promise<{exitCode, signal, timedOut,
-// killedFor: 'fail'|'top'|'wall'|'turns'|'overshoot'|'error'|null, submissions, stdout, stderr}>.
+// drainMs, knownSubmissionsCount, maxBruTurns, onEvent, now}) -> Promise<{exitCode, signal,
+// timedOut, killedFor: 'fail'|'top'|'wall'|'turns'|'overshoot'|'error'|null, submissions, stdout,
+// stderr, suspendedMs}>.
+//
+// `suspendedMs` (Addendum P): total gap time, folded out of the wall deadline as "the machine
+// slept," accumulated across this spawn's own supervision window -- 0 for every ordinary spawn.
+// The caller (run-cli.js) adds it to the climb-wide total.
 //
 // `knownSubmissionsCount` (default 0): how many submissions this RUN already had before this
 // spawn (i.e. from earlier spawns/resumes) -- Addendum G. Only submissions past this count are
@@ -150,6 +155,9 @@ export function superviseProcess({
   knownSubmissionsCount = 0,
   maxBruTurns = DEFAULT_MAX_BRU_TURNS,
   onEvent = () => {},
+  // Addendum P: injectable clock, purely for tests -- see run-cli.js's climb() for the shared
+  // rationale. A real run never passes this and gets the real Date.now.
+  now = Date.now,
 }) {
   return new Promise((resolve, reject) => {
     let stdout = '';
@@ -165,6 +173,24 @@ export function superviseProcess({
     let killedFor = null;
     let settled = false;
     let child;
+
+    // Addendum P: "the machine slept." The wall deadline used to be a single setTimeout(wallMsLeft)
+    // -- a real-time timer that, on a sleeping machine, has no way to tell "the process was
+    // suspended for 6 hours" apart from "6 hours of the CLI actually running." Folded into the
+    // existing pollMs poll loop instead: each tick measures the gap since the previous one, and
+    // anything over SUSPEND_GAP_MS is assumed to be a sleep/suspend and excluded from the active
+    // elapsed time the wall deadline is measured against.
+    const SUSPEND_GAP_MS = 5 * 60 * 1000;
+    const spawnStartedAt = now();
+    let suspendedMs = 0;
+    let lastTickAt = spawnStartedAt;
+    function tick() {
+      const t = now();
+      const gap = t - lastTickAt;
+      if (gap > SUSPEND_GAP_MS) suspendedMs += gap;
+      lastTickAt = t;
+      return t - spawnStartedAt - suspendedMs;
+    }
 
     try {
       // detached: true makes `child` the leader of a new process group (its pid doubles as the
@@ -291,26 +317,41 @@ export function superviseProcess({
       if (pendingChecks > 0) return;
       queueCheck(() => checkSubmissionsOnce().then(() => checkTurnCapOnce()));
     }, pollMs);
-    const wallTimer = Number.isFinite(wallMsLeft)
-      ? setTimeout(() => {
-          if (settled) return;
-          killedFor = 'wall';
-          gracefulKillTree(child, { drainMs });
-        }, Math.max(0, wallMsLeft))
-      : null;
+
+    // Addendum P: the wall deadline is its own self-rescheduling timer, independent of pollMs
+    // (unchanged from before Addendum P -- a caller can still poll submissions slowly while the
+    // wall itself is watched closely), except each firing is now a tick(): it folds any gap since
+    // the last firing into suspendedMs before deciding whether the (now-shorter) remaining budget
+    // has actually run out. Reschedules at min(remaining, 60s) so a short wallMsLeft (a test's
+    // 100ms) still fires promptly, and a long one (a real run's hours) still gets checked often
+    // enough that a sleep gets folded in well before it would otherwise matter.
+    let wallCheckTimer = null;
+    function scheduleWallCheck() {
+      if (!Number.isFinite(wallMsLeft) || settled) return;
+      const activeElapsed = tick();
+      const remaining = wallMsLeft - activeElapsed;
+      if (remaining <= 0) {
+        if (settled || killedFor) return;
+        killedFor = 'wall';
+        gracefulKillTree(child, { drainMs });
+        return;
+      }
+      wallCheckTimer = setTimeout(scheduleWallCheck, Math.min(remaining, 60_000));
+    }
+    scheduleWallCheck();
 
     function settle(result) {
       if (settled) return;
       settled = true;
       clearInterval(pollTimer);
-      if (wallTimer) clearTimeout(wallTimer);
+      if (wallCheckTimer) clearTimeout(wallCheckTimer);
       resolve(result);
     }
 
     child.on('error', (err) => {
       if (settled) return;
       onEvent({ ts: iso(), type: 'error', text: err.message });
-      settle({ exitCode: null, signal: null, timedOut: false, killedFor: 'error', submissions, stdout, stderr });
+      settle({ exitCode: null, signal: null, timedOut: false, killedFor: 'error', submissions, stdout, stderr, suspendedMs });
     });
 
     child.on('exit', (code, signal) => {
@@ -319,7 +360,7 @@ export function superviseProcess({
       // only then takes its own last look, so nothing is settled out from under a check that is
       // still reacting to submissions.
       queueCheck(() => checkSubmissionsOnce()).finally(() => {
-        settle({ exitCode: code, signal, timedOut: killedFor === 'wall', killedFor, submissions, stdout, stderr });
+        settle({ exitCode: code, signal, timedOut: killedFor === 'wall', killedFor, submissions, stdout, stderr, suspendedMs });
       });
     });
   });

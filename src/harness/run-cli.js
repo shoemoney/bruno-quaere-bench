@@ -283,6 +283,12 @@ export async function climb({
   // Addendum J: overridable only so a test can trip the cap in a handful of submissions instead
   // of 5000; a real run never passes this and gets the documented default.
   maxBruTurns = DEFAULT_MAX_BRU_TURNS,
+  // Addendum P: injectable clock, purely for tests -- a fake `now()` lets a test jump the clock
+  // forward (simulating a multi-hour sleep) between two loop iterations without actually
+  // waiting. A real run never passes this and gets the real Date.now. Threaded through to
+  // superviseProcess() too, so a sleep detected mid-spawn (inside its poll loop) uses the same
+  // clock as gaps detected here, between spawns.
+  now = Date.now,
 } = {}) {
   const world = makeWorld(seed);
   const label = model || (cliName ? `cli-${cliName}` : 'cli-fake');
@@ -305,7 +311,7 @@ export async function climb({
   const baseUrl = `http://127.0.0.1:${boundPorts.publicPort}`;
   const adminBase = `http://127.0.0.1:${boundPorts.adminPort}`;
 
-  const startedAt = Date.now();
+  const startedAt = now();
   const transcript = [];
   let stoppedBecause = 'error';
   let allSubmissions = [];
@@ -318,6 +324,23 @@ export async function climb({
   let usageEstimated = false;
   let sessionId = null;
   let resumes = 0;
+
+  // Addendum P: "the machine slept." Same rule as run.js's message loop -- a gap between two
+  // consecutive ticks over SUSPEND_GAP_MS is a sleep/suspend, not the CLI working, and is folded
+  // into `suspendedMs` (subtracted from elapsed before every wallMsLimit comparison). This loop's
+  // own tick fires once per spawn/resume, between superviseProcess() calls; a sleep DURING one
+  // spawn's own supervision window is detected by supervise.js's poll loop instead and reported
+  // back on `outcome.suspendedMs`, folded in here right below.
+  const SUSPEND_GAP_MS = 5 * 60 * 1000;
+  let suspendedMs = 0;
+  let lastTickAt = startedAt;
+  function tick() {
+    const t = now();
+    const gap = t - lastTickAt;
+    if (gap > SUSPEND_GAP_MS) suspendedMs += gap;
+    lastTickAt = t;
+    return t - startedAt - suspendedMs;
+  }
 
   try {
     await adminPost(adminBase, '/admin/rungs', answerKey(world), adminToken);
@@ -351,7 +374,9 @@ export async function climb({
     let isResume = false;
 
     for (;;) {
-      const wallMsLeft = wallMsLimit - (Date.now() - startedAt);
+      // Addendum P: tick() first so a gap since the previous spawn (a sleeping machine between
+      // resumes) is folded into suspendedMs BEFORE it's checked against the wall, never after.
+      const wallMsLeft = wallMsLimit - tick();
       if (wallMsLeft <= 0) {
         stoppedBecause = 'time';
         break;
@@ -384,8 +409,19 @@ export async function climb({
         // own running total across every earlier spawn/resume, so a resume never re-reacts to
         // (re-advances for, or re-fails on) a submission an earlier spawn already handled.
         knownSubmissionsCount: allSubmissions.length,
+        // Addendum P: same fake-clock injection as this loop's own tick() above, so a test can
+        // simulate a sleep that happens DURING a spawn's own supervision window, not just between
+        // spawns.
+        now,
         onEvent: (entry) => transcript.push(entry),
       });
+      // Addendum P: a sleep detected inside the spawn's own poll loop (supervise.js) is reported
+      // back here and folded into this climb's total -- also nudges this loop's own tick() so the
+      // very next iteration's wall check doesn't re-count the same gap as a fresh one.
+      if (outcome.suspendedMs) {
+        suspendedMs += outcome.suspendedMs;
+        lastTickAt = now();
+      }
 
       transcript.push({
         ts: new Date().toISOString(),
@@ -535,7 +571,7 @@ export async function climb({
       spawnSpec = resumeSpec || (await adapter.build(resumeContext));
     }
 
-    const wallMs = Date.now() - startedAt;
+    const wallMs = now() - startedAt;
     const passedNs = allSubmissions.filter((s) => s.pass).map((s) => s.rung);
     const rung = passedNs.length ? Math.max(...passedNs) : -1;
     const fidelityScores = allSubmissions.map((s) => s.fidelity).filter((v) => typeof v === 'number');
@@ -614,6 +650,10 @@ export async function climb({
       // is resumes."
       trims: 0,
       wallMs,
+      // Addendum P: total gap time folded out of the wall check as "the machine slept," not the
+      // CLI working -- 0 for every ordinary run, nonzero only when a tick-to-tick gap (between
+      // spawns here, or between poll ticks inside supervise.js) exceeded SUSPEND_GAP_MS (5 min).
+      suspendedMs,
       fidelity,
       trap,
       submissions: allSubmissions,

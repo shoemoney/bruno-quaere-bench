@@ -393,6 +393,91 @@ test('climb(): the wall-clock cap stops a climb that never submits anything, as 
   }
 });
 
+// ---------------------------------------------------------------------------
+// Addendum P: suspended time -- a fake `now()` simulates a multi-hour sleep between two spawns
+// (the CLI-path equivalent of run.js's turn-to-turn gap) without the test actually waiting for
+// it. The jump is injected from inside the fake adapter's build() -- called by climb() between
+// one spawn finishing and the next one starting, i.e. strictly before the next loop iteration's
+// own wall-check tick() -- so no knowledge of supervise.js's internal now()-call count is needed.
+// ---------------------------------------------------------------------------
+
+test('climb(): a 6-hour gap between spawns does not end a CLI climb whose active time is under the wall (Addendum P)', async () => {
+  const seed = 1;
+  const runsDir = await tmpRunsDir();
+  try {
+    let clock = 0;
+    const now = () => {
+      clock += 5;
+      return clock;
+    };
+    const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+    let calls = 0;
+    const adapter = {
+      name: 'sleepy',
+      build: () => {
+        calls += 1;
+        // The machine "slept" for 6 hours right after the very first spawn, while the second was
+        // being prepared -- landing the gap exactly between the two, where run-cli.js's own
+        // tick() (at the top of its resume loop) looks for it.
+        if (calls === 2) clock += SIX_HOURS_MS;
+        return { cmd: process.execPath, args: ['-e', 'process.exit(0)'], env: {} };
+      },
+      parseUsage: () => ({ tokensIn: 10, tokensOut: 10, tokensCached: 0 }),
+      resume: () => null,
+    };
+    const result = await climb({
+      cli: adapter,
+      model: 'fake-sleepy',
+      seed,
+      outDir: runsDir,
+      pollMs: 20,
+      // 1 hour of ACTIVE wall budget -- a single unexcluded 6h gap would blow straight through it.
+      wallMsLimit: 60 * 60 * 1000,
+      now,
+    });
+    assert.equal(result.stoppedBecause, 'stalled', 'ran to the resume cap rather than being cut by the wall');
+    assert.equal(result.resumes, 3);
+    assert.equal(calls, 4, 'the initial build() plus exactly 3 resume-as-fresh-build() calls');
+    assert.ok(
+      result.suspendedMs >= SIX_HOURS_MS,
+      `expected suspendedMs to include the 6h gap, got ${result.suspendedMs}`,
+    );
+  } finally {
+    await rm(runsDir, { recursive: true, force: true });
+  }
+});
+
+test('climb(): via the same fake clock, active time (no sleep) over the wall still ends a CLI climb as "time" (Addendum P)', async () => {
+  const seed = 1;
+  const runsDir = await tmpRunsDir();
+  try {
+    let clock = 0;
+    const now = () => {
+      clock += 20_000; // pure active time per tick -- never a gap over the 5-minute threshold
+      return clock;
+    };
+    const adapter = {
+      name: 'active',
+      build: () => ({ cmd: process.execPath, args: ['-e', 'process.exit(0)'], env: {} }),
+      parseUsage: () => ({ tokensIn: 10, tokensOut: 10, tokensCached: 0 }),
+      resume: () => null,
+    };
+    const result = await climb({
+      cli: adapter,
+      model: 'fake-active',
+      seed,
+      outDir: runsDir,
+      pollMs: 20,
+      wallMsLimit: 50_000,
+      now,
+    });
+    assert.equal(result.stoppedBecause, 'time');
+    assert.equal(result.suspendedMs, 0);
+  } finally {
+    await rm(runsDir, { recursive: true, force: true });
+  }
+});
+
 test('climb(): exceeding the token budget stops the climb as "budget" even after a pass', async () => {
   const seed = 1;
   const world = makeWorld(seed);

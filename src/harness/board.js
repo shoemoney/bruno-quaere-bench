@@ -90,8 +90,21 @@ const TABLE_HEADER =
   '| Model | Driver | Seed | Rung | Turns | Fidelity | Trap | Novel | Billed | Violations | Resumes | Stop | Probes | Script |';
 const TABLE_RULE = '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|';
 
-function rowLine(row) {
-  return `| ${row.model} | ${row.driver} | ${row.seed} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.violations.toFixed(1)} | ${row.resumes.toFixed(1)} | ${row.stop} | ${row.probes.toFixed(1)} | ${row.scriptRequests.toFixed(1)} |`;
+// Addendum P: Suspended (gap time excluded from the wall check as "the machine slept") is
+// appended after Script for the same reason Probes/Script were -- it keeps the Addendum J/K
+// substring assertions intact -- and only when at least one row in the section actually has any,
+// so an ordinary clean round's board doesn't grow a column of zeroes.
+function tableHeader(showSuspended) {
+  return showSuspended ? `${TABLE_HEADER} Suspended |` : TABLE_HEADER;
+}
+function tableRule(showSuspended) {
+  return showSuspended ? `${TABLE_RULE}---|` : TABLE_RULE;
+}
+
+function rowLine(row, showSuspended) {
+  const base = `| ${row.model} | ${row.driver} | ${row.seed} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.violations.toFixed(1)} | ${row.resumes.toFixed(1)} | ${row.stop} | ${row.probes.toFixed(1)} | ${row.scriptRequests.toFixed(1)} |`;
+  if (!showSuspended) return base;
+  return `${base} ${(row.suspendedMs / 60_000).toFixed(1)}m |`;
 }
 
 // Addendum J: bru's OWN --sandbox developer scripts (a `.bru` `script:post-request` or similar
@@ -122,8 +135,9 @@ function sortRows(rows) {
 }
 
 function renderVersionSection(rows) {
-  const lines = [TABLE_HEADER, TABLE_RULE];
-  for (const row of sortRows(rows)) lines.push(rowLine(row));
+  const showSuspended = rows.some((row) => row.suspendedMs > 0);
+  const lines = [tableHeader(showSuspended), tableRule(showSuspended)];
+  for (const row of sortRows(rows)) lines.push(rowLine(row, showSuspended));
   lines.push('', '#### Expected vs produced at the fall rung', '');
   for (const row of sortRows(rows)) {
     lines.push(`- **${row.model}** (${row.driver}, seed ${row.seed}): ${fellNote(row.representative)}`);

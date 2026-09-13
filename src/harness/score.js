@@ -76,6 +76,9 @@ export function scoreGroup(version, model, driver, seed, runs) {
     stop: rep.stoppedBecause,
     trims: mean(runs.map((r) => r.trims || 0)),
     wallMs: mean(runs.map((r) => r.wallMs)),
+    // Addendum P: gap time excluded from the wall check as "the machine slept" -- 0 for every
+    // result.json predating this field, same fallback pattern as trims/resumes above.
+    suspendedMs: mean(runs.map((r) => r.suspendedMs || 0)),
     representative: rep,
   };
 }
