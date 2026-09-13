@@ -103,28 +103,32 @@ while IFS=$'\t' read -r idx id driver cli; do
   name="${id//\//-}"
   log="$OUT_DIR/$name.log"
 
+  # NOTE: "run" is a positional subcommand and must stay argv[0] -- every driver flag is
+  # appended AFTER the base args, never prepended, or bin/quaere.js falls through to the
+  # generic usage message and exits instantly (caught 2026-09-13: all nine round-five launches
+  # exited in under a second because --driver landed before "run").
   args=(run --yes --model "$id" --seed "$seed" --attempts 1 --skill-mode sloppy --skill-bytes 5000000 --wall-ms 21600000)
 
   key_var=""
   key_val=""
   case "$driver" in
     cli)
-      args=(--driver cli --cli "$cli" "${args[@]}")
+      args=("${args[@]}" --driver cli --cli "$cli")
       ;;
     google)
-      args=(--driver google "${args[@]}")
+      args=("${args[@]}" --driver google)
       key_var="GEMINI_API_KEY"
       ;;
     deepseek)
-      args=(--driver deepseek "${args[@]}")
+      args=("${args[@]}" --driver deepseek)
       key_var="DEEPSEEK_API_KEY"
       ;;
     xai)
-      args=(--driver xai "${args[@]}")
+      args=("${args[@]}" --driver xai)
       key_var="XAI_API_KEY"
       ;;
     openrouter)
-      args=(--driver openrouter "${args[@]}")
+      args=("${args[@]}" --driver openrouter)
       key_var="OPENROUTER_API_KEY"
       ;;
     *)
