@@ -808,3 +808,9 @@ generates the answer key for seeds 1..300 and asserts each finishes under 2 s an
 2 MB, and that `makeRung` for seed 525 rung by rung stays under those bounds; (3) VERSION bumps to
 0.5.1; the running 0.5.0 round keeps its label. A seed that cannot be generated is a generator
 bug, never a "hard seed".
+- **(01:05) `driverError: "terminated"` is a transient transport error, not a stop.** grok
+  (OpenRouter, seed 527) was clean at rung 13 when fetch threw `terminated` (the response body
+  stream was closed mid-read). The driver treated it as fatal. Rule: `terminated`, `ECONNRESET`,
+  `ETIMEDOUT`, `socket hang up`, `fetch failed`, and 5xx are retried up to 3 times with 5/15/45 s
+  backoff before `stoppedBecause: 'provider'`; never `'error'` with the raw message. Voided and
+  rerun on seed 528.
