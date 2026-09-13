@@ -774,3 +774,21 @@ Added 2026-09-12 23:45 during the 0.5.0 round.
   a separate `scriptRequests` column counts the axios ones. Neither voids a run. The board notes
   the distinction. For CLI drivers axios could also be the CLI's own node code; the column is
   published either way and the samples say which path.
+
+## Addendum L: the sandbox never contained the signing secret
+
+Added 2026-09-13 00:00 during the 0.5.0 round. gpt-6-astra (seed 501) reached rung 59 clean,
+then asked three times for "the signing secret or the path to its Bruno environment file" and
+was marked stalled. The skill says, correctly, that the key and secret "live in the sandbox's
+Bruno environment file, never in this document", and `run-cli.js` / `task-md.js` never write
+one: TASK.md carries the api key only. Every publish rung (50+) was unpassable on every driver.
+The docsolver did not catch it because it reads `world.auth.secret` directly; it is a solver, not
+a sandbox.
+
+Rules: both run paths write `environments/local.yml` (OpenCollection environment: `baseUrl`,
+`apiKey`, `secret` marked secret) into the sandbox before the first turn, and TASK.md names the
+file. A test asserts the file exists, parses, and carries the world's secret for both paths, and
+a sandbox-fidelity test runs the reference climb using ONLY files present in a freshly prepared
+sandbox (TASK.md, spec.json, HOUSE-RULES.md, environments/local.yml) as its inputs, so anything
+the docs promise the sandbox contains is proven present. The 0.5.0 round is voided and rerun
+on one harness version for all seven.
