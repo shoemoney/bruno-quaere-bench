@@ -751,3 +751,26 @@ climbed by one script. The steepening must add kinds of difficulty a script cann
 - **Climbs are launched and watched by the main session**, not by workflow subagents, which get
   forced to return before a multi-hour run ends. Workflows build and verify; the round runs from
   the session with detached processes and a bash (not zsh) watcher.
+
+## Addendum K: reasoning models exhaust max_tokens silently; axios in bru scripts is not a shell
+
+Added 2026-09-12 23:45 during the 0.5.0 round.
+
+- **deepseek-flash, seed 506, clean at rung 44, killed by the harness.** Turn 363 returned an
+  empty assistant message with `stop: 'length'` and 4096 output tokens: the model's reasoning
+  consumed the whole output budget and no visible text or tool call survived. The harness then
+  appended that empty assistant turn and the provider rejected the next call with
+  `400 Invalid assistant message: content or tool_calls must be set`. Two rules: (1) message-loop
+  drivers request at least 32768 output tokens (provider max if lower) so reasoning has room;
+  (2) an assistant turn with neither content nor tool calls is never appended; on `stop: 'length'`
+  with empty content the harness appends a user note ("your last reply was cut off before any
+  tool call; answer with a tool call") and retries; two in a row is `degenerate`. That run is
+  voided and rerun.
+- **`axios/1.16.0` requests are bru scripts, not a shell.** deepseek's 287 "violations" and
+  grok's 40 on 0.4.0 were all `POST /auth/token` from bru's script sandbox (`--sandbox
+  developer`, `require('axios')` in pre-request scripts). On the message-loop drivers the agent
+  has no shell, so an axios User-Agent can only come from inside bru's runtime. Rule: the
+  violations column counts requests whose User-Agent is neither `bruno-runtime/*` nor `axios/*`;
+  a separate `scriptRequests` column counts the axios ones. Neither voids a run. The board notes
+  the distinction. For CLI drivers axios could also be the CLI's own node code; the column is
+  published either way and the samples say which path.
