@@ -32,8 +32,7 @@ test('world has the exact top-level shape from the architecture doc', () => {
   const keys = Object.keys(w).sort();
   assert.deepEqual(keys, [
     // `amendments` is Addendum Q rule 4's list of dated mid-ladder rule changes, resolved through
-    // world.js's own `rulesAt(world, n)`. It is always present and is `[]` while
-    // AMENDMENTS_ENFORCED is false (see the long comment in src/world.js).
+    // world.js's own `rulesAt(world, n)`. Always present; populated as of 0.7.0.
     'amendments',
     'auth', 'deprecated', 'hmac', 'ids', 'loras', 'naming',
     'namingExceptions', 'pagination', 'rate', 'rules', 'rungMutations', 'seed',
@@ -153,7 +152,12 @@ test('loras: 6 to 12 entries, human first names, valid ops, unique ids', () => {
 
 test('hmac config matches the documented shape', () => {
   const w = makeWorld(10);
-  assert.deepEqual(w.hmac, { header: 'X-Signature', tsHeader: 'X-Timestamp', algo: 'sha256', canon: 'ts+method+path' });
+  // Addendum Q rule 10 / RULES-0.7 rule 35: 0.7.0's canonical string binds a digest of the
+  // artifact being released, so the house's default recipe is digest-bound. Rule 33 may amend the
+  // FIELD ORDER of that string mid-ladder, never the digest binding itself.
+  assert.deepEqual(w.hmac, {
+    header: 'X-Signature', tsHeader: 'X-Timestamp', algo: 'sha256', canon: 'ts+method+path+digest',
+  });
 });
 
 test('resolvePath replaces all four vocab placeholders', () => {

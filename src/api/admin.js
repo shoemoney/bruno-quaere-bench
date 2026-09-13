@@ -4,6 +4,7 @@
 import { createRouter } from './router.js';
 import { sendProblem } from './problem.js';
 import { rng, sub, pick } from '../seed.js';
+import { RUNG_MUTATION_TARGETS } from '../world.js';
 
 // The one rule (ARCHITECTURE Addendum F): nothing but `bru` opens a socket, and every genuine
 // bru invocation sends this as its User-Agent. `count` is exhaustive over the whole log; `samples`
@@ -37,41 +38,44 @@ export const MUTATION_NAMES = [
   'stuckCursor',
 ];
 
-// One candidate list per mutation, so "seeded" means "which candidate", never "whether it
-// exists" — every mutation is always defined, only whether it's *active* is admin-controlled.
-const STATUS_CODE_CANDIDATES = [
-  { route: 'assets.get', to: 201 },
-  { route: 'jobs.get', to: 201 },
-  { route: 'projects.get', to: 201 },
-];
-const DROP_FIELD_CANDIDATES = [
-  { route: 'workspaces.get', field: 'created_at' },
-  { route: 'projects.get', field: 'updated_at' },
-  { route: 'assets.get', field: 'hash' },
-];
+// Addendum Q rule 2: "mutations on the fields a solver parses". 0.6.0's candidate lists (below,
+// in git history) all landed on plain GET-and-read-the-body routes; a POST-driven pipeline never
+// even looks at those bodies, so a whole calibration round of announced mutations cost the top
+// climb nothing (Addendum Q's own forensic read: 33 announced, all landed on GET routes the
+// pipeline never reads). The candidate lists here are DERIVED from `RUNG_MUTATION_TARGETS`
+// (src/world.js) rather than duplicated, so the ladder's published target pool and the API's
+// actual implementation of it cannot drift apart silently -- that file names which (route, field)
+// each mutation kind is allowed to touch; this is the one place that turns that list into
+// per-mutation candidate arrays.
+function candidatesFor(mutation) {
+  return RUNG_MUTATION_TARGETS.filter((t) => t.mutation === mutation).map(({ mutation: _m, ...rest }) => rest);
+}
+const STATUS_CODE_CANDIDATES = candidatesFor('statusCode');
+const DROP_FIELD_CANDIDATES = candidatesFor('dropField');
 // `to` is deliberately a single word (no underscore): it still passes through the generic
 // naming pass afterward, and fieldName() is a no-op on underscore-free keys regardless of
 // world.naming, so the renamed key lands exactly as written here in every world.
-const RENAME_FIELD_CANDIDATES = [
-  { route: 'workspaces.get', field: 'name', to: 'title' },
-  { route: 'assets.get', field: 'id', to: 'uid' },
-];
-const RETYPE_FIELD_CANDIDATES = [
-  { route: 'projects.get', field: 'status' },
-  { route: 'assets.get', field: 'hash' },
-];
+const RENAME_FIELD_CANDIDATES = candidatesFor('renameField');
+const RETYPE_FIELD_CANDIDATES = candidatesFor('retypeField');
+// rejectAuth/stuckCursor are not in RUNG_MUTATION_POOL (world.js) -- either one, live for a whole
+// rung, makes that rung unpassable by any correct client -- so they are never ladder-announced and
+// stay on their original 0.6.0 candidate lists, reachable only by hand via POST /admin/mutate.
 const REJECT_AUTH_CANDIDATES = ['workspaces.list', 'projects.list', 'projects.assets'];
 const STUCK_CURSOR_CANDIDATES = ['workspaces.list', 'projects.list', 'projects.assets'];
 
-// chooseMutationTargets(world): one deterministic target per mutation, picked from world.seed
-// so every instance has the same live mutation surface for a given seed, documented here as
-// the single source of truth for which (route, field) each mutation name touches.
-export function chooseMutationTargets(world) {
+// chooseMutationTargets(world, rung = 0): one deterministic target per mutation, RE-PICKED per
+// rung for the four ladder-announced mutations (Addendum Q rule 2) -- a solver that inspects the
+// target the first time `renameField` (say) fires and hard-codes a fix for it is not safe against
+// the NEXT rung that announces `renameField`, which may (and, once the candidate pool has more
+// than one entry, sometimes will) land on a different candidate. `rejectAuth`/`stuckCursor` are
+// not part of that per-rung ramp (see above) and keep their original world-wide, not rung-wide,
+// seed.
+export function chooseMutationTargets(world, rung = 0) {
   return {
-    statusCode: pick(rng(sub(world.seed, 'admin.mutate.statusCode')), STATUS_CODE_CANDIDATES),
-    dropField: pick(rng(sub(world.seed, 'admin.mutate.dropField')), DROP_FIELD_CANDIDATES),
-    renameField: pick(rng(sub(world.seed, 'admin.mutate.renameField')), RENAME_FIELD_CANDIDATES),
-    retypeField: pick(rng(sub(world.seed, 'admin.mutate.retypeField')), RETYPE_FIELD_CANDIDATES),
+    statusCode: pick(rng(sub(world.seed, `admin.mutate.statusCode.${rung}`)), STATUS_CODE_CANDIDATES),
+    dropField: pick(rng(sub(world.seed, `admin.mutate.dropField.${rung}`)), DROP_FIELD_CANDIDATES),
+    renameField: pick(rng(sub(world.seed, `admin.mutate.renameField.${rung}`)), RENAME_FIELD_CANDIDATES),
+    retypeField: pick(rng(sub(world.seed, `admin.mutate.retypeField.${rung}`)), RETYPE_FIELD_CANDIDATES),
     rejectAuth: { route: pick(rng(sub(world.seed, 'admin.mutate.rejectAuth')), REJECT_AUTH_CANDIDATES) },
     stuckCursor: { route: pick(rng(sub(world.seed, 'admin.mutate.stuckCursor')), STUCK_CURSOR_CANDIDATES) },
   };
@@ -239,6 +243,10 @@ async function dispatch(id, state, { req, res, reset }) {
     // never accumulates, so neither an earlier rung's announced mutation nor a manually-set
     // `POST /admin/mutate` survives past the rung boundary that didn't ask for it.
     state.mutations.active = new Set(applied ? [applied] : []);
+    // Addendum Q rule 2: re-pick which (route, field) each mutation kind touches for THIS rung,
+    // so a mutation announced again at a later rung is not guaranteed to land on the same target
+    // as the last time it fired.
+    state.mutations.targets = chooseMutationTargets(state.world, state.rungs.current);
     sendJson(res, 200, { current: state.rungs.current, mutationApplied: applied });
     return;
   }

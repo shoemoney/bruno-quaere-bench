@@ -68,12 +68,16 @@
 //
 // The point of binding the digest is that the signature can no longer be precomputed or replayed
 // from a template: it has to be recomputed per rung from a value only the live house can hand
-// back. `signPublish(world, {ts, method, path, bodyDigest})` in `src/ladder/reference.js` is the
-// single implementation; the API workstream should IMPORT it rather than write a second one, and
-// `src/api/behaviors.js`'s `verifyHmac` should build its payload from `rulesAt(world, n).hmac.canon`
-// instead of the string it hardcodes today. Until it does, `world.hmac.canon` stays at the 0.6.0
-// value and `signPublish` produces the 0.6.0 string -- the switch is the World field, so flipping
-// it is one line on each side and neither side can flip alone without the gate going red.
+// back. `canonicalString(canon, parts)` in `src/hmac.js` is the single implementation and every
+// side imports it: `signPublish` here in the ladder, `verifyHmac` in `src/api/behaviors.js`, the
+// written reference in `src/skill.js`, and the tests through `test/fixtures/sign.js`. The recipe
+// in force is `rulesAt(world, n).hmac.canon`, so Addendum Q rule 4 can amend its field order
+// mid-ladder; every candidate in that closed set is digest-bound, because rule 33 licenses
+// reordering the fields, not unbinding the digest.
+//
+// The house additionally checks that the digest names a LIVE asset belonging to the project being
+// released. A correctly-computed signature over some other artifact's digest is refused: binding
+// it to a value the house can hand back is the whole mechanism.
 //
 // -------------------------------------------------------------------------------------------
 // Addendum Q rule 7, negative-space grading -- `forbidden`
@@ -92,18 +96,18 @@
 // How the API grades it: a fourth check, `refusal`, beside hash / project_state / label. For
 // `workOnClearedCopies` it is "no asset in this rung's project descends from a copy this rung
 // cleared out" -- i.e. the project holds no asset created after the clear-out whose source was a
-// soft-deleted row. Until the house grades it, `src/ladder/reference.js`'s climb enforces it
-// against itself: a climb that performs the forbidden act records `refusalViolated` and the rung
-// FAILS, which is what `test/refusal.test.js` pins.
+// soft-deleted row. The house grades it (`src/api/server.js`'s `rungs.submit`), and
+// `src/ladder/reference.js`'s climb is held to it too: a climb that performs the forbidden act
+// fails the rung, which is what `test/refusal.test.js` pins from both directions.
 //
 // -------------------------------------------------------------------------------------------
 // Addendum Q rule 4, amendments -- `amendments`
 // -------------------------------------------------------------------------------------------
 //
 // `amendments` is `rulesAt`'s input, echoed into the key so a grader never has to re-derive it:
-// every `{atRung, rule, from, to}` in force at or before this rung. Empty while
-// `AMENDMENTS_ENFORCED` is false in `src/world.js` (see the long comment there for the exact two
-// changes the house owes before it can be flipped on).
+// every `{atRung, rule, from, to}` in force at or before this rung. Live as of 0.7.0
+// (`AMENDMENTS_ENFORCED` is true in `src/world.js`): the house resolves the same function at the
+// same rung, so the key and the live house round, compound and sign identically.
 // ===========================================================================================
 
 import { rng, sub, int } from '../seed.js';
@@ -749,8 +753,9 @@ export function makeRung(world, n, { phrasingVariant } = {}) {
   const ctx = phraseCtx(world, n, phrasingVariant);
   let body = TEXT_BUILDERS[band.tier](ctx, narrative);
   // Addendum Q rule 4: an amendment lands at this rung, so the first thing the text says is go
-  // and read the rules again. Nothing is emitted while AMENDMENTS_ENFORCED is false, because a
-  // rule the house does not actually apply must not be announced.
+  // and read the rules again. The announcement is driven by `amendmentsAt`, the same resolver the
+  // harness uses to decide when to rewrite HOUSE-RULES.md, so a rung can never announce a change
+  // the sandbox document does not carry -- nor carry one it never announced.
   const landed = amendmentsAt(world, n);
   if (landed.length > 0) body = `${say(ctx, 'amendment', { count: landed.length })} ${body}`;
   const text = mutation ? `${body} ${say(ctx, 'mutation')}` : body;

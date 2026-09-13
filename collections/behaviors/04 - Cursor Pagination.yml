@@ -23,46 +23,60 @@ runtime:
   scripts:
     - type: tests
       code: |-
-        test("first page has exactly one item and a cursor", function() {
+        // Addendum Q rule 3: the pagination cursor travels ONLY in a `Link: rel="next"` response
+        // header now, never as a body field -- see src/api/behaviors.js's buildNextLink.
+        test("first page has exactly one item and a Link header naming the next cursor", function() {
           expect(res.status).to.equal(200);
           expect(res.body.data.length).to.equal(1);
-          expect(res.body.cursor).to.be.a('string');
+          expect(Object.prototype.hasOwnProperty.call(res.body, 'cursor')).to.equal(false);
+          expect(res.headers.link).to.be.a('string');
+          expect(res.headers.link).to.match(/rel="next"/);
         });
 
-        // Walk pages with page_size=1 until a page carries no `cursor` key at all. seedInitialData
-        // always seeds exactly 2 workspaces (PROJECTS_PER_WORKSPACE.length in resources.js), and
-        // nothing before this request creates a third (there is no create-workspace route), so
-        // the walk is deterministically 2 pages long for any seed.
+        function nextCursor(linkHeader) {
+          if (!linkHeader) return undefined;
+          const m = /[?&]cursor=([^&>]+)/.exec(linkHeader);
+          return m ? decodeURIComponent(m[1]) : undefined;
+        }
+
+        // Walk pages with page_size=1 until a response carries no Link header at all.
+        // seedInitialData always seeds exactly 2 workspaces (PROJECTS_PER_WORKSPACE.length in
+        // resources.js), and nothing before this request creates a third (there is no
+        // create-workspace route), so the walk is deterministically 2 pages long for any seed.
         const base = bru.getEnvVar('baseUrl');
         const auth = { Authorization: 'Bearer ' + bru.getVar('token') };
-        let cursor = res.body.cursor;
+        const firstCursor = nextCursor(res.headers.link);
+        let cursor = firstCursor;
         let pages = 1;
         let items = res.body.data.length;
-        let lastPageHadCursor = true;
+        let lastPageHadLink = true;
         while (cursor && pages < 10) {
           const r = await fetch(base + '/shops?page_size=1&cursor=' + encodeURIComponent(cursor), { headers: auth });
           const b = await r.json();
           pages += 1;
           items += b.data.length;
-          cursor = b.cursor;
-          lastPageHadCursor = cursor !== undefined;
+          const link = r.headers.get('link');
+          lastPageHadLink = !!link;
+          cursor = nextCursor(link);
         }
 
-        test("walking cursors lands on exactly 2 pages, last one cursor-less", function() {
+        test("walking cursors lands on exactly 2 pages, last one Link-less", function() {
           expect(pages).to.equal(2);
           expect(items).to.equal(2);
-          expect(lastPageHadCursor).to.equal(false);
+          expect(lastPageHadLink).to.equal(false);
         });
 
         // A client that (wrongly) treated an empty `data` array as the stop signal, instead of a
-        // missing `cursor`, would have looped forever here since page_size=1 never returns an
-        // empty page while items remain. Confirm the actual last page truly has no cursor key.
-        const lastRaw = await fetch(base + '/shops?page_size=1&cursor=' + encodeURIComponent(res.body.cursor), { headers: auth });
-        const lastBody = await lastRaw.json();
-        test("the last page object has no cursor property at all", function() {
-          expect(Object.prototype.hasOwnProperty.call(lastBody, 'cursor')).to.equal(false);
+        // missing Link header, would have looped forever here since page_size=1 never returns an
+        // empty page while items remain. Confirm the actual last page truly has no Link header,
+        // by re-fetching it directly with the first page's cursor (deterministically the last
+        // page, since there are exactly 2 pages total).
+        const lastRaw = await fetch(base + '/shops?page_size=1&cursor=' + encodeURIComponent(firstCursor), { headers: auth });
+        test("the last page carries no Link header at all", function() {
+          expect(lastRaw.headers.get('link')).to.equal(null);
         });
 
 docs: |-
-  Behavior #1 (Pagination): opaque cursors, last page signaled by an absent `cursor` key rather
-  than an empty `data` array. Forces page_size=1 so the 2 seeded workspaces span exactly 2 pages.
+  Behavior #1 (Pagination): opaque cursors, last page signaled by an absent `Link: rel="next"`
+  response header rather than an empty `data` array or a body field (Addendum Q rule 3). Forces
+  page_size=1 so the 2 seeded workspaces span exactly 2 pages.

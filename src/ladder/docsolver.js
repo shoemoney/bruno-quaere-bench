@@ -1406,14 +1406,17 @@ function clauseStageRefusalNote(c) { return saysOneOf(c, STAGE_REFUSAL_NOTE) !==
 // clause itself is consumed and drops out. It is listed as its own kind rather than
 // folded into INERT so that a rung announcing an amendment is visibly distinct from a
 // rung announcing a mutation, which is a different rule with a different obligation.
+// Each phrasing counts in words for one and in digits above one ("a rule" / "2 rules",
+// "One of them was" / "2 of them were"), so every alternation below has to carry both --
+// matching only the plural branch is how three rungs a seed (30, 55, 78) failed to parse.
 const AMENDMENT = note(
-  'Before anything else: the house amended \\d+ rules? as of this piece of work, dated today, and rewrote its house rules where you found them\\. '
+  'Before anything else: the house amended (?:a rule|\\d+ rules) as of this piece of work, dated today, and rewrote its house rules where you found them\\. '
   + 'Go and read them again before you work anything out -- what you learned earlier is out of date\\.',
-  'Read the house rules again first\\. \\d+ of them were amended as of this piece of work and the amended copy, dated today, is sitting where you found the rules the first time\\. '
+  'Read the house rules again first\\. (?:One of them was|\\d+ of them were) amended as of this piece of work and the amended copy, dated today, is sitting where you found the rules the first time\\. '
   + 'Anything you worked out from the old wording is now wrong\\.',
-  'Start by re-reading the house rules: \\d+ rules? have been amended as of this piece of work, dated today and written into the same place as before\\. '
+  'Start by re-reading the house rules: (?:a rule has|\\d+ rules have) been amended as of this piece of work, dated today and written into the same place as before\\. '
   + 'Do not reuse what you learned from the earlier version\\.',
-  'The house has published an amendment dated today, covering \\d+ rules?, in force from this piece of work on\\. '
+  'The house has published an amendment dated today, covering (?:one rule|\\d+ rules), in force from this piece of work on\\. '
   + 'Re-read the house rules where you found them before doing any arithmetic\\.',
 );
 

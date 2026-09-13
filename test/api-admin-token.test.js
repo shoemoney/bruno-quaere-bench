@@ -237,9 +237,16 @@ test('an unknown mutation name in rungMutations is never applied (defensive agai
 // The world.js contract (see makeRungMutations) is explicit: the announced mutation REPLACES the
 // active set, live from the first request of the new rung -- it must never accumulate across
 // rungs, and must clear even a mutation someone set by hand via POST /admin/mutate.
-// dropField's candidate targets are all simple GET-and-read-the-body routes (workspaces.get,
-// projects.get, or assets.get); resolve whichever this seed drew down to one live GET call.
+// Addendum Q rule 2: dropField's only candidate target is assets.combine/`descriptor` -- a
+// load-bearing field on a WRITE route, unlike 0.6.0's GET-only candidates. `projects.render`'s
+// `job_id` was the obvious choice and is exactly the wrong one (see RUNG_MUTATION_TARGETS in
+// src/world.js): with no jobs listing, a dropped job id is unrecoverable and every rung 50-69
+// becomes unpassable. A dropped combine `descriptor` is recoverable -- ask `assets.get` for the
+// asset whose id the reply did hand back -- so the rung still has a correct path through it.
 async function fetchDropFieldTarget(world, publicBase, target) {
+  if (target.route !== 'assets.combine') {
+    throw new Error(`fetchDropFieldTarget: no fetcher wired for dropField target route ${target.route}`);
+  }
   const f = (n) => fieldName(world, n);
   const tmpl = (id) => resolvePath(world, routes.find((r) => r.id === id).path);
   const mint = async () => {
@@ -250,22 +257,29 @@ async function fetchDropFieldTarget(world, publicBase, target) {
     });
     return (await res.json())[f('access_token')];
   };
-  const get = async (path) => {
-    const res = await fetch(`${publicBase}${path}`, { headers: { authorization: `Bearer ${await mint()}` } });
-    return res.json();
-  };
+  const headers = { authorization: `Bearer ${await mint()}`, 'content-type': 'application/json' };
+  const post = async (path, body) => fetch(`${publicBase}${path}`, { method: 'POST', headers, body: JSON.stringify(body || {}) });
 
-  const wsId = (await get(tmpl('workspaces.list'))).data[0].id;
-  if (target.route === 'workspaces.get') {
-    return get(tmpl('workspaces.get').replace('{workspace_id}', wsId));
-  }
-  const projId = (await get(tmpl('projects.list').replace('{workspace_id}', wsId))).data[0].id;
-  if (target.route === 'projects.get') {
-    return get(tmpl('projects.get').replace('{workspace_id}', wsId).replace('{project_id}', projId));
-  }
-  const assetsPath = tmpl('projects.assets').replace('{workspace_id}', wsId).replace('{project_id}', projId);
-  const assetId = (await get(`${assetsPath}?page_size=1`)).data[0].id;
-  return get(tmpl('assets.get').replace('{asset_id}', assetId));
+  // `background` is required on some seeds (the `optionalIsRequired` trap), so state it always --
+  // a 422 body has no `descriptor` either, and would make the dropField assertion below pass for
+  // entirely the wrong reason.
+  const mkImage = async () => {
+    const res = await post(tmpl('images.create'), {
+      [f('width')]: 32,
+      [f('height')]: 32,
+      [f('background')]: { [f('color')]: '#112233' },
+      [f('shapes')]: [],
+    });
+    const body = await res.json();
+    assert.equal(res.status, 201, `images.create fixture: ${JSON.stringify(body)}`);
+    return body.id;
+  };
+  const a = await mkImage();
+  const b = await mkImage();
+  const res = await post(tmpl('assets.combine'), { [f('ids')]: [a, b], [f('mode')]: 'layer' });
+  const body = await res.json();
+  assert.equal(res.status, 201, `assets.combine fixture: ${JSON.stringify(body)}`);
+  return body;
 }
 
 // The world.js contract (see makeRungMutations) is explicit: the announced mutation REPLACES the
@@ -273,7 +287,7 @@ async function fetchDropFieldTarget(world, publicBase, target) {
 // rungs, and must clear even a mutation someone set by hand via POST /admin/mutate.
 test("replace semantics: a rung's announced mutation clears a manually-set one, and does not leak into the next rung", async (t) => {
   const world = makeWorld(SEED);
-  const dropTarget = chooseMutationTargets(world).dropField; // {route: 'workspaces.get'|..., field}
+  const dropTarget = chooseMutationTargets(world, 1).dropField; // {route: 'assets.combine', field: 'descriptor'}
   world.rungMutations = [null, { n: 1, mutation: 'dropField' }, null];
   const server = createServer({ world, publicPort: 0, adminPort: 0, adminToken: TOKEN });
   const ports = await server.start();
@@ -293,11 +307,11 @@ test("replace semantics: a rung's announced mutation clears a manually-set one, 
   const adv1 = await fetch(`${adminBase}/admin/rungs/advance`, { method: 'POST', headers: { 'x-admin-token': TOKEN } });
   assert.equal((await adv1.json()).mutationApplied, 'dropField');
   const body1 = await fetchDropFieldTarget(world, publicBase, dropTarget);
-  assert.ok(!(dropTarget.field in body1), `rung 1: ${dropTarget.field} should be dropped, got ${JSON.stringify(body1)}`);
+  assert.ok(!(fieldName(world, dropTarget.field) in body1), `rung 1: ${dropTarget.field} should be dropped, got ${JSON.stringify(body1)}`);
 
   // Advance to rung 2 (announces nothing): rung 1's dropField must not leak forward.
   const adv2 = await fetch(`${adminBase}/admin/rungs/advance`, { method: 'POST', headers: { 'x-admin-token': TOKEN } });
   assert.equal((await adv2.json()).mutationApplied, null);
   const body2 = await fetchDropFieldTarget(world, publicBase, dropTarget);
-  assert.ok(dropTarget.field in body2, `rung 2: ${dropTarget.field} must be present again, got ${JSON.stringify(body2)}`);
+  assert.ok(fieldName(world, dropTarget.field) in body2, `rung 2: ${dropTarget.field} must be present again, got ${JSON.stringify(body2)}`);
 });

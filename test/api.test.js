@@ -6,6 +6,7 @@ import { makeWorld, resolvePath, fieldName } from '../src/world.js';
 import { routes } from '../src/routes.js';
 import { createServer } from '../src/api/server.js';
 import { STUCK_CURSOR_TOKEN } from '../src/api/behaviors.js';
+import { publishHeaders } from './fixtures/sign.js';
 
 const SEED = 7;
 
@@ -167,19 +168,28 @@ test('auth: protected routes 401 on a garbage bearer token', async () => {
 // pagination
 // ---------------------------------------------------------------------------
 
-test('pagination: cursor pages through results, last page has no cursor key', async () => {
+// Addendum Q rule 3: the cursor travels ONLY in a `Link: rel="next"` response header now, never
+// as a body field -- workspaces.list has exactly 2 seeded workspaces, so page_size=1 makes page 2
+// the last page and its Link header must be absent entirely.
+test('pagination: cursor travels only in the Link header; last page carries no Link at all', async () => {
   const page1Res = await fetch(`${urlFor('workspaces.list')}?page_size=1`, { headers: authHeaders() });
   const page1 = await page1Res.json();
   assert.equal(page1.data.length, 1);
-  assert.equal(typeof page1.cursor, 'string');
+  assert.equal('cursor' in page1, false, 'cursor must never appear in the body');
+  const link1 = page1Res.headers.get('link');
+  assert.match(link1, /rel="next"/);
+  const cursorMatch = /[?&]cursor=([^&>]+)/.exec(link1);
+  assert.ok(cursorMatch, `Link header must carry a cursor query param, got ${link1}`);
+  const cursor = decodeURIComponent(cursorMatch[1]);
 
-  const page2Res = await fetch(`${urlFor('workspaces.list')}?page_size=1&cursor=${encodeURIComponent(page1.cursor)}`, {
+  const page2Res = await fetch(`${urlFor('workspaces.list')}?page_size=1&cursor=${encodeURIComponent(cursor)}`, {
     headers: authHeaders(),
   });
   const page2 = await page2Res.json();
   assert.equal(page2.data.length, 1);
   assert.notEqual(page2.data[0].id, page1.data[0].id);
-  assert.equal('cursor' in page2, false, 'last page must carry no cursor key at all');
+  assert.equal('cursor' in page2, false, 'cursor must never appear in the body');
+  assert.equal(page2Res.headers.get('link'), null, 'last page must carry no Link header at all');
 });
 
 // ---------------------------------------------------------------------------
@@ -547,10 +557,15 @@ test('state machine: draft -> composed -> rendered -> published, wrong order is 
   });
   assert.equal(earlyRender.status, 409);
 
+  // A FRESH asset, not the seeded fixture: composing only claims an asset that belongs to no
+  // project yet, and rule 35's digest has to name a live asset in THIS project.
+  const ownAsset = await (await createImage(mainToken, {
+    [f('width')]: 40, [f('height')]: 40, [f('background')]: { [f('color')]: '#123456' }, [f('shapes')]: [],
+  })).json();
   const compose = await fetch(urlFor('projects.compose', { workspace_id: wsId, project_id: project.id }), {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ [f('asset_ids')]: [assetId] }),
+    body: JSON.stringify({ [f('asset_ids')]: [ownAsset.id] }),
   });
   assert.equal(compose.status, 200);
   assert.equal((await compose.json()).status, 'composed');
@@ -585,28 +600,38 @@ test('state machine: draft -> composed -> rendered -> published, wrong order is 
   const noSig = await fetch(`${base}${publishPath}`, { method: 'POST', headers: authHeaders() });
   assert.equal(noSig.status, 401);
 
+  // RULES-0.7 rule 35: the signature binds the house's own digest of the artifact being released.
+  const digest = ownAsset.hash;
   const ts = String(Math.floor(Date.now() / 1000));
   const badSig = createHmac(world.hmac.algo, 'wrong-secret').update(`${ts}POST${publishPath}`).digest('hex');
   const wrongSig = await fetch(`${base}${publishPath}`, {
     method: 'POST',
-    headers: { ...authHeaders(), [world.hmac.tsHeader]: ts, [world.hmac.header]: badSig },
+    headers: {
+      ...authHeaders(), ...publishHeaders(world, { path: publishPath, bodyDigest: digest, ts }), [world.hmac.header]: badSig,
+    },
   });
   assert.equal(wrongSig.status, 401);
 
-  const goodSig = createHmac(world.hmac.algo, world.auth.secret).update(`${ts}POST${publishPath}`).digest('hex');
+  // ... and a digest that names nothing live in this project is refused before the signature is
+  // even considered, so a correctly-signed-but-wrongly-bound release cannot get through.
+  const strayDigest = 'f'.repeat(64);
+  const wrongDigest = await fetch(`${base}${publishPath}`, {
+    method: 'POST',
+    headers: { ...authHeaders(), ...publishHeaders(world, { path: publishPath, bodyDigest: strayDigest, ts }) },
+  });
+  assert.equal(wrongDigest.status, 401);
+
   const publish = await fetch(`${base}${publishPath}`, {
     method: 'POST',
-    headers: { ...authHeaders(), [world.hmac.tsHeader]: ts, [world.hmac.header]: goodSig },
+    headers: { ...authHeaders(), ...publishHeaders(world, { path: publishPath, bodyDigest: digest, ts }) },
   });
   assert.equal(publish.status, 200);
   assert.equal((await publish.json()).status, 'published');
 
   // publish again -> 409 (already published, not rendered)
-  const ts2 = String(Math.floor(Date.now() / 1000));
-  const sig2 = createHmac(world.hmac.algo, world.auth.secret).update(`${ts2}POST${publishPath}`).digest('hex');
   const republish = await fetch(`${base}${publishPath}`, {
     method: 'POST',
-    headers: { ...authHeaders(), [world.hmac.tsHeader]: ts2, [world.hmac.header]: sig2 },
+    headers: { ...authHeaders(), ...publishHeaders(world, { path: publishPath, bodyDigest: digest }) },
   });
   assert.equal(republish.status, 409);
 });
@@ -774,38 +799,75 @@ test('rungs: a numeric asset id grades the same as the string the API handed out
 // admin mutations
 // ---------------------------------------------------------------------------
 
+// Addendum Q rule 2: the ladder-announced mutations' candidate lists now live on write/list
+// load-bearing routes (world.js's RUNG_MUTATION_TARGETS), not the plain GET routes 0.6.0 used --
+// rejectAuth/stuckCursor stay on the original listing routes, since they are never
+// ladder-announced (see admin.js).
 function fetchForRoute(routeId, ids, headers) {
   if (routeId === 'workspaces.get') return fetch(urlFor('workspaces.get', { workspace_id: ids.wsId }), { headers });
   if (routeId === 'projects.get') return fetch(urlFor('projects.get', { workspace_id: ids.wsId, project_id: ids.projectId }), { headers });
   if (routeId === 'assets.get') return fetch(urlFor('assets.get', { asset_id: ids.assetId }), { headers });
-  if (routeId === 'jobs.get') return fetch(urlFor('jobs.get', { job_id: ids.jobId }), { headers });
-  // page_size=1 guarantees a next page (and thus a cursor key) exists to inspect/mutate.
+  // page_size=1 guarantees a next page (and thus a Link header) exists to inspect/mutate.
   if (routeId === 'workspaces.list') return fetch(`${urlFor('workspaces.list')}?page_size=1`, { headers });
   if (routeId === 'projects.list') return fetch(`${urlFor('projects.list', { workspace_id: ids.wsId })}?page_size=1`, { headers });
   if (routeId === 'projects.assets') {
     return fetch(`${urlFor('projects.assets', { workspace_id: ids.wsId, project_id: ids.projectId })}?page_size=1`, { headers });
   }
+  if (routeId === 'images.create') {
+    return fetch(urlFor('images.create'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ width: 16, height: 16, background: { color: '#000000' }, shapes: [] }),
+    });
+  }
+  if (routeId === 'assets.convert') {
+    return fetch(urlFor('assets.convert', { asset_id: ids.assetId }), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ width: 32, height: 32 }),
+    });
+  }
+  if (routeId === 'assets.combine') {
+    return fetch(urlFor('assets.combine'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: [ids.assetId, ids.assetId2], mode: 'layer' }),
+    });
+  }
+  if (routeId === 'projects.render') {
+    return fetch(urlFor('projects.render', { workspace_id: ids.wsId, project_id: ids.projectId }), { method: 'POST', headers });
+  }
+  if (routeId === 'assets.lora') {
+    return fetch(urlFor('assets.lora', { asset_id: ids.assetId }), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ [f('lora_id')]: ids.loraId }),
+    });
+  }
   throw new Error(`no fetcher wired for ${routeId}`);
 }
 
-// A fresh token + a fresh seeded workspace/project/asset/job, straight off an admin reset.
-// Candidate lists overlap across mutations (e.g. both dropField and retypeField can land on
-// assets.get/hash), so each mutation is checked against its own clean reset rather than layered
-// on top of the others, which would otherwise have one mutation eat the field another expects.
+// A fresh token + a fresh seeded workspace/project (composed but NOT yet rendered, so the
+// dropField-on-projects.render candidate can actually be exercised) and two of its seeded assets.
+// Candidate lists overlap across mutations (e.g. both dropField and retypeField can land near the
+// same route), so each mutation is checked against its own clean reset rather than layered on top
+// of the others, which would otherwise have one mutation eat the field another expects.
 async function freshMutationFixtures() {
   await fetch(`${adminBase}/admin/reset`, { method: 'POST' });
   const token = await getToken();
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
   const ws = (await (await fetch(urlFor('workspaces.list'), { headers })).json()).data[0].id;
   const project = (await (await fetch(urlFor('projects.list', { workspace_id: ws }), { headers })).json()).data[0].id;
-  const asset = (await (await fetch(urlFor('projects.assets', { workspace_id: ws, project_id: project }), { headers })).json())
-    .data[0].id;
-  await fetch(urlFor('projects.compose', { workspace_id: ws, project_id: project }), { method: 'POST', headers });
-  const renderBody = await (
-    await fetch(urlFor('projects.render', { workspace_id: ws, project_id: project }), { method: 'POST', headers })
+  const assetsPage = await (
+    await fetch(urlFor('projects.assets', { workspace_id: ws, project_id: project }), { headers })
   ).json();
-  const job = renderBody[f('job_id')];
-  return { headers, ids: { wsId: ws, projectId: project, assetId: asset, jobId: job } };
+  const asset = assetsPage.data[0].id;
+  const asset2 = assetsPage.data[1].id;
+  await fetch(urlFor('projects.compose', { workspace_id: ws, project_id: project }), { method: 'POST', headers });
+  return {
+    headers,
+    ids: { wsId: ws, projectId: project, assetId: asset, assetId2: asset2, loraId: world.loras[0].id },
+  };
 }
 
 test('admin: mutate flips a live behavior, one at a time, and reset restores it', async () => {
@@ -828,16 +890,33 @@ test('admin: mutate flips a live behavior, one at a time, and reset restores it'
       assert.equal(res.status, target.to);
       continue;
     }
-    const body = await res.json();
     if (name === 'stuckCursor') {
-      assert.equal(body.cursor, STUCK_CURSOR_TOKEN);
-    } else if (name === 'dropField') {
-      assert.equal(target.field in body, false, `${target.field} should be dropped from ${target.route}`);
+      const link = res.headers.get('link');
+      assert.ok(link && link.includes(STUCK_CURSOR_TOKEN), `Link header should carry the stuck cursor token, got ${link}`);
+      continue;
+    }
+    const body = await res.json();
+    if (name === 'dropField') {
+      assert.equal(f(target.field) in body, false, `${target.field} should be dropped from ${target.route}`);
     } else if (name === 'renameField') {
-      assert.equal(target.field in body, false);
-      assert.ok(target.to in body);
+      if (target.field === 'cursor') {
+        // Addendum Q rule 3: cursor never lives in the body -- the rename shows up as the Link
+        // header's query-param name instead (Addendum Q rule 2's projects.assets.cursor -> next).
+        const link = res.headers.get('link');
+        assert.ok(link, 'a next-page Link header must be present');
+        assert.ok(link.includes(`${target.to}=`), `Link header should use the renamed param "${target.to}", got ${link}`);
+        assert.ok(!link.includes('cursor='), `the original param name must not appear once renamed, got ${link}`);
+      } else {
+        assert.equal(f(target.field) in body, false);
+        assert.ok(f(target.to) in body);
+      }
     } else if (name === 'retypeField') {
-      assert.ok(Array.isArray(body[target.field]), `${target.field} should be array-wrapped`);
+      const container = target.field in body ? body : body.descriptor;
+      if (target.field === 'shapes') {
+        assert.equal(typeof container[target.field], 'number', `${target.field} should retype to a count`);
+      } else {
+        assert.equal(typeof container[target.field], 'string', `${target.field} should retype to a string`);
+      }
     }
   }
 
@@ -870,4 +949,75 @@ test('admin: world exposes the seeded World object', async () => {
   const body = await res.json();
   assert.equal(body.seed, SEED);
   assert.equal(body.version, world.version);
+});
+
+// ---------------------------------------------------------------------------
+// Addendum Q rule 8: rendered byte length on asset responses and content HEAD
+// ---------------------------------------------------------------------------
+
+test('byte length: assets expose "bytes" in the body, matching HEAD .../content Content-Length, with no HEAD body', async () => {
+  const token = await getToken();
+  const created = await createImage(token, { width: 20, height: 20, background: { color: '#ff00ff' }, shapes: [] });
+  assert.equal(created.status, 201);
+  const body = await created.json();
+  assert.equal(typeof body.bytes, 'number');
+  assert.ok(body.bytes > 0);
+
+  const contentUrl = urlFor('assets.content', { asset_id: body.id });
+  const getRes = await fetch(contentUrl, { headers: authHeaders(token) });
+  const getBuf = Buffer.from(await getRes.arrayBuffer());
+  assert.equal(getBuf.length, body.bytes, 'the "bytes" field must equal the actual rendered length');
+  assert.equal(getRes.headers.get('content-length'), String(body.bytes));
+
+  const headRes = await fetch(contentUrl, { method: 'HEAD', headers: authHeaders(token) });
+  assert.equal(headRes.status, 200);
+  assert.equal(headRes.headers.get('content-length'), String(body.bytes), 'HEAD reports the same length as GET');
+  const headBuf = Buffer.from(await headRes.arrayBuffer());
+  assert.equal(headBuf.length, 0, 'HEAD must carry no body at all');
+});
+
+// ---------------------------------------------------------------------------
+// Addendum Q rule 11: a documented server-side scope filter for listings
+// ---------------------------------------------------------------------------
+
+test('scope filter: ?after=<asset id> restricts a project listing to copies made after it', async () => {
+  const token = await getToken();
+  const listUrl = `${urlFor('projects.assets', { workspace_id: wsId, project_id: projectId })}?page_size=50`;
+  const full = await (await fetch(listUrl, { headers: authHeaders(token) })).json();
+  assert.ok(full.data.length >= 3, 'fixture project needs at least 3 assets for this to be meaningful');
+  const markerId = full.data[1].id;
+  const scoped = await (await fetch(`${listUrl}&after=${encodeURIComponent(markerId)}`, { headers: authHeaders(token) })).json();
+  assert.deepEqual(scoped.data.map((a) => a.id), full.data.slice(2).map((a) => a.id));
+
+  // An unknown marker (never in the listing) is a documented no-op, not an error: the filter
+  // simply never matched, so nothing is dropped.
+  const unknown = await (await fetch(`${listUrl}&after=does-not-exist`, { headers: authHeaders(token) })).json();
+  assert.deepEqual(unknown.data.map((a) => a.id), full.data.map((a) => a.id));
+});
+
+// ---------------------------------------------------------------------------
+// Addendum Q rule 9: a tighter, separately-bucketed limit on the listing route that feeds a
+// derived count -- short pages before an outright 429, with Retry-After.
+// ---------------------------------------------------------------------------
+
+test('listing bucket: projects.assets goes short before it 429s, and 429s with Retry-After', async () => {
+  const token = await getToken();
+  const bucket = world.rate.buckets.listing;
+  const listUrl = `${urlFor('projects.assets', { workspace_id: wsId, project_id: projectId })}?page_size=5`;
+  let sawShort = false;
+  let last;
+  let lastBody;
+  for (let i = 0; i < bucket.limit * 2 + 5; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    last = await fetch(listUrl, { headers: authHeaders(token) });
+    if (last.status === 429) break;
+    // eslint-disable-next-line no-await-in-loop
+    lastBody = await last.json();
+    if (lastBody.data.length < 5) sawShort = true;
+  }
+  assert.ok(sawShort, 'expected at least one short page before the bucket hard-limits');
+  assert.equal(last.status, 429, 'the bucket must eventually 429, not error out on the short pages themselves');
+  const retryAfter = last.headers.get('retry-after');
+  assert.match(retryAfter, /^\d+$/);
+  assert.ok(Number(retryAfter) >= 1);
 });

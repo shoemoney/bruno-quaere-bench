@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { makeWorld } from '../src/world.js';
 import { snap6, roundToGrid } from '../src/media.js';
 import { runCompute, composePlan, runPlanLocallyTrace, resolveRefs } from '../src/ladder/grammar.js';
+import { rulesAt } from '../src/world.js';
 
 // ---------------------------------------------------------------------------
 // rule 1: three real seed/rung scenarios, pinned against runCompute directly.
@@ -118,8 +119,12 @@ test('guard: no rung 0-99, seeds 1-50, ever composes an ambiguous percent step',
     const world = makeWorld(seed);
     for (let n = 0; n < 100; n += 1) {
       const { plan } = composePlan(world, n);
-      const trace = runPlanLocallyTrace(world, plan);
-      const hits = findAmbiguousPercentSteps(world, plan, trace);
+      // Addendum Q rule 4: rung n is composed against the rules IN FORCE AT RUNG n, and the grid
+      // step and rounding direction are both amendable -- so the ambiguity has to be recomputed
+      // against those rules too, not against the world as first published.
+      const at = rulesAt(world, n);
+      const trace = runPlanLocallyTrace(at, plan);
+      const hits = findAmbiguousPercentSteps(at, plan, trace);
       assert.equal(hits.length, 0, `seed ${seed} rung ${n} composed an ambiguous percent step: ${JSON.stringify(hits)}`);
       percentStepsChecked += plan.filter((s) => s.op === 'compute' && s.args.fn === 'percentOfDims').length;
     }

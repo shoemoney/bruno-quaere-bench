@@ -37,10 +37,21 @@ runtime:
         const renderTooEarly = await fetch(projectPath + '/render', { method: 'POST', headers: auth });
         bru.setVar('smRenderBeforeComposeStatus', String(renderTooEarly.status));
 
+        // A picture of this project's own, so request 15 has something real to release: the
+        // publish signature binds the house's digest of a live asset belonging to THIS project.
+        const assetRes = await fetch(base + '/images', {
+          method: 'POST',
+          headers: { ...auth, 'content-type': 'application/json' },
+          body: JSON.stringify({ width: 16, height: 16, background: { color: '#000000' }, shapes: [] })
+        });
+        const asset = await assetRes.json();
+        bru.setVar('smAssetId', asset.id);
+        bru.setVar('smAssetHash', asset.hash);
+
         const composeRes = await fetch(projectPath + '/compose', {
           method: 'POST',
           headers: { ...auth, 'content-type': 'application/json' },
-          body: JSON.stringify({ assetIds: [] })
+          body: JSON.stringify({ assetIds: [asset.id] })
         });
         const composeBody = await composeRes.json();
         bru.setVar('smComposeStatus', String(composeRes.status));

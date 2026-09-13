@@ -20,6 +20,7 @@ import { createHmac } from 'node:crypto';
 import { makeWorld, resolvePath, fieldName } from '../src/world.js';
 import { routes } from '../src/routes.js';
 import { createServer } from '../src/api/server.js';
+import { publishHeaders } from './fixtures/sign.js';
 
 const SEED = 7;
 
@@ -65,6 +66,8 @@ function authHeaders(token) {
   return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
 }
 
+// Addendum Q rule 3: ETag is a header-only value now (never repeated in the body) -- merge it in
+// here so every caller below that reads `created.etag` keeps working unchanged.
 async function createImage(token, params) {
   const res = await fetch(`${base}/images`, {
     method: 'POST',
@@ -72,7 +75,8 @@ async function createImage(token, params) {
     body: JSON.stringify(params),
   });
   assert.equal(res.status, 201);
-  return res.json();
+  const body = await res.json();
+  return { ...body, etag: res.headers.get('etag') };
 }
 
 // Sets the answer key for a single rung n, wiping every previously recorded submission for
@@ -141,13 +145,15 @@ async function walkProjectTo(status, token, wsId, assetId) {
   if (status === 'rendered') return project.id;
 
   const publishPath = withParams(routeTemplate('projects.publish'), { workspace_id: wsId, project_id: project.id });
-  const ts = String(Math.floor(Date.now() / 1000));
-  const sig = createHmac(world.hmac.algo, world.auth.secret).update(`${ts}POST${publishPath}`).digest('hex');
+  // RULES-0.7 rule 35: the release signature binds the house's own digest of the artifact being
+  // released, and the house checks that digest names a live asset in THIS project -- which the
+  // composed asset is. Its digest is the `hash` the house reports for it.
+  const asset = await (await fetch(urlFor('assets.get', { asset_id: assetId }), { headers: authHeaders(token) })).json();
   const publish = await fetch(`${base}${publishPath}`, {
     method: 'POST',
-    headers: { ...authHeaders(token), [world.hmac.tsHeader]: ts, [world.hmac.header]: sig },
+    headers: { ...authHeaders(token), ...publishHeaders(world, { path: publishPath, bodyDigest: asset.hash }) },
   });
-  assert.equal(publish.status, 200);
+  assert.equal(publish.status, 200, `publish: ${JSON.stringify(await publish.clone().json())}`);
   assert.equal((await publish.json()).status, 'published');
   return project.id;
 }
@@ -477,11 +483,11 @@ test('submit: chain grading passes when the hash, the project state, and the lab
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.pass, true);
-  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: true });
+  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: true, audit: true, refusal: true });
   const recorded = await submissionsFor(9);
   assert.equal(recorded.length, 1);
   assert.equal(recorded[0].pass, true);
-  assert.deepEqual(recorded[0].checks, { hash: true, project_state: true, label: true });
+  assert.deepEqual(recorded[0].checks, { hash: true, project_state: true, label: true, audit: true, refusal: true });
 });
 
 test('submit: chain grading fails, and names the project-state check, when the project never reached published', async () => {
@@ -494,11 +500,11 @@ test('submit: chain grading fails, and names the project-state check, when the p
   assert.equal(res.status, 200, 'a resolvable but failing chain submission is a normal 200, never a 422');
   const body = await res.json();
   assert.equal(body.pass, false);
-  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: false, label: true });
+  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: false, label: true, audit: true, refusal: true });
   const recorded = await submissionsFor(10);
   assert.equal(recorded.length, 1);
   assert.equal(recorded[0].pass, false);
-  assert.deepEqual(recorded[0].checks, { hash: true, project_state: false, label: true });
+  assert.deepEqual(recorded[0].checks, { hash: true, project_state: false, label: true, audit: true, refusal: true });
 });
 
 test('submit: chain grading fails, and names the label check, when the display name was never written', async () => {
@@ -511,10 +517,10 @@ test('submit: chain grading fails, and names the label check, when the display n
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.pass, false);
-  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: false });
+  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: false, audit: true, refusal: true });
   const recorded = await submissionsFor(11);
   assert.equal(recorded.length, 1);
-  assert.deepEqual(recorded[0].checks, { hash: true, project_state: true, label: false });
+  assert.deepEqual(recorded[0].checks, { hash: true, project_state: true, label: false, audit: true, refusal: true });
 });
 
 test('submit: chain grading fails on hash alone even when the project state and label are both correct', async () => {
@@ -527,7 +533,7 @@ test('submit: chain grading fails on hash alone even when the project state and 
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.pass, false);
-  assert.deepEqual(body.checks, { hash: false, [f('project_state')]: true, label: true });
+  assert.deepEqual(body.checks, { hash: false, [f('project_state')]: true, label: true, audit: true, refusal: true });
 });
 
 test('submit: a rung whose answer key never mentions project state or label grades on hashes alone (checks are vacuously true)', async () => {
@@ -545,7 +551,215 @@ test('submit: a rung whose answer key never mentions project state or label grad
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.pass, true);
-  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: true });
+  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: true, audit: true, refusal: true });
+});
+
+// ---------------------------------------------------------------------------
+// Addendum Q rule 10, "grade the path": audit trail, negative-space refusal, HMAC body-digest
+// ---------------------------------------------------------------------------
+//
+// Each test below calls setRungs with a single rung 0 (setRungs always resets state.rungs.current
+// to 0, per admin.rungs.set), so no advanceRung() bookkeeping is needed -- unlike the shared rung
+// sequence above, these are self-contained and do not depend on, or feed, one another.
+
+async function freshWsId(t) {
+  const res = await fetch(urlFor('workspaces.list'), { headers: authHeaders(t) });
+  return (await res.json()).data[0].id;
+}
+
+test('submit: audit check passes when the project shows the exact expected stage sequence', async () => {
+  const t = await getToken();
+  const ws = await freshWsId(t);
+  const auditAsset = await createImage(t, { width: 8, height: 8, background: { transparent: true }, shapes: [] });
+  await walkProjectTo('published', t, ws, auditAsset.id);
+
+  await setRungs([
+    {
+      n: 0,
+      text: 'audit check: everything holds',
+      expected: [auditAsset.hash],
+      expectedDescriptors: [auditAsset.descriptor],
+      expectedAudit: { stages: ['draft', 'composed', 'rendering', 'rendered', 'published'] },
+    },
+  ]);
+
+  const res = await fetch(submitUrl(0), {
+    method: 'POST',
+    headers: authHeaders(t),
+    body: JSON.stringify({ assets: [auditAsset.id] }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.pass, true);
+  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: true, audit: true, refusal: true });
+});
+
+test('submit: audit check fails on a wrong sequence even though the hash and project state are both right', async () => {
+  const t = await getToken();
+  const ws = await freshWsId(t);
+  const auditAsset = await createImage(t, { width: 9, height: 9, background: { transparent: true }, shapes: [] });
+  await walkProjectTo('published', t, ws, auditAsset.id);
+
+  await setRungs([
+    {
+      n: 0,
+      text: 'audit check: a refusal that never happened',
+      expected: [auditAsset.hash],
+      expectedDescriptors: [auditAsset.descriptor],
+      expectedAudit: { stages: ['draft', 'render:409', 'composed', 'rendering', 'rendered', 'published'] },
+    },
+  ]);
+
+  const res = await fetch(submitUrl(0), {
+    method: 'POST',
+    headers: authHeaders(t),
+    body: JSON.stringify({ assets: [auditAsset.id] }),
+  });
+  const body = await res.json();
+  assert.equal(body.pass, false);
+  assert.equal(body.checks.hash, true, 'the hash is still right -- only the path was wrong');
+  assert.equal(body.checks.audit, false);
+});
+
+test('submit: refusal check fails when a live asset descends from a copy this project cleared out', async () => {
+  const t = await getToken();
+  const ws = await freshWsId(t);
+  const source = await createImage(t, { width: 10, height: 10, background: { color: '#123456' }, shapes: [] });
+
+  const created = await fetch(urlFor('projects.create', { workspace_id: ws }), {
+    method: 'POST',
+    headers: authHeaders(t),
+    body: JSON.stringify({ [f('name')]: 'refusal fixture (violated)' }),
+  });
+  const project = await created.json();
+  await fetch(urlFor('projects.compose', { workspace_id: ws, project_id: project.id }), {
+    method: 'POST',
+    headers: authHeaders(t),
+    body: JSON.stringify({ [f('asset_ids')]: [source.id] }),
+  });
+
+  const styledRes = await fetch(urlFor('assets.lora', { asset_id: source.id }), {
+    method: 'POST',
+    headers: authHeaders(t),
+    body: JSON.stringify({ [f('lora_id')]: world.loras[0].id }),
+  });
+  const derived = await styledRes.json();
+
+  const del = await fetch(urlFor('assets.delete', { asset_id: source.id }), { method: 'DELETE', headers: authHeaders(t) });
+  assert.equal(del.status, 204, 'the source must really be cleared out before the check matters');
+
+  await setRungs([
+    {
+      n: 0,
+      text: 'refusal check: violated',
+      expected: [derived.hash],
+      expectedDescriptors: [derived.descriptor],
+      forbidden: { act: 'workOnClearedCopies', rule: 30, detail: 'no asset may exist that was made from a cleared-out copy' },
+    },
+  ]);
+
+  const res = await fetch(submitUrl(0), {
+    method: 'POST',
+    headers: authHeaders(t),
+    body: JSON.stringify({ assets: [derived.id] }),
+  });
+  const body = await res.json();
+  assert.equal(body.checks.hash, true);
+  assert.equal(body.checks.refusal, false);
+  assert.equal(body.pass, false);
+});
+
+test('submit: refusal check passes when nothing live descends from a cleared-out copy', async () => {
+  const t = await getToken();
+  const ws = await freshWsId(t);
+  const source = await createImage(t, { width: 11, height: 11, background: { color: '#654321' }, shapes: [] });
+  const created = await fetch(urlFor('projects.create', { workspace_id: ws }), {
+    method: 'POST',
+    headers: authHeaders(t),
+    body: JSON.stringify({ [f('name')]: 'refusal fixture (honoured)' }),
+  });
+  const project = await created.json();
+  await fetch(urlFor('projects.compose', { workspace_id: ws, project_id: project.id }), {
+    method: 'POST',
+    headers: authHeaders(t),
+    body: JSON.stringify({ [f('asset_ids')]: [source.id] }),
+  });
+
+  await setRungs([
+    {
+      n: 0,
+      text: 'refusal check: honoured',
+      expected: [source.hash],
+      expectedDescriptors: [source.descriptor],
+      forbidden: { act: 'workOnClearedCopies', rule: 30, detail: 'no asset may exist that was made from a cleared-out copy' },
+    },
+  ]);
+
+  const res = await fetch(submitUrl(0), {
+    method: 'POST',
+    headers: authHeaders(t),
+    body: JSON.stringify({ assets: [source.id] }),
+  });
+  const body = await res.json();
+  assert.equal(body.checks.refusal, true);
+  assert.equal(body.pass, true);
+});
+
+// world.hmac.canon defaults to the 0.6.0 recipe ('ts+method+path') -- see world.js's makeHmac and
+// src/ladder/rung.js's "THE CANONICAL STRING" comment: flipping the default to the digest-bound
+// 0.7.0 recipe is the ladder workstream's side of the contract, held back until this half (the API
+// building its payload from `rulesAt(world, n).hmac.canon`) exists. Mutate the shared `world`
+// in place for the span of this one test to prove that half works whenever the switch does flip.
+test('submit: the digest-bound canon (ts+method+path+digest) verifies X-Body-Digest against a live asset', async () => {
+  const originalCanon = world.hmac.canon;
+  world.hmac.canon = 'ts+method+path+digest';
+  try {
+    const t = await getToken();
+    const ws = await freshWsId(t);
+    const asset = await createImage(t, { width: 12, height: 12, background: { color: '#abcdef' }, shapes: [] });
+    const created = await fetch(urlFor('projects.create', { workspace_id: ws }), {
+      method: 'POST',
+      headers: authHeaders(t),
+      body: JSON.stringify({ [f('name')]: 'hmac digest fixture' }),
+    });
+    const project = await created.json();
+    await fetch(urlFor('projects.compose', { workspace_id: ws, project_id: project.id }), {
+      method: 'POST',
+      headers: authHeaders(t),
+      body: JSON.stringify({ [f('asset_ids')]: [asset.id] }),
+    });
+    await fetch(urlFor('projects.render', { workspace_id: ws, project_id: project.id }), { method: 'POST', headers: authHeaders(t) });
+
+    const publishPath = withParams(routeTemplate('projects.publish'), { workspace_id: ws, project_id: project.id });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const canonical = `${ts}\nPOST\n${publishPath}\n${asset.hash}`;
+    const sig = createHmac(world.hmac.algo, world.auth.secret).update(canonical).digest('hex');
+
+    const missingDigest = await fetch(`${base}${publishPath}`, {
+      method: 'POST',
+      headers: { ...authHeaders(t), [world.hmac.tsHeader]: ts, [world.hmac.header]: sig },
+    });
+    assert.equal(missingDigest.status, 401, 'no X-Body-Digest at all must fail once the digest-bound recipe is live');
+
+    const ts2 = String(Math.floor(Date.now() / 1000) + 1);
+    const fakeDigest = '0'.repeat(64);
+    const badCanonical = `${ts2}\nPOST\n${publishPath}\n${fakeDigest}`;
+    const badSig = createHmac(world.hmac.algo, world.auth.secret).update(badCanonical).digest('hex');
+    const wrongDigest = await fetch(`${base}${publishPath}`, {
+      method: 'POST',
+      headers: { ...authHeaders(t), [world.hmac.tsHeader]: ts2, [world.hmac.header]: badSig, 'X-Body-Digest': fakeDigest },
+    });
+    assert.equal(wrongDigest.status, 401, 'a digest naming no live asset in this project must fail');
+
+    const good = await fetch(`${base}${publishPath}`, {
+      method: 'POST',
+      headers: { ...authHeaders(t), [world.hmac.tsHeader]: ts, [world.hmac.header]: sig, 'X-Body-Digest': asset.hash },
+    });
+    assert.equal(good.status, 200);
+    assert.equal((await good.json()).status, 'published');
+  } finally {
+    world.hmac.canon = originalCanon;
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,8 @@ import { makeWorld, resolvePath, fieldName } from '../src/world.js';
 import { routes } from '../src/routes.js';
 import { create } from '../src/media.js';
 import { createServer } from '../src/api/server.js';
+import { canonicalString } from '../src/hmac.js';
+import { DIGEST_HEADER } from './fixtures/sign.js';
 
 const SEEDS = [1, 2, 3, 4, 5, 42, 7, 99];
 
@@ -23,11 +25,15 @@ test('toSkill produces frontmatter with a name and a description', () => {
   }
 });
 
-test('toSkill is 200 to 400 lines', () => {
+// Ceiling raised from 400 to 440 for ladder 0.7.0: RULES-0.7 rule 35's digest-bound signing recipe
+// needs three paragraphs the concatenated recipe did not (where the digest comes from, that it is
+// the house's own hash and never a local one, and the newline separation), and the example block
+// is four lines instead of one. The bound is a "did the generator run away" guard, not a budget.
+test('toSkill is 200 to 440 lines', () => {
   for (const seed of SEEDS) {
     const md = toSkill(makeWorld(seed));
     const n = md.split('\n').length;
-    assert.ok(n >= 200 && n <= 400, `seed ${seed}: ${n} lines`);
+    assert.ok(n >= 200 && n <= 440, `seed ${seed}: ${n} lines`);
   }
 });
 
@@ -287,28 +293,34 @@ test('the signing recipe is self-consistent, and signing by it actually publishe
     const world = makeWorld(seed);
     const sec = section(toSkill(world), 'Publish signing');
 
-    // the example string the document tells the agent to copy. The section carries two fenced
-    // blocks -- the canonical string, then the HMAC formula -- so take the one that is the
-    // canonical string and assert there are exactly the two we expect.
-    const fences = [...sec.matchAll(/```\n([^\n]+)\n```/g)].map((m) => m[1]);
+    // The example string the document tells the agent to copy. The section carries two fenced
+    // blocks -- the canonical string, then the HMAC formula. 0.7.0's default recipe is
+    // digest-bound (RULES-0.7 rule 35), so the first block is four lines: timestamp, method,
+    // path, digest, one per line, no separators of any other kind.
+    const fences = [...sec.matchAll(/```\n([\s\S]*?)\n```/g)].map((m) => m[1]);
     assert.equal(fences.length, 2, `seed ${seed}: expected the canonical string and the HMAC formula`);
     assert.match(fences[1], /^signature = hex\(/, `seed ${seed}: second fence must be the formula`);
     const example = fences[0];
     const exampleTs = only(/at timestamp (\d+)/g, sec, 'example timestamp')[1];
+    const exampleDigest = only(/house digest is `([0-9a-f]{64})`/g, sec, 'example digest')[1];
 
-    assert.ok(example.startsWith(exampleTs), `seed ${seed}: example must start with the timestamp`);
-    const afterTs = example.slice(exampleTs.length);
-    assert.ok(afterTs.startsWith('POST'), `seed ${seed}: method must follow the timestamp directly`);
-    const examplePath = afterTs.slice('POST'.length);
-    assert.ok(examplePath.startsWith('/'), `seed ${seed}: the path must follow the method directly`);
-    // the whole point: `ts+method+path` names the parts, it is not the separator
+    const lines = example.split('\n');
+    assert.deepEqual(
+      lines.slice(0, 2).concat(lines[3]),
+      [exampleTs, 'POST', exampleDigest],
+      `seed ${seed}: the four lines are timestamp, method, path, digest`,
+    );
+    assert.ok(lines[2].startsWith('/'), `seed ${seed}: the third line is the request path`);
+    assert.ok(!example.includes('+'), `seed ${seed}: the example still carries literal plus signs`);
     assert.equal(
       example,
-      `${exampleTs}POST${examplePath}`,
-      `seed ${seed}: the example is not a bare concatenation`,
+      canonicalString(world.hmac.canon, { ts: exampleTs, method: 'POST', path: lines[2], bodyDigest: exampleDigest }),
+      `seed ${seed}: the example is not what canonicalString produces`,
     );
-    assert.ok(!example.includes('+'), `seed ${seed}: the example still carries literal plus signs`);
-    assert.ok(sec.includes(world.hmac.header) && sec.includes(world.hmac.tsHeader), `seed ${seed}: headers`);
+    assert.ok(
+      sec.includes(world.hmac.header) && sec.includes(world.hmac.tsHeader) && sec.includes(DIGEST_HEADER),
+      `seed ${seed}: headers`,
+    );
 
     // now do it for real: an agent that follows this section must get a 200 out of publish
     const server = createServer({ world, publicPort: 0, adminPort: 0 });
@@ -318,7 +330,7 @@ test('the signing recipe is self-consistent, and signing by it actually publishe
 
     const f = (n) => fieldName(world, n);
     const tmpl = (id) => resolvePath(world, routes.find((r) => r.id === id).path);
-    const fill = (s, p) => Object.entries(p).reduce((acc, [k, v]) => acc.replace(`{${k}}`, encodeURIComponent(v)), s);
+    const fill = (str, p2) => Object.entries(p2).reduce((acc, [k, v]) => acc.replace(`{${k}}`, encodeURIComponent(v)), str);
     const call = async (method, path, { body, headers = {}, token } = {}) => {
       const h = { ...headers };
       if (token) h.authorization = `Bearer ${token}`;
@@ -340,29 +352,56 @@ test('the signing recipe is self-consistent, and signing by it actually publishe
       body: { name: 'signing probe' },
     });
     const params = { workspace_id: wsId, project_id: created.body.id };
-    await call('POST', fill(tmpl('projects.compose'), params), { token: await mint(), body: {} });
+    // The release has to be OF something: rule 35 binds the house's digest of a live asset in
+    // this project, so the probe composes one it owns rather than an empty project.
+    const shape = { type: 'rect', x: 0, y: 0, w: 4, h: 4, color: '#ff0000', opacity: 1 };
+    if (world.rules.zOrder === 'explicit') shape.z = 0;
+    const asset = await call('POST', '/images', {
+      token: await mint(),
+      body: { width: 16, height: 16, background: { color: '#000000' }, shapes: [shape] },
+    });
+    assert.equal(asset.status, 201, `seed ${seed}: the probe asset`);
+    await call('POST', fill(tmpl('projects.compose'), params), {
+      token: await mint(),
+      body: { [f('asset_ids')]: [asset.body.id] },
+    });
     await call('POST', fill(tmpl('projects.render'), params), { token: await mint(), body: {} });
 
     const publishPath = fill(tmpl('projects.publish'), params);
     const ts = String(Math.floor(Date.now() / 1000));
+    const digest = asset.body.hash;
 
-    // the WRONG recipe -- the one the old example printed -- must be rejected
+    // the WRONG recipe -- the plus-separated one the document explicitly warns against -- must be
+    // rejected, digest header and all
     const plussed = createHmac(world.hmac.algo, world.auth.secret)
       .update(`${ts}+POST+${publishPath}`)
       .digest('hex');
     const rejected = await call('POST', publishPath, {
       token: await mint(),
       body: {},
-      headers: { [world.hmac.tsHeader]: ts, [world.hmac.header]: plussed },
+      headers: { [world.hmac.tsHeader]: ts, [world.hmac.header]: plussed, [DIGEST_HEADER]: digest },
     });
     assert.equal(rejected.status, 401, `seed ${seed}: the plus-separated string must NOT verify`);
 
+    // and so must a signature computed without the digest line at all
+    const undigested = createHmac(world.hmac.algo, world.auth.secret)
+      .update(`${ts}\nPOST\n${publishPath}`)
+      .digest('hex');
+    const short = await call('POST', publishPath, {
+      token: await mint(),
+      body: {},
+      headers: { [world.hmac.tsHeader]: ts, [world.hmac.header]: undigested, [DIGEST_HEADER]: digest },
+    });
+    assert.equal(short.status, 401, `seed ${seed}: a signature that omits the digest must NOT verify`);
+
     // the recipe as written must be accepted
-    const signed = createHmac(world.hmac.algo, world.auth.secret).update(`${ts}POST${publishPath}`).digest('hex');
+    const signed = createHmac(world.hmac.algo, world.auth.secret)
+      .update(canonicalString(world.hmac.canon, { ts, method: 'POST', path: publishPath, bodyDigest: digest }))
+      .digest('hex');
     const accepted = await call('POST', publishPath, {
       token: await mint(),
       body: {},
-      headers: { [world.hmac.tsHeader]: ts, [world.hmac.header]: signed },
+      headers: { [world.hmac.tsHeader]: ts, [world.hmac.header]: signed, [DIGEST_HEADER]: digest },
     });
     assert.equal(accepted.status, 200, `seed ${seed}: signing as the skill describes must publish`);
     assert.equal(accepted.body.status, 'published', `seed ${seed}`);

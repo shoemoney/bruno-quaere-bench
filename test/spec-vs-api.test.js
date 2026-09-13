@@ -14,6 +14,7 @@ import { makeWorld, resolvePath, fieldName } from '../src/world.js';
 import { routes } from '../src/routes.js';
 import { createServer } from '../src/api/server.js';
 import { toOpenApi, listLies } from '../src/spec.js';
+import { publishHeaders } from './fixtures/sign.js';
 
 const SEEDS = [1, 2, 3];
 
@@ -272,9 +273,18 @@ async function driveProjectToRender(ctx) {
   });
   assert.equal(created.status, 201);
   const params = { workspace_id: ctx.workspaceId, project_id: created.body.id };
+  // A fresh asset per probe: composing only claims an asset no project owns yet, and rule 35's
+  // release digest has to name a live asset belonging to THIS project.
+  const shape = { type: 'rect', x: 0, y: 0, w: 4, h: 4, color: '#ff0000', opacity: 1 };
+  if (ctx.world.rules.zOrder === 'explicit') shape.z = 0;
+  const asset = await ctx.call('POST', '/images', {
+    token: await ctx.mint(),
+    body: { width: 16, height: 16, background: { color: '#000000' }, shapes: [shape] },
+  });
+  assert.equal(asset.status, 201);
   const composed = await ctx.call('POST', ctx.fill(ctx.tmpl('projects.compose'), params), {
     token: await ctx.mint(),
-    body: { [ctx.f('asset_ids')]: [ctx.assetId] },
+    body: { [ctx.f('asset_ids')]: [asset.body.id] },
   });
   assert.equal(composed.status, 200);
   const rendered = await ctx.call('POST', ctx.fill(ctx.tmpl('projects.render'), params), {
@@ -282,7 +292,7 @@ async function driveProjectToRender(ctx) {
     body: {},
   });
   assert.equal(rendered.status, 202);
-  return { jobPath: rendered.headers.get('location'), projectId: created.body.id };
+  return { jobPath: rendered.headers.get('location'), projectId: created.body.id, digest: asset.body.hash };
 }
 
 // Send the operation a valid request with the lied-about field/header removed and assert the
@@ -294,11 +304,7 @@ async function assertOmittingFails(ctx, lie) {
   if (lie.path.endsWith('/publish')) {
     // Each half gets its own project driven all the way to `rendered`, so a 409 for the wrong
     // state can never be mistaken for the 401 this probe is looking for.
-    const signedHeaders = (path) => {
-      const ts = Math.floor(Date.now() / 1000);
-      const sig = createHmac(ctx.world.hmac.algo, ctx.world.auth.secret).update(`${ts}POST${path}`).digest('hex');
-      return { [ctx.world.hmac.tsHeader]: String(ts), [ctx.world.hmac.header]: sig };
-    };
+    const signedHeaders = (path, bodyDigest) => publishHeaders(ctx.world, { path, bodyDigest });
     const publishPathFor = (projectId) =>
       ctx.fill(ctx.tmpl('projects.publish'), { workspace_id: ctx.workspaceId, project_id: projectId });
 
@@ -308,14 +314,14 @@ async function assertOmittingFails(ctx, lie) {
     const withAll = await ctx.call('POST', controlPath, {
       token: await ctx.mint(),
       body: {},
-      headers: signedHeaders(controlPath),
+      headers: signedHeaders(controlPath, control.digest),
     });
     assert.equal(withAll.status, 200, 'the fully-signed request is the control and must succeed');
 
     // probe: the same request with only the lied-about header dropped
     const probe = await driveProjectToRender(ctx);
     const probePath = publishPathFor(probe.projectId);
-    const partial = signedHeaders(probePath);
+    const partial = signedHeaders(probePath, probe.digest);
     assert.ok(name in partial, `${name} must be one of the headers this probe controls`);
     delete partial[name];
     const res = await ctx.call('POST', probePath, { token: await ctx.mint(), body: {}, headers: partial });

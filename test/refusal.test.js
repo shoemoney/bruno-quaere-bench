@@ -182,15 +182,22 @@ test('the reference passes a refusal rung by leaving the forbidden thing undone'
   assert.deepEqual(result.passed, [n]);
 });
 
-test('the reference FAILS the same rung when the forbidden act is performed', async () => {
+test('the HOUSE fails the same rung when the forbidden act is performed', async () => {
+  // The reference submits even when it has been told to break the rule, precisely so that what is
+  // under test is the house's own `refusal` check rather than an assertion this file makes about
+  // itself. A `pass:false` naming `refusal` is the check biting; the reference only reports a
+  // `refusal:` reason of its own if the house let the submission through, which would mean rule 7
+  // is graded by nothing.
   const n = findLabelRefusal(1);
   const result = await climbSlice(1, n, n, { performForbidden: true });
   assert.deepEqual(result.passed, [], `rung ${n} passed while doing what rule 36 forbids`);
   assert.equal(result.failed.length, 1);
   const { reason } = result.failed[0];
-  assert.match(reason, /^refusal:/, `the failure must name the refusal, got: ${reason}`);
-  assert.match(reason, /labelTheStack/);
-  assert.match(reason, /rule 29/);
+  assert.match(
+    reason,
+    /^submit returned pass:false \(failed: refusal\)$/,
+    `the house's refusal check must be the thing that failed it, got: ${reason}`,
+  );
 });
 
 test('a rung with no refusal is untouched by performForbidden', async () => {

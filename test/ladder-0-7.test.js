@@ -250,10 +250,14 @@ test('the ladder <-> API contract for all three new fields is written down in on
 //     for (const s of [1,2,3]) console.log(s, sha256(canonical(answerKey(makeWorld(s)).rungs.map(r=>r.expected))));"
 // ---------------------------------------------------------------------------
 
+// Rebaselined when Addendum Q rule 4's amendments went LIVE (AMENDMENTS_ENFORCED true) and rule
+// 10's canonical string became digest-bound by default: every rung at or above 30 is now composed
+// against the rules in force at it, so a seed whose first amendment moves the grid or the
+// rounding direction has a different key from rung 30 up. Deliberate; see src/world.js.
 const PINNED_KEY_HASHES = {
-  1: '43a78daacbabc30d3207424f850b65d1316edf5c24ea4447bbb3026c8baf6ee8',
-  2: 'ded5b6c383b77d7639a8643a240ea6bf56afc2511f39013c32560d38a3a9a2b1',
-  3: 'e5895d710a46890590831b36a2115c857836d9b0c7a5853241ad22c618c72e30',
+  1: 'd1ab092a251679ca460cc5e0576db440315b5e033afe8d535734e08feaebd7be',
+  2: '6b299b5248ca5f92b735b7e776f4963df9e35cca41799546eb464e5948564071',
+  3: '2c48244dfac0501d3431566de22a713838b5bf62cc78759a0d1c3e9b3bc6bc16',
 };
 
 test('the 0.7.0 answer key hashes are pinned for seeds 1, 2 and 3', () => {

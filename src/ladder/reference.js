@@ -7,11 +7,12 @@ import { createHmac } from 'node:crypto';
 
 import { routes } from '../routes.js';
 import { resolvePath, fieldName, rulesAt } from '../world.js';
+import { canonicalString } from '../hmac.js';
 import { renderImage } from '../render/image.js';
 import { renderAudio } from '../render/audio.js';
 import { hashArtifact } from '../canon.js';
 import { makeRung } from './rung.js';
-import { runCompute, resolveRefs, recallValue, composePlan } from './grammar.js';
+import { runCompute, resolveRefs, recallValue, composePlan, runPlanLocally } from './grammar.js';
 
 // recallFallbackResolver(world) -> (fromRung, field) -> value. The OPT-IN escape hatch for a
 // climb that starts mid-ladder (`--from 40`) and so cannot possibly remember what rung 12 turned
@@ -366,25 +367,10 @@ async function httpRender(ctx, args, resultKey, projectsMap, idemPrefix, audit) 
 // Addendum Q rule 10: the release signature binds a digest of what is being released
 // ---------------------------------------------------------------------------
 
-// canonicalString(canon, {ts, method, path, bodyDigest}) -> the exact bytes the release signature
-// is computed over. ONE implementation, exported, so the ladder, the reference and (once it stops
-// hardcoding its own copy) src/api/behaviors.js cannot drift. Which recipe is in force is a World
-// field, `hmac.canon`, resolved through `rulesAt(world, n)` because an amendment may move it
-// mid-ladder (Addendum Q rule 4's closed set includes the field order of this very string).
-export function canonicalString(canon, { ts, method, path, bodyDigest }) {
-  if (canon === 'ts+method+path') return `${ts}${method}${path}`;
-  if (canon === 'ts+path+method') return `${ts}${path}${method}`;
-  if (canon === 'method+path+ts') return `${method}${path}${ts}`;
-  // 0.7.0's digest-bound recipe. Newline-separated so no two fields can run together, and the
-  // digest last so a grader reading the header can line it up with the tail of the string.
-  if (canon === 'ts+method+path+digest') {
-    if (typeof bodyDigest !== 'string' || bodyDigest.length !== 64) {
-      throw new Error('canonicalString: the digest-bound recipe needs a 64-hex body digest');
-    }
-    return `${ts}\n${method}\n${path}\n${bodyDigest}`;
-  }
-  throw new Error(`unknown canonical-string recipe: ${canon}`);
-}
+// The one implementation lives in src/hmac.js, where the house (src/api/behaviors.js) and the
+// written reference (src/skill.js) reach it without importing the answer key. Re-exported here
+// because the ladder's own callers and tests have always found it at this name.
+export { canonicalString } from '../hmac.js';
 
 // signPublish(world, {ts, method, path, bodyDigest}) -> hex signature.
 export function signPublish(world, parts) {
@@ -712,12 +698,6 @@ export async function climb({
         forbidden: rung.forbidden,
         perform: performForbidden,
       });
-      // Addendum Q rule 7: the fourth check. The reference passes a refusal rung by NOT doing the
-      // thing; a climb that does it fails here, which is what makes "the reference honours the
-      // refusal" a falsifiable claim rather than a comment.
-      if (refusalViolated) {
-        throw new Error(`refusal: rung ${n} performed the forbidden act "${rung.forbidden.act}" (RULES-0.7 rule ${rung.forbidden.rule}): ${rung.forbidden.detail}`);
-      }
       // Addendum Q rule 10: the path, not just the terminal artifact.
       if (rung.expectedAudit) {
         const want = rung.expectedAudit.stages.join(' -> ');
@@ -731,12 +711,46 @@ export async function climb({
       const path = pathFor(world, 'rungs.submit', { n: String(n) });
       // eslint-disable-next-line no-await-in-loop
       const { body } = await requestJson(ctx, 'POST', path, { body: reqBody });
+      if (body.pass && refusalViolated) {
+        // Addendum Q rule 7: the fourth check, proved against the HOUSE rather than asserted here.
+        // The reference passes a refusal rung by not doing the thing; when it is told to do it
+        // anyway (test/refusal.test.js's other half) the submission still goes in, so what is
+        // being tested is whether the house's `refusal` check actually catches it. A pass here
+        // means the absence check is not grading -- exactly the failure Addendum O found when a
+        // demand in the text was graded by nothing.
+        failed.push({
+          n,
+          reason: `refusal: rung ${n} performed the forbidden act "${rung.forbidden.act}" (RULES-0.7 rule ${rung.forbidden.rule}) and the house passed it anyway: ${rung.forbidden.detail}`,
+        });
+        if (log) log({ n, pass: false, checks: body.checks });
+        continue;
+      }
       if (body.pass) {
         passed.push(n);
       } else {
-        failed.push({ n, reason: 'submit returned pass:false' });
+        // Name the checks that actually said no. A bare "pass:false" tells an operator nothing
+        // about whether the hash, the project state, the label, the path audit or the refusal is
+        // what went wrong, and those are five very different bugs.
+        const failing = Object.entries(body.checks || {}).filter(([, ok]) => ok === false).map(([k]) => k);
+        const which = failing.length > 0 ? ` (failed: ${failing.join(', ')})` : '';
+        // On a hash failure, say WHAT differs: the descriptor this file built locally against the
+        // key's rules versus the one the house actually holds for the submitted asset. One extra
+        // request, only ever on a failing rung, and it turns "pass:false" into a diff.
+        let detail = '';
+        if (failing.includes('hash')) {
+          // Name the FIRST step whose result diverged from the same plan run against the key's
+          // own rules. "pass:false" says nothing; "step c1 diverged" points straight at the op.
+          try {
+            const want = runPlanLocally(rulesAt(world, n), rung.plan);
+            const step = rung.plan.find((s) => JSON.stringify(env.get(s.resultKey)) !== JSON.stringify(want.get(s.resultKey)));
+            detail = step
+              ? ` first divergence at step ${step.resultKey} (${step.op}): climbed=${JSON.stringify(env.get(step.resultKey))} key=${JSON.stringify(want.get(step.resultKey))}`
+              : ' the climbed plan matches the key locally, so the house rendered it differently';
+          } catch (err) { detail = ` (could not diff: ${err.message})`; }
+        }
+        failed.push({ n, reason: `submit returned pass:false${which}${detail}` });
       }
-      if (log) log({ n, pass: body.pass });
+      if (log) log({ n, pass: body.pass, checks: body.checks });
     } catch (err) {
       failed.push({ n, reason: err.message });
       if (log) log({ n, pass: false, error: err.message });

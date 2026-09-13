@@ -302,7 +302,15 @@ export const AMENDMENT_RULES = {
   roundMode: { path: ['rules', 'roundMode'], choices: ROUND_MODE },
   opacityCompound: { path: ['rules', 'opacityCompound'], choices: OPACITY_COMPOUND },
   defaultFps: { path: ['rules', 'defaultFps'], choices: FPS_CHOICES },
-  hmacCanon: { path: ['hmac', 'canon'], choices: ['ts+method+path', 'ts+path+method', 'method+path+ts'] },
+  // RULES-0.7 rule 35 says the signing string BINDS A DIGEST of the thing being released, and
+  // rule 33 says an amendment may move "the order of the fields in the signing string". So every
+  // candidate here is a digest-bound ordering: an amendment reorders the four fields, it never
+  // unbinds the digest. Dropping the digest would be a rule change rule 33 does not license, and
+  // would quietly make rule 35 false for the rest of the climb.
+  hmacCanon: {
+    path: ['hmac', 'canon'],
+    choices: ['ts+method+path+digest', 'ts+path+method+digest', 'method+path+ts+digest'],
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -310,29 +318,26 @@ export const AMENDMENT_RULES = {
 //
 // An amendment is only real when the house itself changes behaviour at the announced rung -- the
 // grid step, the rounding direction, the compounding rule, the default frame rate and the signing
-// canonical string are all applied by `src/media.js` and `src/api/behaviors.js`, which read
-// `world.rules` / `world.hmac` once and know nothing about the current rung. Until those two
-// resolve their rules through `rulesAt(world, currentRung)` instead, an amendment could only ever
-// desync the answer key from the live house: the key would round on the amended grid and the
-// server would round on the original one, and every rung from 30 up would fail the reference gate
-// for a reason that has nothing to do with the ladder.
+// canonical string are all applied by `src/media.js` and `src/api/behaviors.js`, which read the
+// World they are handed. Both are reached from ONE place per side:
 //
-// So amendments are DRAWN and TESTED here but not PUBLISHED while this is false: `makeWorld`
-// hands back an empty `amendments` array, nothing is written into the sandbox, no rung text
-// announces one, and `rulesAt` is a no-op that still threads through every call site. Flipping
-// this to true is a one-line change once the API workstream lands two things:
+//   1. `src/api/server.js`'s public route handler resolves `rulesAt(state.world,
+//      state.rungs.current)` once and threads THAT world into every media call and every field
+//      lookup, so create/convert/combine/applyLora see the amended dpi, grid step, rounding
+//      direction, compounding rule and default fps for the rung actually being climbed.
+//   2. `projects.publish` resolves the same world, so `verifyHmac` builds its canonical string
+//      from the amended `hmac.canon` via `canonicalString` -- the one implementation the ladder,
+//      the reference and the house all share.
 //
-//   1. `src/media.js`'s create/convert/combine/applyLora resolve dpi, grid step, rounding
-//      direction, compounding rule and default fps from `rulesAt(world, n)` for the CURRENT rung
-//      rather than from `world.rules`.
-//   2. `src/api/behaviors.js`'s `verifyHmac` builds its canonical string from
-//      `rulesAt(world, n).hmac.canon` (it currently hardcodes `ts+method+path`, ignoring
-//      `world.hmac.canon` entirely) and the harness rewrites HOUSE-RULES.md at each amendment rung.
+// The generator side resolves the same way (`grammar.js`'s `composePlan`, `rung.js`'s `makeRung`,
+// `reference.js`'s `execPlanHttp`, and `docsolver.js`), so the key and the live house agree rung
+// for rung. That is the whole safety condition, and it now holds -- so amendments are DRAWN,
+// PUBLISHED and ENFORCED.
 //
 // `drawAmendments(seed)` is exported unconditionally so `test/amendment.test.js` can prove the
-// whole mechanism -- draws, `rulesAt` resolution, and the generator composing against amended
-// rules -- without waiting on the house.
-export const AMENDMENTS_ENFORCED = false;
+// mechanism -- draws, `rulesAt` resolution, and the generator composing against amended rules --
+// without standing a server up.
+export const AMENDMENTS_ENFORCED = true;
 
 export function drawAmendments(seed) {
   const r = rng(sub(seed, 'amendments'));
@@ -357,29 +362,51 @@ export function drawAmendments(seed) {
 // path costs nothing on a world with no amendments.
 const RULES_AT_CACHE = new WeakMap();
 
+// A world `rulesAt` produced remembers the world it was derived FROM, and every resolution starts
+// from that base. This is load-bearing, not defensive: `composePlan` rebinds its own `world` to
+// `rulesAt(base, n)` and then asks, through that same object, for the descriptor an EARLIER rung
+// submitted (a rule-21 recall). Resolving rung 38 off a world already resolved at rung 60 would
+// re-apply only the amendments dated on or before 38 on top of rung 60's values, leaving rung
+// 60's grid or rounding in place -- which silently changes what rung 38's answer was, the one
+// thing RULES-0.7 rule 33 says an amendment never does.
+const RULES_AT_BASE = new WeakMap();
+
 export function rulesAt(world, n) {
-  const live = (world.amendments || []).filter((a) => a.atRung <= n);
-  if (live.length === 0) return world;
-  // Memoised on (world, n): a rung's plan is composed, run locally, run again for the caps check
+  const base = RULES_AT_BASE.get(world) ?? world;
+  const live = (base.amendments || []).filter((a) => a.atRung <= n);
+  if (live.length === 0) return base;
+  // Memoised on (base, n): a rung's plan is composed, run locally, run again for the caps check
   // and run a third time by makeRung, and every one of those has to see the SAME object or
   // grammar.js's plan-run cache (keyed on world identity) misses every time.
-  let byRung = RULES_AT_CACHE.get(world);
+  let byRung = RULES_AT_CACHE.get(base);
   if (byRung === undefined) {
     byRung = new Map();
-    RULES_AT_CACHE.set(world, byRung);
+    RULES_AT_CACHE.set(base, byRung);
   }
   const hit = byRung.get(n);
   if (hit !== undefined) return hit;
-  const next = { ...world, rules: { ...world.rules }, hmac: { ...world.hmac } };
+  const next = { ...base, rules: { ...base.rules }, hmac: { ...base.hmac } };
   for (const a of live) next[a.path[0]][a.path[1]] = a.to;
+  RULES_AT_BASE.set(next, base);
   byRung.set(n, next);
   return next;
+}
+
+// baseWorldOf(world): the un-amended World a `rulesAt` result was derived from, or the world
+// itself when it is already the base. Anything that models state the house built BEFORE the climb
+// started -- the seeded project library above all -- must be computed against this, never against
+// a rung's amended rules. The live server seeds its store once at startup, from the base world,
+// and no amendment reaches back and re-rounds it; a generator that re-seeds the library under
+// rung 71's grid is describing a library that does not exist.
+export function baseWorldOf(world) {
+  return RULES_AT_BASE.get(world) ?? world;
 }
 
 // amendmentsAt(world, n): the amendments announced at exactly rung n (what the harness writes into
 // HOUSE-RULES.md when the climb reaches it, and what that rung's text tells the agent to go read).
 export function amendmentsAt(world, n) {
-  return (world.amendments || []).filter((a) => a.atRung === n);
+  const base = RULES_AT_BASE.get(world) ?? world;
+  return (base.amendments || []).filter((a) => a.atRung === n);
 }
 
 function makePagination(seed) {
@@ -424,7 +451,10 @@ function amountFor(op, r) {
 }
 
 function makeHmac() {
-  return { header: 'X-Signature', tsHeader: 'X-Timestamp', algo: 'sha256', canon: 'ts+method+path' };
+  // Addendum Q rule 10 / RULES-0.7 rule 35: from 0.7.0 the release signature binds a digest of
+  // the artifact being released, so the house's canonical string is digest-bound by default.
+  // `canonicalString` in src/hmac.js is the one implementation of every recipe.
+  return { header: 'X-Signature', tsHeader: 'X-Timestamp', algo: 'sha256', canon: 'ts+method+path+digest' };
 }
 
 // makeWorld(seed): number -> World, fully deterministic.
@@ -444,8 +474,7 @@ export function makeWorld(seed) {
     loras: makeLoras(seed),
     hmac: makeHmac(),
     rungMutations: makeRungMutations(seed),
-    // Addendum Q rule 4. Empty until the house resolves its own rules through rulesAt() -- see
-    // AMENDMENTS_ENFORCED above for the exact two changes that flip it on.
+    // Addendum Q rule 4: the dated mid-ladder rule changes, live. See AMENDMENTS_ENFORCED.
     amendments: AMENDMENTS_ENFORCED ? drawAmendments(seed) : [],
   };
 }

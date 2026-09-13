@@ -16,15 +16,24 @@ runtime:
   scripts:
     - type: before-request
       code: |-
-        // world.hmac.canon is 'ts+method+path': sign `${ts}${method}${path}` with the api
-        // secret, sha256, hex. `crypto` here is node:crypto (require works because this
-        // collection is run with --sandbox developer; the default 'safe' sandbox only shims
+        // world.hmac.canon is 'ts+method+path+digest' (RULES-0.7 rule 35): sign
+        // `${ts}\n${method}\n${path}\n${digest}` with the api secret, sha256, hex, where the
+        // digest is the HOUSE's own hash of the artifact being released -- read back off the
+        // house here rather than computed locally, which is the whole point of binding it.
+        // `crypto` here is node:crypto (require works because this collection is run with
+        // --sandbox developer; the default 'safe' sandbox only shims
         // crypto.randomBytes/getRandomValues, no HMAC).
         const crypto = require('crypto');
         const path = '/shops/' + bru.getVar('workspaceId') + '/sessions/' + bru.getVar('smProjectId') + '/publish';
         const ts = String(Math.floor(Date.now() / 1000));
         const secret = bru.getEnvVar('hmacSecret');
-        const signature = crypto.createHmac('sha256', secret).update(ts + 'POST' + path).digest('hex');
+        const assetRes = await fetch(bru.getEnvVar('baseUrl') + '/snapshots/' + bru.getVar('smAssetId'), {
+          headers: { Authorization: 'Bearer ' + bru.getVar('token') }
+        });
+        const digest = (await assetRes.json()).hash;
+        bru.setVar('publishDigestMatchesCreate', String(digest === bru.getVar('smAssetHash')));
+        const canonical = ts + '\n' + 'POST' + '\n' + path + '\n' + digest;
+        const signature = crypto.createHmac('sha256', secret).update(canonical).digest('hex');
 
         // Prove the header is actually checked, before spending the one real publish this
         // project's state machine allows: a garbage signature against the same timestamp and
@@ -36,17 +45,39 @@ runtime:
           headers: {
             Authorization: 'Bearer ' + bru.getVar('token'),
             'X-Timestamp': ts,
+            'X-Body-Digest': digest,
             'X-Signature': 'not-a-real-signature'
           }
         });
         bru.setVar('publishBadSignatureStatus', String(badRes.status));
 
+        // ... and so must a correctly-shaped signature over the pre-0.7.0 concatenated string,
+        // which is what a client that never re-read the house rules would still be sending.
+        const staleSig = crypto.createHmac('sha256', secret).update(ts + 'POST' + path).digest('hex');
+        const staleRes = await fetch(base + path, {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + bru.getVar('token'),
+            'X-Timestamp': ts,
+            'X-Body-Digest': digest,
+            'X-Signature': staleSig
+          }
+        });
+        bru.setVar('publishStaleRecipeStatus', String(staleRes.status));
+
         req.setHeader('X-Timestamp', ts);
+        req.setHeader('X-Body-Digest', digest);
         req.setHeader('X-Signature', signature);
     - type: tests
       code: |-
         test("an invalid signature is rejected before publish is even attempted", function() {
           expect(bru.getVar('publishBadSignatureStatus')).to.equal('401');
+        });
+        test("a signature over the pre-0.7.0 concatenated string is rejected too", function() {
+          expect(bru.getVar('publishStaleRecipeStatus')).to.equal('401');
+        });
+        test("the digest read back from the house is the one it reported on create", function() {
+          expect(bru.getVar('publishDigestMatchesCreate')).to.equal('true');
         });
         test("the correctly signed request publishes the rendered project", function() {
           expect(res.status).to.equal(200);
@@ -54,7 +85,8 @@ runtime:
         });
 
 docs: |-
-  Behavior #15 (Request signing): POST .../publish requires `X-Timestamp` plus `X-Signature`,
-  an HMAC-SHA256 over `ts+method+path` keyed by the API secret (world.hmac). Completes the
-  project lifecycle started in request 13 and continued in request 14 (still 'rendered' when
-  this request starts).
+  Behavior #15 (Request signing): POST .../publish requires `X-Timestamp`, `X-Body-Digest` and
+  `X-Signature`, an HMAC-SHA256 over `ts+method+path+digest` keyed by the API secret (world.hmac),
+  newline-separated, where the digest is the house's own hash of the artifact being released
+  (RULES-0.7 rule 35). Completes the project lifecycle started in request 13 and continued in
+  request 14 (still 'rendered' when this request starts).

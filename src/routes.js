@@ -27,6 +27,15 @@ const paginatedParams = [
 
 const idempotencyHeader = { name: 'Idempotency-Key', in: 'header', type: 'string', required: false };
 
+// Addendum Q rule 3: ETag/cursor/Retry-After are load-bearing values that live ONLY in a response
+// header, never repeated as a body field. `responseHeaders` documents them for spec.js to attach
+// to the OpenAPI operation; routes.js's own `responseSchema` bodies below never declare them.
+const etagHeader = { name: 'ETag', description: 'The asset\'s current ETag; conditional requests use it, never a body field' };
+const linkNextHeader = {
+  name: 'Link',
+  description: 'rel="next" page, cursor travels only here (Addendum Q rule 3); absent on the last page',
+};
+
 export const routes = [
   {
     id: 'auth.token',
@@ -68,10 +77,10 @@ export const routes = [
       type: 'object',
       properties: {
         data: { type: 'array', items: linkRef('workspace') },
-        cursor: { type: 'string' },
       },
       required: ['data'],
     },
+    responseHeaders: [linkNextHeader],
     behaviors: ['pagination', 'rateLimit'],
     inSpec: true,
   },
@@ -104,10 +113,10 @@ export const routes = [
       type: 'object',
       properties: {
         data: { type: 'array', items: linkRef('project') },
-        cursor: { type: 'string' },
       },
       required: ['data'],
     },
+    responseHeaders: [linkNextHeader],
     behaviors: ['pagination', 'nestedResource'],
     inSpec: true,
   },
@@ -207,15 +216,24 @@ export const routes = [
       { name: 'workspace_id', in: 'path', type: 'string', required: true },
       { name: 'project_id', in: 'path', type: 'string', required: true },
       { name: 'include_deleted', in: 'query', type: 'boolean', required: false },
+      // Addendum Q rule 11: a documented server-side scope filter -- an asset id from this same
+      // listing; only copies made after it come back, so a batch rung's derived count is scoped
+      // to its own reel instead of the project's whole history.
+      { name: 'after', in: 'query', type: 'string', required: false },
       { name: 'Accept', in: 'header', type: 'string', required: false },
       ...paginatedParams,
     ],
     responseSchema: {
       type: 'object',
-      properties: { data: { type: 'array', items: linkRef('asset') }, cursor: { type: 'string' } },
+      properties: { data: { type: 'array', items: linkRef('asset') } },
       required: ['data'],
     },
-    behaviors: ['pagination', 'contentNegotiation', 'softDelete', 'nestedResource'],
+    responseHeaders: [linkNextHeader],
+    // Addendum Q rule 9: this is the "one pooled route" -- a second, tighter rate bucket than the
+    // global limit (world.rate.buckets.listing), since it is what a derived count re-walks. Over
+    // budget but inside the grace window: a short page, not a 429 -- see RULES rule 31 in the
+    // sloppy skill and src/api/behaviors.js's createBucketLimiter.
+    behaviors: ['pagination', 'contentNegotiation', 'softDelete', 'nestedResource', 'rateLimit'],
     inSpec: true,
   },
   {
@@ -227,9 +245,10 @@ export const routes = [
     requestSchema: { type: 'object', required: ['width', 'height'], properties: { width: { type: 'integer' }, height: { type: 'integer' } } },
     responseSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, etag: { type: 'string' } },
-      required: ['id', 'descriptor', 'hash', 'etag'],
+      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, bytes: { type: 'integer' } },
+      required: ['id', 'descriptor', 'hash', 'bytes'],
     },
+    responseHeaders: [etagHeader],
     behaviors: ['idempotency'],
     inSpec: true,
   },
@@ -242,9 +261,10 @@ export const routes = [
     requestSchema: { type: 'object', required: ['notes'], properties: { notes: { type: 'array' } } },
     responseSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, etag: { type: 'string' } },
-      required: ['id', 'descriptor', 'hash', 'etag'],
+      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, bytes: { type: 'integer' } },
+      required: ['id', 'descriptor', 'hash', 'bytes'],
     },
+    responseHeaders: [etagHeader],
     behaviors: ['idempotency'],
     inSpec: true,
   },
@@ -257,9 +277,10 @@ export const routes = [
     requestSchema: { type: 'object', required: ['clips'], properties: { clips: { type: 'array' } } },
     responseSchema: {
       type: 'object',
-      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, etag: { type: 'string' } },
-      required: ['id', 'descriptor', 'hash', 'etag'],
+      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, bytes: { type: 'integer' } },
+      required: ['id', 'descriptor', 'hash', 'bytes'],
     },
+    responseHeaders: [etagHeader],
     behaviors: ['idempotency'],
     inSpec: true,
   },
@@ -272,7 +293,11 @@ export const routes = [
       { name: 'asset_id', in: 'path', type: 'string', required: true },
       { name: 'If-None-Match', in: 'header', type: 'string', required: false },
     ],
-    responseSchema: { type: 'object', properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' } } },
+    responseSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, bytes: { type: 'integer' } },
+    },
+    responseHeaders: [etagHeader],
     behaviors: ['etag', 'conditionalGet'],
     inSpec: true,
   },
@@ -301,10 +326,15 @@ export const routes = [
     inSpec: true,
   },
   {
+    // Addendum Q rule 8: also answers HEAD (same path, no separate table row -- HEAD is handled
+    // as a header-only GET at the request-lifecycle level in server.js, since it is never a
+    // distinct operation an OpenAPI reader looks up by its own id). HEAD reports the exact same
+    // Content-Length the GET body would carry, with no body at all -- the cheapest way for a
+    // byte-budget search to learn a candidate's rendered size.
     id: 'assets.content',
     method: 'GET',
     path: '/{assets}/{asset_id}/content',
-    summary: 'Get the raw artifact bytes for an asset',
+    summary: 'Get the raw artifact bytes for an asset (also answers HEAD, for its Content-Length)',
     params: [{ name: 'asset_id', in: 'path', type: 'string', required: true }],
     responseSchema: null,
     behaviors: ['binary'],
@@ -317,7 +347,11 @@ export const routes = [
     summary: 'Convert an asset to a new format/size/rate, producing a new asset',
     params: [{ name: 'asset_id', in: 'path', type: 'string', required: true }],
     requestSchema: { type: 'object', properties: { format: { type: 'string' }, width: { type: 'integer' }, height: { type: 'integer' } } },
-    responseSchema: { type: 'object', properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' } } },
+    responseSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, bytes: { type: 'integer' } },
+    },
+    responseHeaders: [etagHeader],
     behaviors: [],
     inSpec: true,
   },
@@ -336,7 +370,11 @@ export const routes = [
         opacity_step: { type: 'number' },
       },
     },
-    responseSchema: { type: 'object', properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' } } },
+    responseSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, bytes: { type: 'integer' } },
+    },
+    responseHeaders: [etagHeader],
     behaviors: [],
     inSpec: true,
   },
@@ -347,7 +385,11 @@ export const routes = [
     summary: 'Diff two assets into a new asset containing the delta',
     params: [],
     requestSchema: { type: 'object', required: ['a', 'b'], properties: { a: { type: 'string' }, b: { type: 'string' } } },
-    responseSchema: { type: 'object', properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' } } },
+    responseSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, bytes: { type: 'integer' } },
+    },
+    responseHeaders: [etagHeader],
     behaviors: [],
     inSpec: true,
   },
@@ -368,7 +410,11 @@ export const routes = [
     summary: 'Apply a lora to an asset, producing a new asset',
     params: [{ name: 'asset_id', in: 'path', type: 'string', required: true }],
     requestSchema: { type: 'object', required: ['lora_id'], properties: { lora_id: { type: 'string' } } },
-    responseSchema: { type: 'object', properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' } } },
+    responseSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' }, descriptor: { type: 'object' }, hash: { type: 'string' }, bytes: { type: 'integer' } },
+    },
+    responseHeaders: [etagHeader],
     behaviors: [],
     inSpec: true,
   },

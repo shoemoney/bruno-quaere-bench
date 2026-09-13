@@ -32,7 +32,13 @@ import { sha256 } from '../src/canon.js';
 // paragraph (35, `X-Body-Digest`). test/skill-rules-subset.test.js (now pointed at RULES-0.7.md)
 // proves every new (skill) rule's tokens are actually present; this is a real, intended content
 // addition, not a regression.
-const CLEAN_SEED_1_SHA256 = '24a976da610db572d100e6cb6d767a3e8434d4628cb2815078700f2113c14b43';
+// Rebaselined a sixth time when Addendum Q rule 10's digest-bound canonical string became the
+// house default: "Publish signing" now states where the digest comes from (the house's own hash
+// of the artifact, fetched, never computed locally), that it travels as `X-Body-Digest`, and that
+// the four parts are newline-separated rather than concatenated -- and its worked example is four
+// lines instead of one. test/skill.test.js proves an agent following the section actually
+// publishes, and that the pre-0.7.0 recipes do not. A real, intended content change.
+const CLEAN_SEED_1_SHA256 = '4478573b71132af966beb19934e9a1f64166a808df86cb14194ef569fb21f52b';
 
 test('clean-mode toSkill(world) output for seed 1 is byte-identical to the pre-sloppy baseline', () => {
   const world = makeWorld(1);

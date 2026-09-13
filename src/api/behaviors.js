@@ -4,6 +4,10 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { fieldName } from '../world.js';
+// Addendum Q rule 10: ONE canonical-string implementation, shared by the ladder's reference
+// solution and the house, so the two can never drift on what bytes the release signature covers.
+// See src/ladder/rung.js's "THE CANONICAL STRING" comment for the full ladder<->API contract.
+import { canonicalString } from '../hmac.js';
 
 // ---------------------------------------------------------------------------
 // naming
@@ -81,6 +85,41 @@ export function createRateLimiter(world) {
 }
 
 // ---------------------------------------------------------------------------
+// Addendum Q rule 9: a second, tighter bucket on the listing route that feeds a derived count.
+// ---------------------------------------------------------------------------
+//
+// Same sliding-window shape as createRateLimiter above, but with a middle zone: once a token has
+// used up the bucket's own (tighter) limit within the window, the house does not error outright --
+// it hands back a SHORT page instead (checked() reports `short: true`; the caller is expected to
+// cap the page it serves). Only once the token has burned all the way through the grace zone
+// (`limit * GRACE`) does this actually 429, with `retryAfter` in seconds. `bucket` is
+// `world.rate.buckets.listing` ({route, limit, windowSec}); a falsy bucket (older/hand-built world
+// fixtures that predate Addendum Q) makes this a permanent no-op, same shape as before.
+const LISTING_GRACE_MULTIPLIER = 2;
+
+export function createBucketLimiter(bucket) {
+  if (!bucket) return { check: () => ({ allowed: true, short: false }) };
+  const hits = new Map(); // tokenId -> ascending timestamps (ms) within the current window
+  const windowMs = bucket.windowSec * 1000;
+  const hardLimit = bucket.limit * LISTING_GRACE_MULTIPLIER;
+  return {
+    check(tokenId, now) {
+      const prior = hits.get(tokenId) || [];
+      const kept = prior.filter((t) => now - t < windowMs);
+      if (kept.length >= hardLimit) {
+        hits.set(tokenId, kept);
+        const retryAfter = Math.max(1, Math.ceil((kept[0] + windowMs - now) / 1000));
+        return { allowed: false, retryAfter };
+      }
+      const short = kept.length >= bucket.limit;
+      kept.push(now);
+      hits.set(tokenId, kept);
+      return { allowed: true, short };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // cursor pagination: cursorStyle decides encoding; callers never see a bare offset.
 // ---------------------------------------------------------------------------
 
@@ -133,17 +172,41 @@ export function paginate(items, { cursor, pageSize, cursorStyle }) {
 export const STUCK_CURSOR_TOKEN = 'stuck-cursor-token';
 
 // ---------------------------------------------------------------------------
+// Addendum Q rule 3: the listing's next cursor travels ONLY in a `Link: rel="next"` header, never
+// as a body field. buildNextLink keeps the request's other query params (page_size, etc.) and
+// overwrites/sets `cursorParam` to `cursorValue`; the caller decides `cursorParam`'s name (plain
+// "cursor", or whatever a live `renameField` mutation has renamed it to -- see admin.js's
+// RUNG_MUTATION_TARGETS-derived candidates).
+// ---------------------------------------------------------------------------
+export function buildNextLink(pathname, searchParams, cursorParam, cursorValue) {
+  const params = new URLSearchParams(searchParams);
+  params.set(cursorParam, cursorValue);
+  return `<${pathname}?${params.toString()}>; rel="next"`;
+}
+
+// ---------------------------------------------------------------------------
 // HMAC request signing (publish)
 // ---------------------------------------------------------------------------
 
-// verifyHmac(world, {ts, signature, method, path}, now) -> boolean.
-// canon is world.hmac.canon === 'ts+method+path'; ts must be unix seconds within 300s of now.
-export function verifyHmac(world, { ts, signature, method, path }, now) {
+// verifyHmac(world, {ts, signature, method, path, bodyDigest}, now) -> boolean.
+// `world.hmac.canon` names the recipe in force (resolved by the caller through `rulesAt(world, n)`
+// so a mid-ladder amendment can move it) and `canonicalString` (imported from src/hmac.js, the one
+// reference solution) is the ONE place that turns a recipe name into bytes -- see Addendum Q rule
+// 10. `ts` must be unix seconds within 300s of now regardless of which recipe is live.
+export function verifyHmac(world, { ts, signature, method, path, bodyDigest }, now) {
   if (!ts || !signature) return false;
   const tsNum = Number(ts);
   if (!Number.isFinite(tsNum)) return false;
   if (Math.abs(now / 1000 - tsNum) > 300) return false;
-  const payload = `${ts}${method}${path}`;
+  let payload;
+  try {
+    payload = canonicalString(world.hmac.canon, { ts, method, path, bodyDigest });
+  } catch {
+    // Either an unknown recipe (a world.js bug, not this request's fault) or -- far more likely
+    // in practice -- the digest-bound recipe is live and the caller sent no X-Body-Digest at all.
+    // Either way, that is not a valid signature.
+    return false;
+  }
   const expected = createHmac(world.hmac.algo, world.auth.secret).update(payload).digest('hex');
   const expectedBuf = Buffer.from(expected, 'utf8');
   const gotBuf = Buffer.from(String(signature), 'utf8');

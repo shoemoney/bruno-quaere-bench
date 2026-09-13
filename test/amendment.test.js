@@ -29,10 +29,17 @@ import { canonical } from '../src/canon.js';
 
 const RULES_DOC = readFileSync(new URL('../docs/RULES-0.7.md', import.meta.url), 'utf8');
 
-// A world with the amendments this seed would draw, live. Same shape `makeWorld` produces once
-// AMENDMENTS_ENFORCED flips; nothing else about the world moves.
+// A world with the amendments this seed draws, live. Identical to `makeWorld(seed)` now that
+// AMENDMENTS_ENFORCED is true; kept as its own name so every test below still says which world it
+// means, and so these tests would still prove the mechanism if the flag were ever turned off.
 function amendedWorld(seed) {
   return { ...makeWorld(seed), amendments: drawAmendments(seed) };
+}
+
+// The same world with nothing amended -- the ladder as it would read if rule 33 did not exist.
+// This is the control every "the amendment actually moved something" assertion compares against.
+function unamendedWorld(seed) {
+  return { ...makeWorld(seed), amendments: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +133,7 @@ const GEOMETRY_SEEDS = [3, 5, 11];
 
 test('a rung composed above a geometry amendment differs from the same rung composed below it', () => {
   for (const seed of GEOMETRY_SEEDS) {
-    const base = makeWorld(seed);
+    const base = unamendedWorld(seed);
     const world = amendedWorld(seed);
     const first = world.amendments[0];
     assert.ok(['roundTo', 'roundMode'].includes(first.rule), `seed ${seed} is not a geometry-amendment seed any more`);
@@ -174,18 +181,23 @@ test('the rung an amendment lands at tells the reader to go and read the rules a
 // what is published while the house does not enforce it
 // ---------------------------------------------------------------------------
 
-test('nothing is announced to an agent while the house does not apply it', () => {
-  // A rule the house does not actually apply must not be announced, or the amendment is a lie
-  // that costs the agent a rung. This is the invariant that makes AMENDMENTS_ENFORCED safe to
-  // leave false: the mechanism is fully built and fully tested, and nothing reaches a sandbox.
+test('a rung announces an amendment if and only if the house applies one there', () => {
+  // A rule the house does not actually apply must never be announced, and a rule it DOES apply
+  // must never go unannounced -- either way the agent is told something the live house will not
+  // do, and loses a rung to a generator bug. The flag is the one switch that decides which world
+  // ships, and both sides of it are held to the same invariant here.
   assert.equal(typeof AMENDMENTS_ENFORCED, 'boolean');
   const world = makeWorld(1);
   assert.deepEqual(world.amendments, AMENDMENTS_ENFORCED ? drawAmendments(1) : []);
-  if (!AMENDMENTS_ENFORCED) {
-    for (let n = 0; n < 100; n += 1) {
-      assert.ok(!saysOneOf(makeRung(world, n).text, 'amendment', { count: 1 }), `rung ${n} announces an amendment the house will not apply`);
-      assert.deepEqual(makeRung(world, n).amendments, []);
-    }
+  for (let n = 0; n < 100; n += 1) {
+    const announced = Boolean(saysOneOf(makeRung(world, n).text, 'amendment', { count: 1 }));
+    const applies = AMENDMENTS_ENFORCED && AMENDMENT_RUNGS.includes(n);
+    assert.equal(announced, applies, `rung ${n}: announced=${announced}, house applies=${applies}`);
+    assert.deepEqual(
+      makeRung(world, n).amendments,
+      AMENDMENTS_ENFORCED ? drawAmendments(1).filter((a) => a.atRung <= n) : [],
+      `rung ${n} records the wrong amendments`,
+    );
   }
 });
 

@@ -788,9 +788,9 @@ export async function climb({
             // Addendum Q rule 4: a dated mid-ladder amendment lands on disk the moment the
             // ladder reaches its rung, before the agent's next turn (and so before it can ever
             // ask for that rung's text). amendmentsAt() is world.js's own canonical resolver for
-            // "what amendment(s) does this rung announce" (AMENDMENTS_ENFORCED is false today, so
-            // makeWorld() hands back an empty `amendments` array and this is a no-op in every real
-            // run until that flips -- see world.js's own doc comment on the flag).
+            // "what amendment(s) does this rung announce", and the ladder's own rung text is
+            // driven by the same call, so the document on disk and the text that tells the agent
+            // to go and re-read it can never disagree. Live as of 0.7.0.
             const amendments = amendmentsAt(world, newRung);
             if (amendments.length > 0) {
               // eslint-disable-next-line no-await-in-loop

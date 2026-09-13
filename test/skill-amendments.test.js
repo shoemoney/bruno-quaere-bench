@@ -118,13 +118,19 @@ test('an unknown amendment rule name is ignored rather than throwing (defensive 
   assert.deepEqual(tt.amendments, []);
 });
 
-test('a real makeWorld(seed) is a no-op even when atRung is passed (AMENDMENTS_ENFORCED is false, so .amendments is [])', () => {
+test('a real makeWorld(seed) renders its own drawn amendments, and only those dated at or before atRung', () => {
+  // AMENDMENTS_ENFORCED is true as of ladder 0.7.0, so makeWorld hands back the drawn amendments
+  // and this module is live on every real world. The document at rung 60 must state the two
+  // amendments dated 30 and 55 and know nothing of the one dated 78.
   for (const seed of SEEDS) {
     const world = makeWorld(seed);
-    assert.deepEqual(world.amendments, [], `seed ${seed}: expected world.js to still gate amendments behind AMENDMENTS_ENFORCED`);
+    assert.deepEqual(world.amendments, drawAmendments(seed), `seed ${seed}: makeWorld no longer publishes its own draw`);
     assert.doesNotThrow(() => toSkill(world, { targetBytes: SMALL, atRung: 60 }));
     const tt = truthTable(world, { targetBytes: SMALL, atRung: 60 });
-    assert.deepEqual(tt.amendments, [], `seed ${seed}`);
+    const want = world.amendments.filter((a) => a.atRung <= 60).map((a) => a.rule).sort();
+    assert.deepEqual(tt.amendments.map((a) => a.rule).sort(), want, `seed ${seed}`);
+    // and at rung 0 the document is the one the sandbox is seeded with: no amendment at all
+    assert.deepEqual(truthTable(world, { targetBytes: SMALL, atRung: 0 }).amendments, [], `seed ${seed} at rung 0`);
   }
 });
 

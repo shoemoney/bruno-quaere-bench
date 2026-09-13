@@ -22,7 +22,7 @@
 // running env (of descriptors/values) via resolveRefs before the op executes.
 
 import { rng, sub, pick, int, chance } from '../seed.js';
-import { rulesAt } from '../world.js';
+import { rulesAt, baseWorldOf } from '../world.js';
 import { create, convert, combine, diff, applyLora, pxFromUnit, snap6, roundToGrid } from '../media.js';
 import { createResourceStore, seedInitialData, listWorkspaces, listProjects, listAssetsForProject } from '../api/resources.js';
 
@@ -144,7 +144,12 @@ export function bandFor(n) {
 // since createdAt/updatedAt never feed a descriptor or its hash.
 function seedSnapshot(world) {
   const store = createResourceStore();
-  seedInitialData(world, store, 0);
+  // ALWAYS the base world (Addendum Q rule 4 / RULES-0.7 rule 33). The server seeds its store once
+  // at startup, before rung 0, under the rules as first published; a mid-ladder amendment changes
+  // what the house does NEXT, never what it already built. Seeding this snapshot from a rung's
+  // amended rules would re-round every library asset and make the key describe a library the live
+  // house has never held -- which is exactly how rungs 60+ failed on `hash` alone.
+  seedInitialData(baseWorldOf(world), store, 0);
   return store;
 }
 
@@ -959,6 +964,10 @@ function rebaseDerivedSteps(chain) {
   }
 }
 
+// The shortest a chain may be trimmed to (test/ladder-0-5.test.js pins that an ordered chain is at
+// least three steps, which is what makes "the steps do not commute" a real claim).
+const MIN_CHAIN_STEPS = 3;
+
 function fixChainPercents(world, prefixPlan, chain, fromKey, store) {
   if (!chain || chain.length === 0) return;
   const env = new Map();
@@ -966,10 +975,35 @@ function fixChainPercents(world, prefixPlan, chain, fromKey, store) {
   for (const step of prefixPlan) execStep(world, resolvedStore, env, step);
   resolveDerivedCounts(world, env, chain);
   const { width, height } = env.get(fromKey);
-  if (!solveChainPercents(world, chain, 0, width, height)) {
-    throw new Error(`fixChainPercents: no consistent set of percents for chain from "${fromKey}" starting at ${width}x${height}: ${JSON.stringify(chain)}`);
+  if (solveChainPercents(world, chain, 0, width, height)) {
+    rebaseDerivedSteps(chain);
+    return;
   }
-  rebaseDerivedSteps(chain);
+  // Last resort: shorten the chain.
+  //
+  // On a 1px grid with a directional rounding mode, "unambiguous" collapses to "the product is
+  // already a whole number", because rounding down and rounding to the nearest pixel then differ
+  // for every fractional result. A long chain over an awkward starting size can then have no
+  // solution at all inside the percent bands -- and a batch rung cannot redraw its way out the way
+  // `drawSafeImageCanvas` does, because its starting size comes from the seeded library rather
+  // than from a canvas this composer chose. Addendum Q rule 4 made that reachable on seeds whose
+  // amendment moves the grid step down (seed 230, rung 76, grid 2 -> 1 at rung 30).
+  //
+  // Chain length is a difficulty knob; an unambiguous percent is a correctness property. So trim
+  // trailing steps until it solves, never below MIN_CHAIN_STEPS and never dropping the derived
+  // step -- rule 18's "at least one number the API has to be asked for" is not negotiable either.
+  const trimmed = [];
+  while (chain.length > MIN_CHAIN_STEPS) {
+    const lastPlain = chain.map((step, i) => [step, i]).filter(([step]) => !isDerivedStep(step)).pop();
+    if (lastPlain === undefined) break;
+    trimmed.push(...chain.splice(lastPlain[1], 1));
+    if (solveChainPercents(world, chain, 0, width, height)) {
+      rebaseDerivedSteps(chain);
+      return;
+    }
+  }
+  chain.push(...trimmed.reverse());
+  throw new Error(`fixChainPercents: no consistent set of percents for chain from "${fromKey}" starting at ${width}x${height}: ${JSON.stringify(chain)}`);
 }
 
 // resolveImageDim(world, value, unit): the exact width or height media.js's create() would

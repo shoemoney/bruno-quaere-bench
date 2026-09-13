@@ -24,6 +24,7 @@ import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 // time, so it resolves fine under ESM's live-binding circular-import handling -- see the
 // comment on `sections` in skill.js.
 import { sections as cleanSections } from './skill.js';
+import { CANON_RECIPES } from './hmac.js';
 
 const PREFIX_FRACTION = 0.15; // > the 10% floor Addendum A requires, with margin
 const DEFAULT_TARGET_BYTES = 5 * 1024 * 1024;
@@ -121,7 +122,11 @@ function rangeChain(seed, key, label, trueValue, lo, hi) {
 function buildRuleChains(world) {
   const seed = world.seed;
   const namingTrue = world.naming === 'snake' ? 'snake_case' : 'camelCase';
-  const canonDomain = ['ts+method+path', 'method+ts+path', 'path+ts+method', 'path+method+ts', 'method+path+ts'];
+  // Every recipe the house can actually be in, plus the plausible-looking orders it never uses.
+  // CANON_RECIPES is src/hmac.js's own list, so the truth and the decoys cannot drift from what
+  // `canonicalString` implements -- and an amendment (rule 33) can only ever move the canon to
+  // another member of that list.
+  const canonDomain = [...CANON_RECIPES, 'method+ts+path', 'path+ts+method', 'path+method+ts'];
   return [
     enumChain(seed, 'dpi', 'The house DPI', world.rules.dpi, [72, 96, 150, 300]),
     enumChain(seed, 'roundTo', 'The rounding grid, in pixels', world.rules.roundTo, [1, 2, 4, 8, 16]),

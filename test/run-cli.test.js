@@ -727,10 +727,10 @@ test('climb(): a killed spawn that never produces usage still ends as an estimat
 
 // ---------------------------------------------------------------------------
 // Addendum Q rule 4 (mid-ladder amendments, CLI-driver side) and rule 13
-// (codeWrites/docReads, CLI-driver fallback). world.amendments does not exist on makeWorld()'s
-// own output yet (AMENDMENTS_ENFORCED is false in src/world.js -- the [ladder]/[skill]
-// workstreams' half of Addendum Q), so these use climb()'s `world` test hook (same escape-hatch
-// pattern as its existing `cli` param) to attach one by hand and prove the harness-side wiring.
+// (codeWrites/docReads, CLI-driver fallback). These use climb()'s `world` test hook (same
+// escape-hatch pattern as its existing `cli` param) to attach an amendment at rung 1 by hand:
+// real worlds announce theirs at 30, 55 and 78, and a harness test that had to climb thirty rungs
+// to observe the rewrite would be a thirty-minute test.
 // ---------------------------------------------------------------------------
 
 function makeAmendmentAtRung1(world) {

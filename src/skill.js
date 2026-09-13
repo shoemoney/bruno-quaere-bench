@@ -6,6 +6,11 @@
 
 import { listLies } from './spec.js';
 import { resolvePath, fieldName } from './world.js';
+import { canonicalString, bindsDigest } from './hmac.js';
+
+// The header the artifact digest travels in, when the digest-bound recipe is live (RULES-0.7
+// rule 35). Named here because both the prose and the house spell it.
+const DIGEST_HEADER = 'X-Body-Digest';
 import { toSkill as toSloppySkill, truthTable as sloppyTruthTable } from './skill-sloppy.js';
 
 const TRAP_OVERRIDE_TEXT = {
@@ -130,23 +135,51 @@ function namingSection(world) {
 
 function signingRecipe(world) {
   const { header, tsHeader, algo, canon } = world.hmac;
-  // The canon NAME ('ts+method+path') uses '+' to mean "followed by". The signed string itself
-  // has no separators at all, so build the example by concatenating the real parts rather than
-  // by substituting into the name -- doing the latter leaves the pluses in and produces an
-  // example that contradicts the sentence above it and fails against the real API.
+  // The canon NAME uses '+' to mean "followed by". Build the example by running the real
+  // `canonicalString` over real parts rather than by substituting into the name -- doing the
+  // latter leaves the pluses in and produces an example that contradicts the sentence above it
+  // and fails against the real API. Every recipe, digest-bound or not, is rendered by the one
+  // implementation the house itself verifies with, so this section cannot drift from behaviour.
   const examplePath = resolvePath(world, '/{workspaces}/w_1/{projects}/p_1/publish');
   const exampleTs = '1730000000';
-  const canonExample = `${exampleTs}POST${examplePath}`;
-  return [
-    `Publishing a project requires two headers: \`${tsHeader}\` (unix seconds) and \`${header}\` (hex-encoded HMAC-${algo.toUpperCase()}).`,
+  const exampleDigest = '3b7c1a5e9d2f480a6c8e1b4d7f0a2c5e8b1d4f70a3c6e9b2d5f8a1c4e7b0d3f6';
+  const digestBound = bindsDigest(canon);
+  const canonExample = canonicalString(canon, {
+    ts: exampleTs, method: 'POST', path: examplePath, bodyDigest: exampleDigest,
+  });
+  const headerList = digestBound
+    ? `\`${tsHeader}\` (unix seconds), \`${DIGEST_HEADER}\` (see below) and \`${header}\` (hex-encoded HMAC-${algo.toUpperCase()})`
+    : `\`${tsHeader}\` (unix seconds) and \`${header}\` (hex-encoded HMAC-${algo.toUpperCase()})`;
+  const out = [
+    `Publishing a project requires these headers: ${headerList}.`,
     '',
-    `The signature is computed over the canonical string \`${canon}\`. The \`+\` in that name means "followed by", not a literal plus character: the signed string is the timestamp, the HTTP method (uppercase), and the request path (no query string, no trailing slash) concatenated with **no separator between them and no plus signs**. For example, at timestamp ${exampleTs}, \`POST\`ing to \`${examplePath}\` signs exactly this string, ${canonExample.length} characters long:`,
-    '',
-    '```',
-    canonExample,
-    '```',
-    '',
-    `Note what is *not* in there: no \`+\`, no newline, no space, no method/path delimiter, and no body. Signing \`${exampleTs}+POST+${examplePath}\` instead is the single most common way to get a permanent 401 out of publish.`,
+  ];
+  if (digestBound) {
+    out.push(
+      `The signature is computed over the canonical string \`${canon}\`. The \`+\` in that name means "followed by", not a literal plus character. This recipe **binds a digest of the thing being released**: the four parts are the timestamp, the HTTP method (uppercase), the request path (no query string, no trailing slash), and the digest, **one per line, separated by a single newline (\\n) and nothing else** -- no pluses, no spaces, no trailing newline.`,
+      '',
+      `The digest is the house's own hash of the artifact bytes: fetch the piece you are releasing from the house and take the hash it reports for those bytes. It is never computed from a local copy and never guessed -- the house checks that the digest names a live piece attached to this very project, so a signature templated once and replayed for the next piece is refused. Send it as \`${DIGEST_HEADER}\`.`,
+      '',
+      `For example, at timestamp ${exampleTs}, \`POST\`ing to \`${examplePath}\` to release a piece whose house digest is \`${exampleDigest}\` signs exactly this string, ${canonExample.length} characters long:`,
+      '',
+      '```',
+      canonExample,
+      '```',
+      '',
+      `Note what is *not* in there: no \`+\`, no space, no method/path delimiter, and no request body. Signing \`${exampleTs}+POST+${examplePath}\` instead, or signing without the digest line, is the single most common way to get a permanent 401 out of publish.`,
+    );
+  } else {
+    out.push(
+      `The signature is computed over the canonical string \`${canon}\`. The \`+\` in that name means "followed by", not a literal plus character: the parts are concatenated with **no separator between them and no plus signs**. For example, at timestamp ${exampleTs}, \`POST\`ing to \`${examplePath}\` signs exactly this string, ${canonExample.length} characters long:`,
+      '',
+      '```',
+      canonExample,
+      '```',
+      '',
+      `Note what is *not* in there: no \`+\`, no newline, no space, no method/path delimiter, and no body. Signing \`${exampleTs}+POST+${examplePath}\` instead is the single most common way to get a permanent 401 out of publish.`,
+    );
+  }
+  out.push(
     '',
     'The key is the house secret, provided in the sandbox environment file, never in this document. Compute:',
     '',
@@ -154,8 +187,9 @@ function signingRecipe(world) {
     `signature = hex( HMAC-${algo.toUpperCase()}( secret, canonicalString ) )`,
     '```',
     '',
-    `Send that as \`${header}\`, the raw timestamp as \`${tsHeader}\`. A pre-request script in the collection is the right place to compute this once and reuse it -- do not hand-compute a new one per request unless the timestamp actually changes.`,
-  ].join('\n');
+    `Send that as \`${header}\`, the raw timestamp as \`${tsHeader}\`${digestBound ? `, and the digest as \`${DIGEST_HEADER}\`` : ''}. A pre-request script in the collection is the right place to compute this once and reuse it -- do not hand-compute a new one per request unless the timestamp actually changes${digestBound ? ', and it changes every time the piece being released changes' : ''}.`,
+  );
+  return out.join('\n');
 }
 
 // toSkill(world, {mode, targetBytes}) -> markdown text, deterministic per seed (and, for

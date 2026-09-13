@@ -114,6 +114,14 @@ function buildResponses(world, route, status) {
   const entry = { description: route.summary };
   if (status === 202) entry.headers = { Location: { schema: { type: 'string' }, description: 'Poll this to track the job' } };
   if (status === 301) entry.headers = { Location: { schema: { type: 'string' }, description: 'The route this path now lives at' } };
+  // Addendum Q rule 3/8: load-bearing values that travel only in a response header (ETag, the
+  // pagination Link) -- see routes.js's `responseHeaders`.
+  if (Array.isArray(route.responseHeaders) && route.responseHeaders.length > 0) {
+    entry.headers = { ...entry.headers };
+    for (const h of route.responseHeaders) {
+      entry.headers[h.name] = { schema: { type: 'string' }, description: h.description };
+    }
+  }
   if (route.responseSchema && status !== 204 && status !== 301) {
     // routes.js schemas are shared literals (e.g. bearerTokenSchema is reused by two
     // routes); clone before transformSchema/the trap functions mutate anything, or a

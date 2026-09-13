@@ -330,6 +330,24 @@ export async function prepareCliSandbox({
   );
 }
 
+// writeAmendedHouseRules({world, sandboxDir, rung, skillBytes}) -> the amendments dated at exactly
+// `rung`, after rewriting HOUSE-RULES.md to the document as it reads from that rung on. Returns
+// `[]` and touches nothing when no amendment lands there.
+//
+// Exported because it is the ONE place the sandbox's copy of the house rules is re-written, and
+// because "did the document on disk actually change at rung 30" is a thing an operator wants to
+// check against a real sandbox without driving a thirty-rung climb to get there.
+export async function writeAmendedHouseRules({ world, sandboxDir, rung, skillBytes }) {
+  const amendments = amendmentsAt(world, rung);
+  if (amendments.length === 0) return [];
+  await writeFile(
+    path.join(sandboxDir, 'HOUSE-RULES.md'),
+    toSkill(world, { mode: 'sloppy', atRung: rung, targetBytes: skillBytes }),
+    'utf8',
+  );
+  return amendments;
+}
+
 export async function climb({
   cliName,
   cli: providedAdapter,
@@ -421,17 +439,12 @@ export async function climb({
 
     // Addendum Q rule 4: rewrite HOUSE-RULES.md the moment the ladder reaches an amendment rung,
     // awaited from inside supervise.js's own serialized check chain (see its onAdvance doc
-    // comment) so this always lands before the process's next poll tick -- world.amendments isn't
-    // produced by makeWorld() yet (the [ladder]/[skill] workstreams' half of Addendum Q), so this
-    // is a no-op today and only starts firing once world.amendments exists.
+    // comment) so this always lands before the process's next poll tick. `amendmentsAt` is the
+    // same resolver the rung text is built from, so the rewritten document and the sentence
+    // telling the agent to go and read it always land together.
     async function applyAmendmentIfDue({ rung }) {
-      const amendments = amendmentsAt(world, rung);
+      const amendments = await writeAmendedHouseRules({ world, sandboxDir, rung, skillBytes });
       if (amendments.length === 0) return;
-      await writeFile(
-        path.join(sandboxDir, 'HOUSE-RULES.md'),
-        toSkill(world, { mode: 'sloppy', atRung: rung, targetBytes: skillBytes }),
-        'utf8',
-      );
       transcript.push({
         ts: new Date().toISOString(),
         type: 'amendment',
