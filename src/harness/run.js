@@ -16,6 +16,7 @@ import { toSkill } from '../skill.js';
 import { answerKey } from '../ladder/reference.js';
 
 import { makeSandbox } from './sandbox.js';
+import { buildLocalEnv, LOCAL_ENV_PATH } from './sandbox-env.js';
 import { createDriver as createAnthropicDriver } from './drivers/anthropic.js';
 import { createDriver as createOpenAiDriver } from './drivers/openai.js';
 import { createDriver as createGoogleDriver } from './drivers/google.js';
@@ -79,12 +80,15 @@ function fillPrompt(template, vars) {
 // Exported for test/harness-transcript.test.js: proves the xai/deepseek presets actually wire up
 // the right baseUrl/key env var without needing a full climb() (or a real network call -- tests
 // stub global.fetch and inspect what createDriver's returned {step} sends it).
-export function resolveDriver(driverName, { model, systemPrompt }) {
+export function resolveDriver(driverName, { model, systemPrompt, maxOutputTokens }) {
+  // Addendum K: every message-loop preset below forwards maxOutputTokens as `maxTokens` so the
+  // request carries it (createDriver defaults to 32768 itself when this is undefined, e.g. a
+  // caller that never threads the option through).
   if (driverName === 'anthropic') {
-    return createAnthropicDriver({ model, apiKey: process.env.ANTHROPIC_API_KEY, systemPrompt });
+    return createAnthropicDriver({ model, apiKey: process.env.ANTHROPIC_API_KEY, systemPrompt, maxTokens: maxOutputTokens });
   }
   if (driverName === 'openai') {
-    return createOpenAiDriver({ model, apiKey: process.env.OPENAI_API_KEY, systemPrompt });
+    return createOpenAiDriver({ model, apiKey: process.env.OPENAI_API_KEY, systemPrompt, maxTokens: maxOutputTokens });
   }
   if (driverName === 'openrouter') {
     return createOpenAiDriver({
@@ -92,6 +96,7 @@ export function resolveDriver(driverName, { model, systemPrompt }) {
       apiKey: process.env.OPENROUTER_API_KEY,
       baseUrl: 'https://openrouter.ai/api/v1',
       systemPrompt,
+      maxTokens: maxOutputTokens,
       extraHeaders: { 'HTTP-Referer': 'https://git.shoemoney.ai', 'X-Title': 'Bruno QUAERE' },
       // Addendum D: OpenRouter may route to an Anthropic model, which needs explicit
       // cache_control breakpoints (plain OpenAI caches automatically, so its driver leaves this
@@ -103,7 +108,13 @@ export function resolveDriver(driverName, { model, systemPrompt }) {
   // just a different baseUrl and key env var. Model ids are the provider's own, never verified
   // here (that's the operator's job, same as openrouter).
   if (driverName === 'xai') {
-    return createOpenAiDriver({ model, apiKey: process.env.XAI_API_KEY, baseUrl: 'https://api.x.ai/v1', systemPrompt });
+    return createOpenAiDriver({
+      model,
+      apiKey: process.env.XAI_API_KEY,
+      baseUrl: 'https://api.x.ai/v1',
+      systemPrompt,
+      maxTokens: maxOutputTokens,
+    });
   }
   if (driverName === 'deepseek') {
     return createOpenAiDriver({
@@ -111,6 +122,7 @@ export function resolveDriver(driverName, { model, systemPrompt }) {
       apiKey: process.env.DEEPSEEK_API_KEY,
       baseUrl: 'https://api.deepseek.com',
       systemPrompt,
+      maxTokens: maxOutputTokens,
     });
   }
   // Addendum H: gemini-cli 0.59.0 doesn't know gemini-3.8-flash (silently coerces it to
@@ -120,7 +132,7 @@ export function resolveDriver(driverName, { model, systemPrompt }) {
   // -- see drivers/google.js's header for why (thought_signature round-tripping on tool calls,
   // an array-shaped error body) -- but the same Chat Completions wire protocol otherwise.
   if (driverName === 'google') {
-    return createGoogleDriver({ model, apiKey: process.env.GEMINI_API_KEY, systemPrompt });
+    return createGoogleDriver({ model, apiKey: process.env.GEMINI_API_KEY, systemPrompt, maxTokens: maxOutputTokens });
   }
   throw new Error(`unknown driver: ${driverName}`);
 }
@@ -417,6 +429,13 @@ export async function climb({
   // Addendum J: overridable only so a test can trip the cap in a handful of calls instead of
   // 5000; a real run never passes this and gets the documented default.
   maxBruCalls = DEFAULT_MAX_BRU_CALLS,
+  // Addendum K: message-loop drivers request at least this many output tokens so a reasoning
+  // model has room to think AND still emit a tool call in the same turn (deepseek-flash seed 506
+  // burned its whole 4096-token budget on invisible reasoning and never got the chance). `quaere
+  // run --max-output-tokens N` exposes it; a provider that rejects it as too large gets halved
+  // and retried once by the driver itself (see resolveDriver/createDriver), and the value it
+  // actually settled on is logged onto RunResult.maxOutputTokens below.
+  maxOutputTokens = 32_768,
 } = {}) {
   const world = makeWorld(seed);
   const runDir = path.join(outDir, String(model || driverName), String(seed), String(attempt));
@@ -446,6 +465,13 @@ export async function climb({
     // Addendum A: sloppy mode buries every rule in megabytes of plausible noise; skill.js
     // dispatches on `mode` to skill-sloppy.js, which does the burying and owns targetBytes.
     await sandbox.writeFile('SKILL.md', toSkill(world, { mode: skillMode, targetBytes: skillBytes }));
+    // Addendum L: the sandbox never contained the signing secret -- SKILL.md says it lives here
+    // and never states its value, and before this nothing ever wrote the file. Written before the
+    // first turn so every publish rung (50+) is actually passable.
+    await sandbox.writeFile(
+      LOCAL_ENV_PATH,
+      buildLocalEnv({ baseUrl, apiKey: world.auth.apiKey, secret: world.auth.secret }),
+    );
 
     const promptTemplate = await readFile(PROMPT_URL, 'utf8');
     const systemPrompt = fillPrompt(promptTemplate, {
@@ -454,7 +480,7 @@ export async function climb({
       BUDGET_TOKENS: budgetTokens,
     });
 
-    const driver = providedDriver || resolveDriver(driverName, { model, systemPrompt });
+    const driver = providedDriver || resolveDriver(driverName, { model, systemPrompt, maxOutputTokens });
 
     let messages = [
       { role: 'user', content: 'Begin. Fetch the current rung with bru and start working toward passing it.' },
@@ -613,13 +639,26 @@ export async function climb({
         break;
       }
 
-      messages = [...messages, { role: 'assistant', content: stepResult.assistant, toolCalls: stepResult.toolCalls }];
-
       const toolCalls = stepResult.toolCalls || [];
+      // Addendum K: "never append an assistant message with neither content nor tool_calls" --
+      // a reasoning model can burn its whole output budget on invisible reasoning and return
+      // stop: 'length' with nothing else; appending that turn produces a message the provider's
+      // own API rejects on the very next call ("content or tool_calls must be set"), which is
+      // what killed deepseek-flash seed 506 at rung 44. Skip the append and prompt for a tool
+      // call instead; a normal empty-but-content-bearing turn (assistant said something, just
+      // didn't call a tool) still gets appended and still gets the generic nudge below.
+      const isEmptyTurn = !stepResult.assistant && toolCalls.length === 0;
+      if (!isEmptyTurn) {
+        messages = [...messages, { role: 'assistant', content: stepResult.assistant, toolCalls: stepResult.toolCalls }];
+      }
+
       if (toolCalls.length === 0) {
         noToolStreak += 1;
         // Addendum E: degenerate stop reason -- two turns running with no tool call and the
-        // provider itself saying it hit its length cap, not that it chose to stop.
+        // provider itself saying it hit its length cap, not that it chose to stop. Left tied to
+        // stop === 'length' specifically (not the broader isEmptyTurn above): a model that keeps
+        // returning real text with no tool call under a normal stop reason still falls under the
+        // generic 3-turn noToolStreak rule just below, never the 2-turn degenerate one.
         degenerateStreak = stepResult.stop === 'length' ? degenerateStreak + 1 : 0;
         if (degenerateStreak >= 2) {
           stoppedBecause = 'degenerate';
@@ -633,7 +672,9 @@ export async function climb({
           ...messages,
           {
             role: 'user',
-            content: 'You must call one of your five tools (bru, write_file, read_file, grep, ls) to make progress.',
+            content: isEmptyTurn
+              ? 'Your last reply was cut off before any tool call. Answer with a tool call.'
+              : 'You must call one of your five tools (bru, write_file, read_file, grep, ls) to make progress.',
           },
         ];
         if (turns >= maxTurns) stoppedBecause = 'budget';
@@ -713,12 +754,26 @@ export async function climb({
     let violations = 0;
     let violationSamples = [];
     let adminProbes = 0;
+    // Addendum K: `scriptRequests` counts admin-log hits whose User-Agent is `axios/*` -- bru's
+    // own pre/post-request script sandbox, not the agent bypassing bru -- kept separate from
+    // `violations` (a User-Agent that is neither `bruno-runtime/*` nor `axios/*`) and never
+    // voids a run.
+    let scriptRequests = 0;
+    let scriptSamples = [];
     try {
       const violationsBody = await adminGet(adminBase, '/admin/violations', adminToken);
       if (typeof violationsBody.count === 'number') violations = violationsBody.count;
       else if (Array.isArray(violationsBody.data)) violations = violationsBody.data.length;
       if (Array.isArray(violationsBody.samples)) {
         violationSamples = violationsBody.samples.slice(0, 20).map((s) => ({
+          ua: s && s.ua != null ? s.ua : null,
+          method: s && s.method != null ? s.method : null,
+          path: s && s.path != null ? s.path : null,
+        }));
+      }
+      if (typeof violationsBody.scriptRequests === 'number') scriptRequests = violationsBody.scriptRequests;
+      if (Array.isArray(violationsBody.scriptSamples)) {
+        scriptSamples = violationsBody.scriptSamples.slice(0, 20).map((s) => ({
           ua: s && s.ua != null ? s.ua : null,
           method: s && s.method != null ? s.method : null,
           path: s && s.path != null ? s.path : null,
@@ -770,7 +825,15 @@ export async function climb({
       // was requested) so it stays false here.
       violations,
       violationSamples,
+      // Addendum K: axios/* admin-log hits -- bru's own script sandbox, not a rule violation.
+      scriptRequests,
+      scriptSamples,
       adminProbes,
+      // Addendum K: the max_tokens the message-loop driver ended up using this run, after any
+      // halve-and-retry the provider forced (see resolveDriver/createDriver below); falls back to
+      // the configured request value when the driver never exposes what it settled on (a test's
+      // hand-built fake driver, for instance).
+      maxOutputTokens: driver && typeof driver.maxOutputTokens === 'number' ? driver.maxOutputTokens : maxOutputTokens,
       resumes: 0,
       modelMismatch: false,
       usageEstimated: false,

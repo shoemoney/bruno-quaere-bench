@@ -4,6 +4,20 @@
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
+// Addendum K: default output budget for every message-loop driver (was 4096) -- a reasoning
+// model can burn its whole completion budget on invisible reasoning tokens before it ever emits
+// visible text or a tool call (deepseek-flash, seed 506, rung 44: empty content, stop: 'length',
+// 4096 output tokens). `quaere run --max-output-tokens N` overrides it.
+const DEFAULT_MAX_OUTPUT_TOKENS = 32_768;
+
+// A provider's 400 for "max_tokens is larger than the model/account allows" -- distinct from any
+// other 400 (bad request shape, unknown model): the fix is to send a smaller number, not to
+// retry the identical request. Matches OpenAI's own wording ("max_tokens is too large"), Azure's
+// ("Max tokens ... is greater than the model's context length"), and the generic shapes several
+// OpenAI-compatible providers use.
+const MAX_TOKENS_TOO_LARGE = /max[_ ]tokens|max.?output.?tokens/i;
+const TOO_LARGE_WORDING = /too large|exceed|greater than|must be (less|<)|invalid.*max/i;
+
 function toOpenAiTools(tools) {
   return tools.map((t) => ({
     type: 'function',
@@ -75,15 +89,19 @@ export function createDriver({
   systemPrompt,
   baseUrl = DEFAULT_BASE_URL,
   extraHeaders = {},
-  maxTokens = 4096,
+  maxTokens = DEFAULT_MAX_OUTPUT_TOKENS,
   // Addendum D: set by run.js's resolveDriver only for --driver openrouter.
   cacheControl = false,
 }) {
   if (!apiKey) throw new Error('openai driver: missing apiKey (set OPENAI_API_KEY or OPENROUTER_API_KEY)');
 
-  async function step(messages, tools) {
-    let openAiMessages = toOpenAiMessages(systemPrompt, messages);
-    if (cacheControl) openAiMessages = applyCacheControl(openAiMessages);
+  // Addendum K: the output budget actually in use, mutable so a "too large" rejection can halve
+  // it once and every later call in this climb keeps using the accepted value instead of
+  // re-tripping the same rejection turn after turn. Exposed as driver.maxOutputTokens below so
+  // run.js can log what a run actually settled on.
+  let currentMaxTokens = maxTokens;
+
+  async function callOnce(openAiMessages, tools, tokens) {
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -93,7 +111,7 @@ export function createDriver({
       },
       body: JSON.stringify({
         model,
-        max_tokens: maxTokens,
+        max_tokens: tokens,
         messages: openAiMessages,
         tools: toOpenAiTools(tools),
         tool_choice: 'auto',
@@ -101,8 +119,34 @@ export function createDriver({
     });
     const data = await res.json();
     if (!res.ok) {
-      throw new Error(`openai-compatible ${res.status}: ${data && data.error ? data.error.message : res.statusText}`);
+      const message = data && data.error ? data.error.message : res.statusText;
+      const err = new Error(`openai-compatible ${res.status}: ${message}`);
+      err.status = res.status;
+      err.providerMessage = String(message || '');
+      throw err;
     }
+    return data;
+  }
+
+  async function step(messages, tools) {
+    let openAiMessages = toOpenAiMessages(systemPrompt, messages);
+    if (cacheControl) openAiMessages = applyCacheControl(openAiMessages);
+
+    let data;
+    try {
+      data = await callOnce(openAiMessages, tools, currentMaxTokens);
+    } catch (err) {
+      // Addendum K: "if a provider rejects it as too large, halve and retry once." Only this one
+      // specific shape of 400 gets the halve-and-retry; anything else (bad model id, malformed
+      // tools, auth) still throws straight out to run.js's existing retry/error handling.
+      if (err.status === 400 && MAX_TOKENS_TOO_LARGE.test(err.providerMessage) && TOO_LARGE_WORDING.test(err.providerMessage)) {
+        currentMaxTokens = Math.max(1, Math.floor(currentMaxTokens / 2));
+        data = await callOnce(openAiMessages, tools, currentMaxTokens);
+      } else {
+        throw err;
+      }
+    }
+
     const choice = (data.choices || [])[0] || {};
     const message = choice.message || {};
     const toolCalls = (message.tool_calls || []).map((tc) => ({
@@ -125,5 +169,10 @@ export function createDriver({
     };
   }
 
-  return { step };
+  return {
+    step,
+    get maxOutputTokens() {
+      return currentMaxTokens;
+    },
+  };
 }

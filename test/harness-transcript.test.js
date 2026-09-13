@@ -213,6 +213,53 @@ test("a tool call between two stop:'length' turns resets the degenerate streak",
   });
 });
 
+test(
+  'Addendum K: an empty length-stop turn (no content, no tool call) is never appended as an ' +
+    'assistant message -- the harness prompts with the cut-off note instead and the climb continues',
+  async () => {
+    await withOutDir(async (outDir) => {
+      const script = [
+        { usage: { input_tokens: 50, output_tokens: 50 }, toolCalls: [], stop: 'length', assistant: '' },
+        { usage: { input_tokens: 50, output_tokens: 50 }, toolCalls: [{ id: 't2', name: 'ls', input: { path: '.' } }] },
+      ];
+      const { driver, calls } = makeScriptedDriver(script);
+
+      const result = await climb({
+        model: 'fake-empty-turn',
+        seed: 5,
+        outDir,
+        driver,
+        maxTurns: 2,
+        budgetTokens: 10_000_000,
+        ...freshPorts(),
+      });
+
+      // One empty turn does not end the climb -- the run keeps going into turn 2.
+      assert.notEqual(result.stoppedBecause, 'degenerate');
+      assert.equal(result.turns, 2);
+
+      // calls[1] is everything sent for the SECOND driver.step() call, i.e. whatever the harness
+      // appended after turn 1's empty response.
+      const sentForTurn2 = calls[1];
+      assert.ok(
+        sentForTurn2.some(
+          (m) => m.role === 'user' && m.content === 'Your last reply was cut off before any tool call. Answer with a tool call.',
+        ),
+        'expected the specific cut-off note to have been appended',
+      );
+      assert.ok(
+        !sentForTurn2.some((m) => m.role === 'assistant' && !m.content && (!m.toolCalls || m.toolCalls.length === 0)),
+        'an assistant message with neither content nor tool_calls must never be appended',
+      );
+
+      const transcript = await readTranscript(outDir, 'fake-empty-turn', 5);
+      assert.equal(transcript.length, 2);
+      assert.equal(transcript[0].stop, 'length');
+      assert.equal(transcript[0].assistant, '');
+    });
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Addendum E context rules
 // ---------------------------------------------------------------------------

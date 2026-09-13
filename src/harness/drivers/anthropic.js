@@ -6,6 +6,15 @@
 const DEFAULT_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 
+// Addendum K: default output budget for every message-loop driver (was 4096) -- see
+// drivers/openai.js's header comment for the deepseek-flash failure this is fixing.
+const DEFAULT_MAX_OUTPUT_TOKENS = 32_768;
+
+// Anthropic's own wording for "max_tokens is larger than this model allows", e.g.
+// "max_tokens: 200000 > 64000, which is the maximum allowed number of output tokens".
+const MAX_TOKENS_TOO_LARGE = /max_tokens/i;
+const TOO_LARGE_WORDING = /maximum allowed|too large|exceed|greater than/i;
+
 function toAnthropicTools(tools) {
   return tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema }));
 }
@@ -66,12 +75,14 @@ function markLastToolResultCacheable(anthropicMessages) {
   }
 }
 
-export function createDriver({ model, apiKey, systemPrompt, baseUrl = DEFAULT_URL, maxTokens = 4096 }) {
+export function createDriver({ model, apiKey, systemPrompt, baseUrl = DEFAULT_URL, maxTokens = DEFAULT_MAX_OUTPUT_TOKENS }) {
   if (!apiKey) throw new Error('anthropic driver: missing apiKey (set ANTHROPIC_API_KEY)');
 
-  async function step(messages, tools) {
-    const anthropicMessages = toAnthropicMessages(messages);
-    markLastToolResultCacheable(anthropicMessages);
+  // Addendum K: mutable so a "too large" rejection halves it once and every later call in this
+  // climb keeps using the accepted value; exposed as driver.maxOutputTokens for run.js to log.
+  let currentMaxTokens = maxTokens;
+
+  async function callOnce(anthropicMessages, tools, tokens) {
     const res = await fetch(baseUrl, {
       method: 'POST',
       headers: {
@@ -81,7 +92,7 @@ export function createDriver({ model, apiKey, systemPrompt, baseUrl = DEFAULT_UR
       },
       body: JSON.stringify({
         model,
-        max_tokens: maxTokens,
+        max_tokens: tokens,
         // Addendum D: the system prompt is identical every turn -- the other cache breakpoint.
         system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: anthropicMessages,
@@ -90,8 +101,32 @@ export function createDriver({ model, apiKey, systemPrompt, baseUrl = DEFAULT_UR
     });
     const data = await res.json();
     if (!res.ok) {
-      throw new Error(`anthropic ${res.status}: ${data && data.error ? data.error.message : res.statusText}`);
+      const message = data && data.error ? data.error.message : res.statusText;
+      const err = new Error(`anthropic ${res.status}: ${message}`);
+      err.status = res.status;
+      err.providerMessage = String(message || '');
+      throw err;
     }
+    return data;
+  }
+
+  async function step(messages, tools) {
+    const anthropicMessages = toAnthropicMessages(messages);
+    markLastToolResultCacheable(anthropicMessages);
+
+    let data;
+    try {
+      data = await callOnce(anthropicMessages, tools, currentMaxTokens);
+    } catch (err) {
+      // Addendum K: "if a provider rejects it as too large, halve and retry once."
+      if (err.status === 400 && MAX_TOKENS_TOO_LARGE.test(err.providerMessage) && TOO_LARGE_WORDING.test(err.providerMessage)) {
+        currentMaxTokens = Math.max(1, Math.floor(currentMaxTokens / 2));
+        data = await callOnce(anthropicMessages, tools, currentMaxTokens);
+      } else {
+        throw err;
+      }
+    }
+
     const blocks = data.content || [];
     const assistant = blocks
       .filter((b) => b.type === 'text')
@@ -114,5 +149,10 @@ export function createDriver({ model, apiKey, systemPrompt, baseUrl = DEFAULT_UR
     };
   }
 
-  return { step };
+  return {
+    step,
+    get maxOutputTokens() {
+      return currentMaxTokens;
+    },
+  };
 }

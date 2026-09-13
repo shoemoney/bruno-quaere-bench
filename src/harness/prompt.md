@@ -31,6 +31,8 @@ You have exactly five tools:
   auth, pagination, signing, and the handful of places it deliberately overrides the spec. Read it
   carefully. It is real-shaped internal documentation, not a tidy cheat sheet, and skimming it is
   how you fall off the ladder.
+- `environments/local.yml` in your sandbox: a Bruno environment with `baseUrl`, `apiKey`, and the
+  `secret` a signed publish request needs -- point your `.bru` requests at it with `--env local`.
 
 ## The ladder
 

@@ -40,6 +40,8 @@ touching the wire is recorded as a violation of this run.
   pagination, signing, and the handful of places it deliberately overrides the spec. It is real
   internal documentation -- long, imperfectly organized, not a tidy cheat sheet -- and reading it
   carefully is part of the task. Skimming it is how you fall off the ladder.
+- \`environments/local.yml\`, in this directory, is your Bruno environment for this instance --
+  \`baseUrl\`, \`apiKey\`, and the \`secret\` a signed publish request needs -- use it with \`--env local\`.
 
 ## The ladder
 

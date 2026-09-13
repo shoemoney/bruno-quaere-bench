@@ -84,12 +84,14 @@ function dnrLine(entry) {
 // test/board.test.js and test/harness-transcript.test.js assert an exact
 // `| Model | ... | Violations | Resumes | Stop |` substring, and appending keeps that substring
 // intact (the regex isn't end-anchored) instead of forcing every caller to touch those columns.
+// Addendum K: Script (axios/* script-sandbox request count) is appended after Probes for the
+// same reason -- it keeps the `... | Stop | Probes |` substring the Addendum J tests assert on.
 const TABLE_HEADER =
-  '| Model | Driver | Seed | Rung | Turns | Fidelity | Trap | Novel | Billed | Violations | Resumes | Stop | Probes |';
-const TABLE_RULE = '|---|---|---|---|---|---|---|---|---|---|---|---|---|';
+  '| Model | Driver | Seed | Rung | Turns | Fidelity | Trap | Novel | Billed | Violations | Resumes | Stop | Probes | Script |';
+const TABLE_RULE = '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|';
 
 function rowLine(row) {
-  return `| ${row.model} | ${row.driver} | ${row.seed} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.violations.toFixed(1)} | ${row.resumes.toFixed(1)} | ${row.stop} | ${row.probes.toFixed(1)} |`;
+  return `| ${row.model} | ${row.driver} | ${row.seed} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.violations.toFixed(1)} | ${row.resumes.toFixed(1)} | ${row.stop} | ${row.probes.toFixed(1)} | ${row.scriptRequests.toFixed(1)} |`;
 }
 
 // Addendum J: bru's OWN --sandbox developer scripts (a `.bru` `script:post-request` or similar

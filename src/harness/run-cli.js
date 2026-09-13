@@ -20,6 +20,7 @@ import { answerKey } from '../ladder/reference.js';
 import { resolveBru } from './sandbox.js';
 import { computeTrap } from './run.js';
 import { buildTaskMd } from './task-md.js';
+import { buildLocalEnv, LOCAL_ENV_PATH } from './sandbox-env.js';
 import { superviseProcess } from './supervise.js';
 
 // Addendum F: "Three resumes with no new submission is stoppedBecause: 'stalled'."
@@ -227,6 +228,43 @@ async function parseUsageSettling(adapter, stdout, homeDir, supervisedKill) {
   throw lastError || new Error('cli climb: parseUsage returned no usage');
 }
 
+// prepareCliSandbox({world, sandboxDir, baseUrl, budgetTokens, skillMode, skillBytes}) -> writes
+// the four documents climb() below hands the CLI before its first turn: spec.json,
+// HOUSE-RULES.md, TASK.md, and (Addendum L) environments/local.yml -- the ONLY place
+// world.auth.secret is ever written into a sandbox, since HOUSE-RULES.md/TASK.md both name the
+// file but deliberately never state its value. Exported so test/sandbox-fidelity.test.js can
+// prepare a real sandbox (the exact code path a CLI-driven climb uses) without spawning a CLI or
+// running a full climb.
+export async function prepareCliSandbox({
+  world,
+  sandboxDir,
+  baseUrl,
+  budgetTokens = 3_000_000,
+  skillMode = 'sloppy',
+  skillBytes = 5_000_000,
+}) {
+  await writeFile(path.join(sandboxDir, 'spec.json'), JSON.stringify(toOpenApi(world), null, 2));
+  // HOUSE-RULES.md, not SKILL.md: a real CLI's own runtime auto-loads a file it recognizes by
+  // name (SKILL.md, CLAUDE.md, ...) straight into context. This is 5 MB of deliberately sloppy
+  // house documentation (Addendum A) -- finding it is the task, not something to hand it for free.
+  await writeFile(
+    path.join(sandboxDir, 'HOUSE-RULES.md'),
+    toSkill(world, { mode: skillMode, targetBytes: skillBytes }),
+  );
+  await writeFile(
+    path.join(sandboxDir, 'TASK.md'),
+    buildTaskMd({ baseUrl, apiKey: world.auth.apiKey, budgetTokens }),
+  );
+  // mkdir first: writeFile here is the plain node:fs one, not sandbox.js's tool-facing writeFile
+  // (which auto-creates parent directories) -- this path is the CLI-driven one, which never goes
+  // through that tool surface at all.
+  await mkdir(path.join(sandboxDir, path.dirname(LOCAL_ENV_PATH)), { recursive: true });
+  await writeFile(
+    path.join(sandboxDir, LOCAL_ENV_PATH),
+    buildLocalEnv({ baseUrl, apiKey: world.auth.apiKey, secret: world.auth.secret }),
+  );
+}
+
 export async function climb({
   cliName,
   cli: providedAdapter,
@@ -284,18 +322,7 @@ export async function climb({
   try {
     await adminPost(adminBase, '/admin/rungs', answerKey(world), adminToken);
 
-    await writeFile(path.join(sandboxDir, 'spec.json'), JSON.stringify(toOpenApi(world), null, 2));
-    // HOUSE-RULES.md, not SKILL.md: a real CLI's own runtime auto-loads a file it recognizes by
-    // name (SKILL.md, CLAUDE.md, ...) straight into context. This is 5 MB of deliberately sloppy
-    // house documentation (Addendum A) -- finding it is the task, not something to hand it for free.
-    await writeFile(
-      path.join(sandboxDir, 'HOUSE-RULES.md'),
-      toSkill(world, { mode: skillMode, targetBytes: skillBytes }),
-    );
-    await writeFile(
-      path.join(sandboxDir, 'TASK.md'),
-      buildTaskMd({ baseUrl, apiKey: world.auth.apiKey, budgetTokens }),
-    );
+    await prepareCliSandbox({ world, sandboxDir, baseUrl, budgetTokens, skillMode, skillBytes });
 
     const adapter = providedAdapter || (await resolveCliAdapter(cliName));
 

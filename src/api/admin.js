@@ -9,6 +9,12 @@ import { rng, sub, pick } from '../seed.js';
 // bru invocation sends this as its User-Agent. `count` is exhaustive over the whole log; `samples`
 // is capped so a long, badly-behaved run can't blow up the admin/violations response body.
 const BRUNO_RUNTIME_PREFIX = 'bruno-runtime/';
+// Addendum K: `axios/*` hits are bru's own pre-request/post-request script sandbox
+// (`--sandbox developer`, `require('axios')`) reaching the network on the agent's behalf, not the
+// agent bypassing `bru` -- a message-loop agent has no shell to run axios from directly, so this
+// User-Agent can only originate inside bru's own runtime. Counted separately as `scriptRequests`,
+// never folded into `violations`, and never voids a run.
+const AXIOS_PREFIX = 'axios/';
 const MAX_VIOLATION_SAMPLES = 20;
 
 // Addendum J, "Admin port hardening": a native CLI has a shell, and the admin port answers on
@@ -175,8 +181,19 @@ async function dispatch(id, state, { req, res, reset }) {
   }
 
   if (id === 'admin.violations') {
-    const offenders = state.log.filter((entry) => !(entry.ua || '').startsWith(BRUNO_RUNTIME_PREFIX));
+    // Addendum K: a violation is a User-Agent that is neither `bruno-runtime/*` (genuine bru)
+    // nor `axios/*` (bru's own script sandbox, see AXIOS_PREFIX above) -- the axios ones are
+    // real requests but not a rule break, so they get their own count/samples instead of being
+    // folded into `count`.
+    const offenders = state.log.filter((entry) => {
+      const ua = entry.ua || '';
+      return !ua.startsWith(BRUNO_RUNTIME_PREFIX) && !ua.startsWith(AXIOS_PREFIX);
+    });
     const samples = offenders
+      .slice(0, MAX_VIOLATION_SAMPLES)
+      .map((entry) => ({ ua: entry.ua, method: entry.method, path: entry.path }));
+    const scripted = state.log.filter((entry) => (entry.ua || '').startsWith(AXIOS_PREFIX));
+    const scriptSamples = scripted
       .slice(0, MAX_VIOLATION_SAMPLES)
       .map((entry) => ({ ua: entry.ua, method: entry.method, path: entry.path }));
     // Addendum J: `adminProbes` is a distinct signal from a rogue public-port User-Agent above --
@@ -189,6 +206,8 @@ async function dispatch(id, state, { req, res, reset }) {
     sendJson(res, 200, {
       count: offenders.length,
       samples,
+      scriptRequests: scripted.length,
+      scriptSamples,
       adminProbes: state.adminProbes.length,
       adminProbeSamples: state.adminProbes.slice(0, MAX_VIOLATION_SAMPLES),
     });

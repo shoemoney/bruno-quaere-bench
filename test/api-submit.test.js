@@ -296,3 +296,43 @@ test('admin log: records the User-Agent per request, and /admin/violations flags
     await freshServer.stop();
   }
 });
+
+// Addendum K: axios/* User-Agents are bru's own pre/post-request script sandbox reaching the
+// network on the agent's behalf, not the agent bypassing bru -- they must count separately as
+// scriptRequests, never fold into violations.count, and never appear in the violations samples.
+test('admin/violations: axios/* requests count as scriptRequests, not violations', async () => {
+  const freshWorld = makeWorld(SEED + 2);
+  const freshServer = createServer({ world: freshWorld, publicPort: 0, adminPort: 0 });
+  const ports = await freshServer.start();
+  const freshBase = `http://127.0.0.1:${ports.publicPort}`;
+  const freshAdmin = `http://127.0.0.1:${ports.adminPort}`;
+
+  try {
+    await fetch(`${freshBase}/auth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'bruno-runtime/1.0.0' },
+      body: JSON.stringify({ [fieldName(freshWorld, 'api_key')]: freshWorld.auth.apiKey }),
+    });
+    await fetch(`${freshBase}/auth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'axios/1.16.0' },
+      body: JSON.stringify({ [fieldName(freshWorld, 'api_key')]: freshWorld.auth.apiKey }),
+    });
+    await fetch(`${freshBase}/auth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'curl/8.0' },
+      body: JSON.stringify({ [fieldName(freshWorld, 'api_key')]: freshWorld.auth.apiKey }),
+    });
+
+    const violRes = await fetch(`${freshAdmin}/admin/violations`);
+    assert.equal(violRes.status, 200);
+    const body = await violRes.json();
+    assert.equal(body.count, 1, 'only curl is a real violation; axios and bruno-runtime are not');
+    assert.ok(!body.samples.some((s) => (s.ua || '').startsWith('axios/')), 'axios must never appear in violation samples');
+    assert.equal(body.scriptRequests, 1);
+    assert.equal(body.scriptSamples.length, 1);
+    assert.equal(body.scriptSamples[0].ua, 'axios/1.16.0');
+  } finally {
+    await freshServer.stop();
+  }
+});

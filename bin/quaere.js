@@ -182,6 +182,9 @@ async function cmdRun(args) {
         skillMode,
         skillBytes: args['skill-bytes'] !== undefined ? Number(args['skill-bytes']) : undefined,
         topRung: args['max-rung'] !== undefined ? Number(args['max-rung']) : undefined,
+        // Addendum K: message-loop drivers request at least this many output tokens by default
+        // (32768) so a reasoning model has room to think and still emit a tool call.
+        maxOutputTokens: args['max-output-tokens'] !== undefined ? Number(args['max-output-tokens']) : undefined,
       });
     }
     results.push(result);

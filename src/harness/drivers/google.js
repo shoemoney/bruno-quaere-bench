@@ -24,6 +24,12 @@
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
 
+// Addendum K: default output budget for every message-loop driver (was 4096) -- see
+// drivers/openai.js's header comment for the deepseek-flash failure this is fixing.
+const DEFAULT_MAX_OUTPUT_TOKENS = 32_768;
+const MAX_TOKENS_TOO_LARGE = /max[_ ]tokens|max.?output.?tokens/i;
+const TOO_LARGE_WORDING = /too large|exceed|greater than|must be (less|<)|invalid.*max/i;
+
 function toGoogleTools(tools) {
   return tools.map((t) => ({
     type: 'function',
@@ -64,16 +70,20 @@ function toGoogleMessages(systemPrompt, messages) {
   return out;
 }
 
-export function createDriver({ model, apiKey, systemPrompt, maxTokens = 4096 }) {
+export function createDriver({ model, apiKey, systemPrompt, maxTokens = DEFAULT_MAX_OUTPUT_TOKENS }) {
   if (!apiKey) throw new Error('google driver: missing apiKey (set GEMINI_API_KEY)');
 
-  async function step(messages, tools) {
+  // Addendum K: mutable so a "too large" rejection halves it once and every later call in this
+  // climb keeps using the accepted value; exposed as driver.maxOutputTokens for run.js to log.
+  let currentMaxTokens = maxTokens;
+
+  async function callOnce(tools, messages, tokens) {
     const res = await fetch(`${BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        max_tokens: maxTokens,
+        max_tokens: tokens,
         messages: toGoogleMessages(systemPrompt, messages),
         tools: toGoogleTools(tools),
         tool_choice: 'auto',
@@ -86,8 +96,28 @@ export function createDriver({ model, apiKey, systemPrompt, maxTokens = 4096 }) 
       // (400/413) classifiers actually see the status code in the thrown message.
       const errBody = Array.isArray(data) ? data[0] : data;
       const message = errBody && errBody.error ? errBody.error.message : res.statusText;
-      throw new Error(`google ${res.status}: ${message}`);
+      const err = new Error(`google ${res.status}: ${message}`);
+      err.status = res.status;
+      err.providerMessage = String(message || '');
+      throw err;
     }
+    return data;
+  }
+
+  async function step(messages, tools) {
+    let data;
+    try {
+      data = await callOnce(tools, messages, currentMaxTokens);
+    } catch (err) {
+      // Addendum K: "if a provider rejects it as too large, halve and retry once."
+      if (err.status === 400 && MAX_TOKENS_TOO_LARGE.test(err.providerMessage) && TOO_LARGE_WORDING.test(err.providerMessage)) {
+        currentMaxTokens = Math.max(1, Math.floor(currentMaxTokens / 2));
+        data = await callOnce(tools, messages, currentMaxTokens);
+      } else {
+        throw err;
+      }
+    }
+
     const choice = (data.choices || [])[0] || {};
     const message = choice.message || {};
     const toolCalls = (message.tool_calls || []).map((tc) => ({
@@ -110,5 +140,10 @@ export function createDriver({ model, apiKey, systemPrompt, maxTokens = 4096 }) 
     };
   }
 
-  return { step };
+  return {
+    step,
+    get maxOutputTokens() {
+      return currentMaxTokens;
+    },
+  };
 }

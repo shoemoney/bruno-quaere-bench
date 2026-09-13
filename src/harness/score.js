@@ -64,6 +64,9 @@ export function scoreGroup(version, model, driver, seed, runs) {
     // only -- a message-loop run always resumes 0) default to 0 for pre-Addendum-F result.json
     // files rather than propagate NaN through the mean.
     violations: mean(runs.map((r) => r.violations || 0)),
+    // Addendum K: axios/* admin-log hits -- bru's own pre/post-request script sandbox, not a
+    // rule violation. Defaults to 0 for any result.json predating this field.
+    scriptRequests: mean(runs.map((r) => r.scriptRequests || 0)),
     // Addendum J: admin-port hits missing/forging X-Admin-Token, defaulting to 0 for any
     // result.json predating this field. Any run with adminProbes > 0 already had its own
     // stoppedBecause overwritten to 'voided-admin-probe' by the harness, so `stop` below already

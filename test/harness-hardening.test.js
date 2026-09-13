@@ -279,6 +279,43 @@ test("climb(): adminProbes absent from the response (today's real server) defaul
   });
 });
 
+// Addendum K: axios/* admin-log hits are bru's own script sandbox, kept on a separate
+// scriptRequests column and never folded into violations or the void rule.
+test('climb(): scriptRequests and scriptSamples are read from /admin/violations onto result.json, separate from violations', async () => {
+  await withOutDir(async (outDir) => {
+    const driver = makeScriptedDriver([{}]);
+    const result = await withFakeViolations(
+      {
+        count: 1,
+        samples: [{ ua: 'curl/8.4.0', method: 'GET', path: '/workspaces' }],
+        scriptRequests: 2,
+        scriptSamples: [
+          { ua: 'axios/1.16.0', method: 'POST', path: '/auth/token' },
+          { ua: 'axios/1.16.0', method: 'GET', path: '/workspaces' },
+        ],
+        adminProbes: 0,
+      },
+      () => climb({ model: 'fake-hardening-scripted', seed: 9, outDir, driver, maxTurns: 1, ...freshPorts() }),
+    );
+    assert.equal(result.violations, 1);
+    assert.equal(result.scriptRequests, 2);
+    assert.deepEqual(result.scriptSamples, [
+      { ua: 'axios/1.16.0', method: 'POST', path: '/auth/token' },
+      { ua: 'axios/1.16.0', method: 'GET', path: '/workspaces' },
+    ]);
+    assert.notEqual(result.stoppedBecause, 'voided-admin-probe', 'scriptRequests must never void a run');
+  });
+});
+
+test('climb(): scriptRequests absent from the response defaults to 0 with an empty scriptSamples array', async () => {
+  await withOutDir(async (outDir) => {
+    const driver = makeScriptedDriver([{}]);
+    const result = await climb({ model: 'fake-hardening-noscript', seed: 10, outDir, driver, maxTurns: 1, ...freshPorts() });
+    assert.equal(result.scriptRequests, 0);
+    assert.deepEqual(result.scriptSamples, []);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // supervise.js: X-Admin-Token propagation and the turn cap (CLI path)
 // ---------------------------------------------------------------------------
