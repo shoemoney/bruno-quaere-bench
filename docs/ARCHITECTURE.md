@@ -671,3 +671,72 @@ structurally blind to this class of bug, exactly as it was to the Addendum G flo
    for seeds 1..20 and every rung, `docsolver` equals the key, or the build is red. This is the
    check that would have caught both the float bug and this one before a round burned money.
 5. **Version bump to 0.4.0 and a whole-round rerun.** All 0.3.0 rows are superseded.
+
+## Addendum J: ladder 0.4.0 was cleared; the next ladder is built for 2028
+
+Added 2026-09-12 19:20. Full native round on 0.4.0, one attempt each, 5 MB sloppy skill:
+
+| Model | Driver | Rung | Turns | Novel tokens | Notes |
+|---|---|---|---|---|---|
+| qwen3.8-max | qwen CLI | **99 (cleared all 100)** | 3401 | 1.40M | fidelity 1.0, trap 1.0, 1 resume, 0 violations, 2.0 h |
+| claude-fable-5.1 | ai | 71 | 1138 | 0.22M | stale layer count in its own reused script |
+| gemini-3.8-flash | google direct | 69 | 1499 | 0.93M | fell at 70, fidelity 0.78 |
+| x-ai/grok-4.6 | openrouter | 59 | 1057 | 0.64M | fell at 60; **40 rule violations** (see below) |
+| deepseek-flash | direct | 57 | 285 | 0.34M | fell at 58, fidelity 0.98 |
+| gpt-6-astra | codex | 29 | 151 | 0.11M | trap rung 30, trusted the docs |
+| kimi-k3 | kimi | running at 19:20 | | | |
+
+The calibration promise ("no current model past rung 30") is false on the honest ladder by a
+wide margin, and one model cleared it entirely. The bottom band still discriminates (29 to 99).
+What follows is the design for ladder 0.5.0, built to hold for two years, not two hours.
+
+### What made 0.4.0 easy
+
+The transcripts of the top climbs show the same strategy: read the skill once, write a small
+generic solver script that parses the rung text into API calls, and replay it. Rungs 20 to 99
+differ in parameters, not in kind. A ladder whose rungs are one template with bigger numbers is
+climbed by one script. The steepening must add kinds of difficulty a script cannot template.
+
+### Rules for 0.5.0 (grammar and generator; keys must stay doc-derivable, docsolver gate stays)
+
+1. **Cross-rung dependencies.** From rung 20 on, a rung may reference an artifact by a property
+   the agent saw earlier ("the second picture you published today", "the clip whose hash you were
+   told at rung 12") and the text never repeats the value. Rung 60+ references rung 20-40 state.
+   This is the long-session axis, finally measured: the collection on disk is the memory.
+2. **Derived parameters.** From rung 30 on, at least one parameter per rung is not stated but
+   must be computed from data the API returns: a CSV export (content negotiation), a paginated
+   count with soft-deleted rows excluded, the difference between two descriptors, the duration of
+   an audio asset. The number in the task text is the input to a computation, never the answer.
+3. **Mid-rung mutations (regression day inside a rung).** From rung 40 on, a mutation from the
+   Arena list is applied by the harness after step k of the plan (announced in the text as "the
+   house may change something under you; verify what comes back"). The correct answer accounts
+   for the change; the docsolver models it from the announced rule.
+4. **State-machine and signing chains.** Rungs 50+ require compose, render (202 + polling),
+   publish (HMAC with the canonical string from the skill), and ETag-conditional updates in the
+   same rung, and at least one 409 recovery.
+5. **Audio and video math.** Rungs 50+ use timeline overlaps, sample-rate times duration equals
+   frames, bitrate budgets, and combine modes across kinds ("the video's audio track"), not only
+   images.
+6. **Multi-rule ordering.** Rungs 70+ require three or more house rules applied in a stated order
+   where the order changes the answer (snap, grid, compounding, lora before or after resize).
+7. **Skill pressure.** The sloppy skill rotates the precedence convention per section ("in this
+   section the highest version wins") and plants one decoy that is newer-dated but explicitly
+   retracted two lines later. Still never an unmarked contradiction; still a superset of clean.
+8. **Novelty per season.** Each season adds one new primitive the previous season's solver
+   scripts cannot have seen. 0.5.0 adds `diff` over audio and `sequence` over video.
+9. **Band table.** Steps per rung: 0-9: 1-2; 10-29: 3-5; 30-49: 6-9; 50-69: 10-14; 70-89: 15-20;
+   90-99: 20-30, with the dependencies above layered in by band. Difficulty stays monotone.
+
+### Harness rules
+
+- **Admin port hardening.** A native CLI has a shell. The admin server must require
+  `X-Admin-Token`, a per-run random secret held only by the harness process and never written
+  into the sandbox. Bind stays loopback. Requests without the token are 401 and logged as
+  `adminProbe` on the result; any adminProbe voids the run.
+- **Violation samples persist.** `result.json` stores up to 20 `{ua, method, path}` samples of
+  non-bru requests so a violation can be read after the server is gone. Grok's 40 violations on
+  0.4.0 cannot be diagnosed because they were not saved.
+- **Turn cap.** 5000 `bru` requests per run, reported as `stoppedBecause: 'turns'`.
+- **Climbs are launched and watched by the main session**, not by workflow subagents, which get
+  forced to return before a multi-hour run ends. Workflows build and verify; the round runs from
+  the session with detached processes and a bash (not zsh) watcher.
