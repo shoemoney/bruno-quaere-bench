@@ -52,6 +52,10 @@ test('every documented section a real Bruno skill needs is present', () => {
     'opacity compounding',
     'defaults',
     'video container facts',
+    'cleared-out assets',
+    'amendments',
+    'negative-space grading',
+    'byte budgets',
     'overrides',
   ];
   for (const seed of SEEDS) {

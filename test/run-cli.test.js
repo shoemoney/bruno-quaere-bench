@@ -13,8 +13,9 @@ import { mkdtemp, writeFile, chmod, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os';
 import path from 'node:path';
 
-import { makeWorld, fieldName, VERSION as LADDER_VERSION } from '../src/world.js';
+import { makeWorld, fieldName, VERSION as LADDER_VERSION, AMENDMENT_RULES } from '../src/world.js';
 import { makeRung } from '../src/ladder/rung.js';
+import { toSkill } from '../src/skill.js';
 import { climb, bruShimSource } from '../src/harness/run-cli.js';
 import { buildTaskMd } from '../src/harness/task-md.js';
 import { resolveBru } from '../src/harness/sandbox.js';
@@ -723,3 +724,254 @@ test('climb(): a killed spawn that never produces usage still ends as an estimat
     await rm(scriptDir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Addendum Q rule 4 (mid-ladder amendments, CLI-driver side) and rule 13
+// (codeWrites/docReads, CLI-driver fallback). world.amendments does not exist on makeWorld()'s
+// own output yet (AMENDMENTS_ENFORCED is false in src/world.js -- the [ladder]/[skill]
+// workstreams' half of Addendum Q), so these use climb()'s `world` test hook (same escape-hatch
+// pattern as its existing `cli` param) to attach one by hand and prove the harness-side wiring.
+// ---------------------------------------------------------------------------
+
+function makeAmendmentAtRung1(world) {
+  const { path: rulePath, choices } = AMENDMENT_RULES.roundTo;
+  const from = world.rules.roundTo;
+  const to = choices.find((c) => c !== from);
+  return { atRung: 1, rule: 'roundTo', path: rulePath, from, to };
+}
+
+// buildDynamicFakeAdapterScript(dir) -- unlike makeFakeAdapter above (baked for one fixed rung),
+// this script asks the server what the CURRENT rung is on every spawn, so it keeps working across
+// run-cli.js's own resume loop without the test having to script each spawn by hand. Two things
+// it does purely to give this test's Addendum Q rule 13 counters something real to count: writes
+// a `.py` "solver" file to its cwd (the sandbox root) exactly once, and prints a line naming a
+// `cat HOUSE-RULES.md` invocation on every spawn, standing in for what a real CLI's own
+// --output-format json tool-use events would carry.
+async function buildDynamicFakeAdapterScript(dir) {
+  const scriptPath = path.join(dir, 'dynamic-fake-cli.mjs');
+  const source = `#!/usr/bin/env node
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+
+const taskText = readFileSync('TASK.md', 'utf8');
+const baseUrl = taskText.match(/Base URL: (\\S+)/)[1];
+const apiKey = taskText.match(/API key: (\\S+) --/)[1];
+const naming = JSON.parse(process.env.QUAERE_FAKE_NAMING);
+const plans = JSON.parse(process.env.QUAERE_FAKE_PLANS);
+
+async function main() {
+  const tokenRes = await fetch(baseUrl + '/auth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ [naming.apiKeyField]: apiKey }),
+  });
+  const tokenBody = await tokenRes.json();
+  const access = tokenBody[naming.accessTokenField];
+
+  const currentRes = await fetch(baseUrl + '/rungs/current', {
+    headers: { authorization: 'Bearer ' + access },
+  });
+  const currentBody = await currentRes.json();
+  const n = currentBody.n;
+
+  if (!existsSync('solve.py')) {
+    writeFileSync('solve.py', '# generated solver, first seen at rung ' + n + '\\n');
+  }
+  console.log('tool_use: bash -lc "cat HOUSE-RULES.md"');
+
+  const plan = plans[String(n)];
+  if (!plan) {
+    // Nothing scripted for this rung -- print usage and exit cleanly rather than crash noisily;
+    // run-cli.js's own stall detection (three resumes with no new submission) ends the climb.
+    console.log(JSON.stringify({ usage: { tokensIn: 10, tokensOut: 5, tokensCached: 0 } }));
+    return;
+  }
+
+  const createRes = await fetch(baseUrl + naming.createPath[plan.kind], {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + access, 'content-type': 'application/json' },
+    body: JSON.stringify(plan.params),
+  });
+  const createBody = await createRes.json();
+
+  const submitRes = await fetch(baseUrl + '/rungs/' + n + '/submit', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + access, 'content-type': 'application/json' },
+    body: JSON.stringify({ [naming.assetsField]: [createBody.id] }),
+  });
+  const submitBody = await submitRes.json();
+
+  console.log(JSON.stringify({
+    usage: { tokensIn: 100, tokensOut: 50, tokensCached: 0, modelVersion: 'fake-model-1' },
+    submit: submitBody,
+  }));
+}
+
+main().catch((err) => {
+  console.error(err.stack || String(err));
+  process.exit(1);
+});
+`;
+  await writeFile(scriptPath, source, 'utf8');
+  await chmod(scriptPath, 0o755);
+  return scriptPath;
+}
+
+function makeDynamicFakeAdapter(world, plansByN, scriptPath) {
+  const naming = {
+    apiKeyField: fieldName(world, 'api_key'),
+    accessTokenField: fieldName(world, 'access_token'),
+    assetsField: fieldName(world, 'assets'),
+    createPath: CREATE_PATH,
+  };
+  return {
+    name: 'dynamic-fake',
+    build: () => ({
+      cmd: process.execPath,
+      args: [scriptPath],
+      env: {
+        QUAERE_FAKE_NAMING: JSON.stringify(naming),
+        QUAERE_FAKE_PLANS: JSON.stringify(plansByN),
+      },
+    }),
+    parseUsage: (stdout) => {
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        try {
+          const parsed = JSON.parse(lines[i]);
+          if (parsed && parsed.usage) return parsed.usage;
+        } catch {
+          // not a JSON line (a stray console.error, the tool_use line), keep looking
+        }
+      }
+      return { tokensIn: 0, tokensOut: 0, tokensCached: 0 };
+    },
+    resume: () => null,
+  };
+}
+
+test(
+  'climb(): an amendment rung rewrites HOUSE-RULES.md and logs it in the transcript (Addendum Q rule 4); codeWrites/docReads count across resumes (rule 13)',
+  { timeout: 60_000 },
+  async () => {
+    const seed = 1200;
+    const world = makeWorld(seed);
+    const amendment = makeAmendmentAtRung1(world);
+    world.amendments = [amendment];
+
+    const runsDir = await tmpRunsDir();
+    const scriptDir = await mkdtemp(path.join(os.tmpdir(), 'quaere-fake-cli-amend-'));
+    try {
+      const rung0 = makeRung(world, 0);
+      const plan0 = rung0.plan[rung0.plan.length - 1];
+      // Only rung 0 is scripted -- every resume past it (the server has moved on to rung 1, the
+      // amendment rung, which this fake can't play) reports no plan and exits cleanly, so the
+      // climb ends deterministically via run-cli.js's own "three resumes with no new submission"
+      // stall rule (Addendum F) rather than needing this test to drive it.
+      const plansByN = { 0: { kind: plan0.args.kind, params: plan0.args.params } };
+      const scriptPath = await buildDynamicFakeAdapterScript(scriptDir);
+      const adapter = makeDynamicFakeAdapter(world, plansByN, scriptPath);
+
+      const result = await climb({
+        cli: adapter,
+        model: 'fake-cli-amend-model',
+        seed,
+        world,
+        attempt: 1,
+        outDir: runsDir,
+        pollMs: 100,
+        wallMsLimit: 30_000,
+        skillBytes: 64 * 1024,
+        topRung: 5,
+      });
+
+      assert.equal(result.stoppedBecause, 'stalled');
+      assert.equal(result.rung, 0);
+      assert.equal(result.submissions.length, 1);
+      assert.equal(result.submissions[0].pass, true);
+      // The initial spawn (rung 0, real submission) plus MAX_RESUMES_WITHOUT_SUBMISSION (3) stall
+      // resumes that each found no plan for rung 1 = 3 resumes, 4 spawns total.
+      assert.equal(result.resumes, 3);
+
+      // Addendum Q rule 13 (CLI-driver fallback): one script file, written once, on the FIRST
+      // spawn only (existsSync guards every later spawn) -> exactly one codeWrite for the whole
+      // climb; the "cat HOUSE-RULES.md" line prints once per spawn -> 4 docReads (1 + 3 resumes).
+      assert.equal(result.codeWrites, 1);
+      assert.equal(result.docReads, 4);
+
+      const runDir = path.resolve(runsDir, 'fake-cli-amend-model', String(seed), '1');
+      const solvePy = await readFile(path.join(runDir, 'collection', 'solve.py'), 'utf8');
+      assert.match(solvePy, /generated solver/);
+
+      // Addendum Q rule 4: rung 0's pass advances the ladder to rung 1, the amendment rung --
+      // HOUSE-RULES.md must be rewritten and the amendment logged before this test's second spawn
+      // (which already ran, above, and found rung 1 unplayable -- proving the rewrite/log had
+      // already happened by the time that spawn's own poll loop looked for the next rung).
+      const houseRulesOnDisk = await readFile(path.join(runDir, 'sandbox', 'HOUSE-RULES.md'), 'utf8');
+      assert.equal(houseRulesOnDisk, toSkill(world, { mode: 'sloppy', atRung: 1, targetBytes: 64 * 1024 }));
+
+      const transcriptText = await readFile(path.join(runDir, 'transcript.jsonl'), 'utf8');
+      const transcript = transcriptText
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      const amendmentEntries = transcript.filter((e) => e.type === 'amendment');
+      assert.equal(amendmentEntries.length, 1);
+      assert.deepEqual(amendmentEntries[0].amendments, [
+        { atRung: amendment.atRung, rule: amendment.rule, from: amendment.from, to: amendment.to },
+      ]);
+    } finally {
+      await rm(runsDir, { recursive: true, force: true });
+      await rm(scriptDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'climb(): no world.amendments -- no HOUSE-RULES.md rewrite, no amendment transcript entries (regression guard)',
+  { timeout: 60_000 },
+  async () => {
+    const seed = 1201;
+    const world = makeWorld(seed);
+    // world.amendments deliberately left unset, same as every current makeWorld() output.
+    const runsDir = await tmpRunsDir();
+    const scriptDir = await mkdtemp(path.join(os.tmpdir(), 'quaere-fake-cli-amend-'));
+    try {
+      const rung0 = makeRung(world, 0);
+      const plan0 = rung0.plan[rung0.plan.length - 1];
+      const plansByN = { 0: { kind: plan0.args.kind, params: plan0.args.params } };
+      const scriptPath = await buildDynamicFakeAdapterScript(scriptDir);
+      const adapter = makeDynamicFakeAdapter(world, plansByN, scriptPath);
+
+      const result = await climb({
+        cli: adapter,
+        model: 'fake-cli-noamend-model',
+        seed,
+        world,
+        attempt: 1,
+        outDir: runsDir,
+        pollMs: 100,
+        wallMsLimit: 30_000,
+        skillBytes: 64 * 1024,
+        // Passing rung 0 IS the top here -- no resumes needed at all for this guard.
+        topRung: 0,
+      });
+
+      assert.equal(result.stoppedBecause, 'top');
+      assert.equal(result.rung, 0);
+
+      const runDir = path.resolve(runsDir, 'fake-cli-noamend-model', String(seed), '1');
+      const houseRulesOnDisk = await readFile(path.join(runDir, 'sandbox', 'HOUSE-RULES.md'), 'utf8');
+      assert.equal(houseRulesOnDisk, toSkill(world, { mode: 'sloppy', targetBytes: 64 * 1024 }));
+
+      const transcriptText = await readFile(path.join(runDir, 'transcript.jsonl'), 'utf8');
+      const transcript = transcriptText
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      assert.equal(transcript.filter((e) => e.type === 'amendment').length, 0);
+    } finally {
+      await rm(runsDir, { recursive: true, force: true });
+      await rm(scriptDir, { recursive: true, force: true });
+    }
+  },
+);

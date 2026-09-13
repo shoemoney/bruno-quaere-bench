@@ -9,7 +9,7 @@ import { mkdir, writeFile, readFile, cp, readdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
-import { makeWorld, VERSION as LADDER_VERSION } from '../world.js';
+import { makeWorld, VERSION as LADDER_VERSION, amendmentsAt } from '../world.js';
 import { createServer } from '../api/server.js';
 import { toOpenApi, listLies } from '../spec.js';
 import { toSkill } from '../skill.js';
@@ -244,6 +244,29 @@ async function runTool(sandbox, call) {
   }
 }
 
+// --- Addendum Q rule 13: codeWrites / docReads -------------------------------------------------
+//
+// Two counters that "separate templating from reasoning better than turns" (Astra's were 23 and
+// 10 on the CLI path). Message-loop drivers see every tool call directly, so both are exact here
+// (no mtime scanning or transcript text-mining needed -- that's the CLI-driver-only fallback in
+// run-cli.js, which has no equivalent direct visibility into what the product's own tools did).
+const SCRIPT_EXT_RE = /\.(py|js|sh|ts)$/i;
+
+// touchesSkillDoc(sandboxDir, rel, docName): true when a read_file/grep call's own `path` input
+// resolves to the planted skill document itself, or to the sandbox root (a grep of '.' walks
+// every file under it, docName included, per sandbox.js's own grep). Deliberately conservative --
+// a grep of an unrelated subdirectory that happens not to contain the doc does not count.
+function touchesSkillDoc(sandboxDir, rel, docName) {
+  if (typeof rel !== 'string' || rel.length === 0 || path.isAbsolute(rel)) return false;
+  let resolved;
+  try {
+    resolved = path.resolve(sandboxDir, rel);
+  } catch {
+    return false;
+  }
+  return resolved === path.join(sandboxDir, docName) || resolved === sandboxDir;
+}
+
 async function copyCollection(sandboxDir, collectionDir) {
   await mkdir(collectionDir, { recursive: true });
   await cp(sandboxDir, collectionDir, {
@@ -440,8 +463,13 @@ export async function climb({
   // forward (simulating a multi-hour sleep) between two turns without actually waiting. A real
   // run never passes this and gets the real Date.now.
   now = Date.now,
+  // Addendum Q rule 4 test hook: a pre-built world, skipping makeWorld(seed). A real run never
+  // passes this. Exists so a test can attach a `world.amendments` array (not yet produced by
+  // makeWorld -- that half of Addendum Q is the [ladder]/[skill] workstreams' job) without
+  // waiting on that generator work to land, same escape-hatch pattern as `driver` above.
+  world: providedWorld,
 } = {}) {
-  const world = makeWorld(seed);
+  const world = providedWorld || makeWorld(seed);
   const runDir = path.join(outDir, String(model || driverName), String(seed), String(attempt));
   const sandboxDir = path.join(runDir, 'sandbox');
   await mkdir(sandboxDir, { recursive: true });
@@ -534,6 +562,10 @@ export async function climb({
     // `turns` (model turns/maxTurns) above -- a single model turn can carry several tool calls,
     // and only the `bru` ones count toward the 5000 cap.
     let bruCalls = 0;
+    // Addendum Q rule 13: write_file calls that create/patch a script file (.py/.js/.sh/.ts), and
+    // read_file/grep calls that touch the planted skill document -- see touchesSkillDoc() above.
+    let codeWrites = 0;
+    let docReads = 0;
     let lastSubmissionCount = 0;
     let noToolStreak = 0;
     // Addendum E (kimi-k3, rung 11): two consecutive turns with no tool call AND stop === 'length'
@@ -725,6 +757,16 @@ export async function climb({
         const ms = Date.now() - toolStartedAt;
         toolResults.push({ id: call.id, name: call.name, output: truncateToBytes(outcome.content, TOOL_RESULT_MAX_BYTES), ms });
         messages = [...messages, { role: 'tool', toolCallId: call.id, name: call.name, content: outcome.content, isError: outcome.isError }];
+        // Addendum Q rule 13 counters -- see touchesSkillDoc()'s comment above for what counts.
+        if (call.name === 'write_file' && !outcome.isError && SCRIPT_EXT_RE.test(String((call.input && call.input.path) || ''))) {
+          codeWrites += 1;
+        }
+        if (
+          (call.name === 'read_file' || call.name === 'grep') &&
+          touchesSkillDoc(sandboxDir, call.input && call.input.path, 'SKILL.md')
+        ) {
+          docReads += 1;
+        }
       }
       transcriptEntry.toolResults = toolResults;
 
@@ -741,7 +783,23 @@ export async function climb({
               break turnLoop;
             }
             // eslint-disable-next-line no-await-in-loop
-            await adminPost(adminBase, '/admin/rungs/advance', undefined, adminToken);
+            const advanced = await adminPost(adminBase, '/admin/rungs/advance', undefined, adminToken);
+            const newRung = advanced && typeof advanced.current === 'number' ? advanced.current : s.rung + 1;
+            // Addendum Q rule 4: a dated mid-ladder amendment lands on disk the moment the
+            // ladder reaches its rung, before the agent's next turn (and so before it can ever
+            // ask for that rung's text). amendmentsAt() is world.js's own canonical resolver for
+            // "what amendment(s) does this rung announce" (AMENDMENTS_ENFORCED is false today, so
+            // makeWorld() hands back an empty `amendments` array and this is a no-op in every real
+            // run until that flips -- see world.js's own doc comment on the flag).
+            const amendments = amendmentsAt(world, newRung);
+            if (amendments.length > 0) {
+              // eslint-disable-next-line no-await-in-loop
+              await sandbox.writeFile('SKILL.md', toSkill(world, { mode: 'sloppy', atRung: newRung, targetBytes: skillBytes }));
+              transcript.push({
+                turn: turns,
+                amendments: amendments.map((a) => ({ atRung: a.atRung, rule: a.rule, from: a.from, to: a.to })),
+              });
+            }
           } else {
             stoppedBecause = 'fail';
             break turnLoop;
@@ -874,6 +932,9 @@ export async function climb({
       resumes: 0,
       modelMismatch: false,
       usageEstimated: false,
+      // Addendum Q rule 13: exact for the message-loop driver (every tool call is seen directly).
+      codeWrites,
+      docReads,
     };
 
     await writeFile(path.join(runDir, 'transcript.jsonl'), `${transcript.map((t) => JSON.stringify(t)).join('\n')}\n`);

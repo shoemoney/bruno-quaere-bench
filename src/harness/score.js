@@ -73,6 +73,16 @@ export function scoreGroup(version, model, driver, seed, runs) {
     // reflects it -- this column is what lets the board show HOW MANY, not just that it happened.
     probes: mean(runs.map((r) => r.adminProbes || 0)),
     resumes: mean(runs.map((r) => r.resumes || 0)),
+    // Addendum Q rule 13: "codeWrites and docReads ... separate templating from reasoning better
+    // than turns." codeWrites defaults to 0 like every other pre-existing counter; docReads can be
+    // a genuine `null` (a CLI driver whose product printed nothing observable, per run-cli.js) --
+    // averaged only over runs that actually reported a number, and left `null` itself when none
+    // did, so "unknown" is never displayed as "zero reads."
+    codeWrites: mean(runs.map((r) => r.codeWrites || 0)),
+    docReads: (() => {
+      const known = runs.map((r) => r.docReads).filter((v) => typeof v === 'number');
+      return known.length ? mean(known) : null;
+    })(),
     stop: rep.stoppedBecause,
     trims: mean(runs.map((r) => r.trims || 0)),
     wallMs: mean(runs.map((r) => r.wallMs)),

@@ -17,7 +17,7 @@
 // single shared PRNG stream, so adding a new filler generator or rule later never reshuffles
 // output that already shipped for an existing seed.
 
-import { rng, sub, pick, int, shuffle } from './seed.js';
+import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 // Circular by design: skill.js dispatches its {mode: 'sloppy'} to this module, and this module
 // asks skill.js for the clean document's own section bodies to embed (Addendum I rule 3). Both
 // bindings are only ever called from inside a function body here, never at module-evaluation
@@ -140,6 +140,120 @@ function buildRuleChains(world) {
     rangeChain(seed, 'tokenTtl', 'Bearer token TTL, in seconds', world.auth.tokenTtlSec, 90, 600),
     rangeChain(seed, 'pageSize', 'Default page size', world.pagination.pageSize, 5, 25),
   ];
+}
+
+// --- Addendum Q rule 4: dated mid-ladder amendments ---------------------------------------
+//
+// world.amendments (owned by the ladder workstream, wire contract from ARCHITECTURE.md Addendum
+// Q rule 4) is `[{atRung, rule, from, to}]`, one entry per announced amendment rung (30, 55, 78),
+// `rule` drawn from the closed set the addendum names: grid step, rounding direction, compounding
+// rule, default fps, or the signing canonical string order -- which are exactly the `roundTo`,
+// `roundMode`, `opacityCompound`, `fps`, and `canon` rule-chain keys already defined above. That
+// file does not exist yet as of this writing (world.js is still 0.6.0); this module is written to
+// the wire contract and degrades to a no-op when `world.amendments` is absent or `atRung` is not
+// passed, so it activates the moment the ladder side ships without either side needing to
+// coordinate a simultaneous edit.
+//
+// Rendering an amendment is deliberately NOT a new mechanism: it folds the amendment into the
+// same rule-chain / marker / precedence machinery every other fact already uses. The amended
+// chain's trueValue becomes `to` (so it renders as the document's current, newest-dated answer)
+// and `from` is appended as one more decoy in that same chain, so it picks up an ordinary
+// ascending marker earlier than the truth's -- "the newest-date-wins convention" resolves it
+// exactly the way it resolves every other chain, no special-cased wording required.
+//
+// `world.js`'s own `AMENDMENT_RULES` (Addendum Q rule 4, shipped alongside this file) names the
+// closed set as `roundTo`, `roundMode`, `opacityCompound`, `defaultFps`, `hmacCanon` -- two of
+// those (`defaultFps`, `hmacCanon`) spell the same house fact this module's rule chains already
+// track under the shorter keys `fps` and `canon` (see buildRuleChains above). This map is the one
+// place that translation happens; everything downstream of it talks in this module's own chain
+// keys, same as always.
+const AMENDMENT_RULE_TO_CHAIN_KEY = {
+  roundTo: 'roundTo',
+  roundMode: 'roundMode',
+  opacityCompound: 'opacityCompound',
+  defaultFps: 'fps',
+  hmacCanon: 'canon',
+};
+
+// activeAmendments(world, atRung) -> amendments in force AT this point in the ladder: only those
+// whose atRung <= the given atRung ("renders amendments dated for rungs <= atRung" -- an
+// amendment announced at a later rung than the reader has reached does not exist in the document
+// yet), one per chain key (the latest qualifying one, in the vanishingly unlikely case two
+// announced rungs both amend the same rule before atRung). `world.amendments` is
+// `AMENDMENTS_ENFORCED ? drawAmendments(seed) : []` as of world.js 0.7.0, so this is a no-op on
+// every world in the wild today and activates the instant that switch flips, with no coordinated
+// edit needed on this side.
+function activeAmendments(world, atRung) {
+  if (atRung === undefined || atRung === null) return [];
+  const list = Array.isArray(world.amendments) ? world.amendments : [];
+  const byChainKey = new Map();
+  for (const a of list) {
+    if (!a || typeof a.atRung !== 'number' || a.atRung > atRung) continue;
+    const chainKey = AMENDMENT_RULE_TO_CHAIN_KEY[a.rule];
+    if (!chainKey) continue; // defensive: only the closed set this module models
+    const prev = byChainKey.get(chainKey);
+    if (!prev || a.atRung > prev.atRung) byChainKey.set(chainKey, { ...a, chainKey });
+  }
+  return [...byChainKey.values()].sort((a, b) => a.atRung - b.atRung);
+}
+
+// applyAmendments(chains, amendments) -> mutates the matching chains in place (trueValue becomes
+// `to`, `from` is appended to decoyValues) and returns a compact record of what it did, including
+// `decoyIndex` -- the position `from` landed at in `decoyValues`, so the render loop below can
+// flag that ONE specific decoy entry (not every decoy of that chain) as amendment-derived.
+// `amendments` entries here already carry `chainKey` (see activeAmendments above); the returned
+// record keeps the ladder side's own `rule` name too, so a caller cross-referencing
+// `world.amendments` never has to reverse the translation.
+function applyAmendments(chains, amendments) {
+  const byKey = new Map(chains.map((c) => [c.key, c]));
+  const applied = [];
+  for (const a of amendments) {
+    const chain = byKey.get(a.chainKey);
+    if (!chain) continue; // shouldn't happen given the fixed translation table, but never throw on it
+    const toValue = String(a.to);
+    const fromValue = String(a.from ?? chain.trueValue);
+    chain.decoyValues = [...chain.decoyValues, fromValue];
+    const decoyIndex = chain.decoyValues.length - 1;
+    chain.trueValue = toValue;
+    applied.push({ rule: a.rule, chainKey: a.chainKey, atRung: a.atRung, from: fromValue, to: toValue, decoyIndex });
+  }
+  return applied;
+}
+
+// --- Addendum Q rule 5: truth inside noise-headed sections ---------------------------------
+//
+// "A seeded subset of true rules, and every amendment, is placed inside `### Sync notes`,
+// `### Changelog`, `### Pasted from` blocks." Every other buried fact in this document sits under
+// an unhelpful-but-generic heading drawn from HEADINGS; these three headings are special because
+// they are exactly the ones the filler generators above (genChangelog, genMeetingNotes,
+// genSlackPaste) already use for pure noise -- so a reader who filters sections out BY heading
+// name to skip the noise deletes the truth right along with it. The block itself is unchanged
+// (still one dated, resolvable statement, same marker machinery); only the heading text changes.
+const NOISE_HEADING_CLOSERS = {
+  syncNotes: ['Came up in the sync, no one has revisited it since.', 'Nobody followed up after the meeting; still sitting here.'],
+  changelog: ['Logged in the changelog and never touched again.', 'Filed here during a cleanup pass, then forgotten.'],
+  pastedFrom: ["Pasted in from an old message; no idea if it's still accurate.", 'Copied out of the channel history, unverified since.'],
+};
+
+function noiseHeading(r) {
+  const kind = pick(r, ['syncNotes', 'changelog', 'pastedFrom']);
+  const closer = pick(r, NOISE_HEADING_CLOSERS[kind]);
+  if (kind === 'syncNotes') return { heading: `Sync notes -- ${fakeDate(r, 2021)}`, closer };
+  if (kind === 'changelog') return { heading: 'Changelog (partial, unsorted)', closer };
+  return { heading: 'Pasted from #internal-eng', closer };
+}
+
+// pickNoiseHeadedChainKeys(seed, chains) -> a seeded, roughly-one-third subset of chain keys
+// whose TRUE value gets a noise heading regardless of amendments. Deterministic, and independent
+// of atRung/amendments -- this is a standing 0.7.0 property of the sloppy generator, not something
+// that only switches on once the ladder side ships world.amendments.
+function pickNoiseHeadedChainKeys(seed, chains) {
+  const r = rng(sub(seed, 'sloppy.noiseSubset'));
+  const keys = new Set();
+  for (const c of chains) {
+    if (chance(r, 1 / 3)) keys.add(c.key);
+  }
+  return keys;
 }
 
 // --- precedence convention --------------------------------------------------------------
@@ -444,17 +558,30 @@ function appendChunk(state, text) {
 // number cannot be attributed to one rule by its text alone. Namespacing with the chain's key
 // makes every rendered token unique to its rule by construction, independent of which numbers
 // the world happened to roll.
-function renderChainEntry(state, headingsPick, precedence, entry) {
-  const heading = pick(headingsPick, HEADINGS);
+function renderChainEntry(state, headingsPick, precedence, entry, noiseRng) {
+  // Addendum Q rule 5: a noise-headed entry (a seeded subset of true rules, and every amendment)
+  // renders under one of the three noise headings instead of the generic HEADINGS pool, with a
+  // closing line that reads like that noise kind rather than the generic "carried over" sentence.
+  const noise = entry.noiseHeaded ? noiseHeading(noiseRng) : null;
+  const heading = noise ? noise.heading : pick(headingsPick, HEADINGS);
   const markerText = markerLabel(precedence.type, entry.marker);
   const valueText = escapeForBacktick(entry.value);
   const token = `${entry.chainKey}=${valueText}`;
-  const body = `${markerText} ${entry.label} is \`${token}\`. Carried over from an earlier pass at this document; not re-verified since.`;
+  const closer = noise ? noise.closer : 'Carried over from an earlier pass at this document; not re-verified since.';
+  const body = `${markerText} ${entry.label} is \`${token}\`. ${closer}`;
   const block = [`### ${heading}`, '', body, ''].join('\n');
   const { start, end } = appendChunk(state, block);
   const localIdx = block.indexOf('`' + token + '`');
   const valueOffset = start + localIdx + 1 + entry.chainKey.length + 1; // past the backtick, the key, and '='
-  return { offset: valueOffset, blockStart: start, blockEnd: end, marker: entry.marker, value: entry.value };
+  return {
+    offset: valueOffset,
+    blockStart: start,
+    blockEnd: end,
+    marker: entry.marker,
+    value: entry.value,
+    heading,
+    noiseHeaded: Boolean(entry.noiseHeaded),
+  };
 }
 
 function renderSpecialBlock(state, headingsPick, heading, bodyLines) {
@@ -490,13 +617,14 @@ function renderSectionBlock(state, headingsPick, notePick, item) {
   return { offset: start, length: end - start, heading: item.heading };
 }
 
-function build(world, targetBytes) {
+function build(world, targetBytes, atRung) {
   const seed = world.seed;
   const state = { chunks: [], pos: 0 };
   const rFiller = rng(sub(seed, 'sloppy.filler'));
   const rHeadings = rng(sub(seed, 'sloppy.headings'));
   const rLayout = rng(sub(seed, 'sloppy.layout'));
   const rSectionNote = rng(sub(seed, 'sloppy.sectionNotes'));
+  const rNoiseHeading = rng(sub(seed, 'sloppy.noiseHeadingText'));
 
   const title = [
     `# ${world.vocab.workspace} media house -- internal notes (unsorted)`,
@@ -566,13 +694,35 @@ function build(world, targetBytes) {
   // Rule chains: flatten into individual (chain, marker, value, isTruth) items, one item is
   // the true value, the rest are decoys, each gets its own marker ascending oldest to newest.
   const chains = buildRuleChains(world);
+
+  // Addendum Q rule 4: fold in whichever amendments are in force as of `atRung` BEFORE flattening
+  // -- this mutates chain.trueValue/decoyValues so every downstream step (markers, shuffle,
+  // rendering) treats an amended chain exactly like any other chain, with no separate code path.
+  const appliedAmendments = applyAmendments(chains, activeAmendments(world, atRung));
+  const amendedByChain = new Map(appliedAmendments.map((a) => [a.chainKey, a]));
+
+  // Addendum Q rule 5: a seeded subset of chains get their TRUE value noise-headed regardless of
+  // amendments; every amendment additionally forces noise-heading on both its `to` (the new truth)
+  // and its specific `from` decoy (identified by decoyIndex, not by value, since decoy values can
+  // legitimately repeat -- see enumChain's comment on binary domains above).
+  const noiseHeadedChainKeys = pickNoiseHeadedChainKeys(seed, chains);
+
   const flatItems = [];
   for (const chain of chains) {
     const rMark = rng(sub(seed, `sloppy.markers.${chain.key}`));
     const totalCount = chain.decoyValues.length + 1;
     const markers = markersFor(precedence.type, rMark, totalCount);
+    const amendment = amendedByChain.get(chain.key);
     chain.decoyValues.forEach((value, i) => {
-      flatItems.push({ type: 'rule', chainKey: chain.key, label: chain.label, value, marker: markers[i], isTruth: false });
+      flatItems.push({
+        type: 'rule',
+        chainKey: chain.key,
+        label: chain.label,
+        value,
+        marker: markers[i],
+        isTruth: false,
+        noiseHeaded: Boolean(amendment) && i === amendment.decoyIndex,
+      });
     });
     flatItems.push({
       type: 'rule',
@@ -581,6 +731,7 @@ function build(world, targetBytes) {
       value: chain.trueValue,
       marker: markers[markers.length - 1],
       isTruth: true,
+      noiseHeaded: Boolean(amendment) || noiseHeadedChainKeys.has(chain.key),
     });
   }
 
@@ -618,7 +769,7 @@ function build(world, targetBytes) {
     }
 
     if (item.type === 'rule') {
-      const rendered = renderChainEntry(state, rHeadings, precedence, item);
+      const rendered = renderChainEntry(state, rHeadings, precedence, item, rNoiseHeading);
       const rec = byChain.get(item.chainKey);
       if (item.isTruth) rec.truth = rendered;
       else rec.decoys.push(rendered);
@@ -676,6 +827,26 @@ function build(world, targetBytes) {
     },
     rules,
     sections,
+    // Addendum Q rule 4: amendments in force as of `atRung` (empty when atRung is not passed, or
+    // world.amendments is absent/doesn't reach this atRung). `toOffset`/`fromOffset` point at the
+    // exact same rule-chain entries `rules` already carries (rules.find(r => r.key === rule).truth
+    // / .decoys), duplicated here so a caller checking "did the amendment actually land" never has
+    // to cross-reference decoyIndex through the shuffle itself.
+    amendments: appliedAmendments.map((a) => {
+      const rec = byChain.get(a.chainKey);
+      const fromEntry = rec.decoys.find((d) => d.noiseHeaded && d.value === a.from);
+      return {
+        rule: a.rule,
+        chainKey: a.chainKey,
+        atRung: a.atRung,
+        from: a.from,
+        to: a.to,
+        toOffset: rec.truth.offset,
+        toHeading: rec.truth.heading,
+        fromOffset: fromEntry ? fromEntry.offset : null,
+        fromHeading: fromEntry ? fromEntry.heading : null,
+      };
+    }),
     // Addendum J rule 7: see buildSectionPrecedenceBlock / renderSectionPrecedenceEntry above.
     // `localTextOffset`/`retracted.*Offset` are all string indices into `doc`, same convention
     // as everything else here.
@@ -699,22 +870,27 @@ function build(world, targetBytes) {
 
 const cache = new WeakMap();
 
-function memoBuild(world, targetBytes) {
+function memoBuild(world, targetBytes, atRung) {
   let perWorld = cache.get(world);
   if (!perWorld) {
     perWorld = new Map();
     cache.set(world, perWorld);
   }
-  if (!perWorld.has(targetBytes)) {
-    perWorld.set(targetBytes, build(world, targetBytes));
+  const cacheKey = `${targetBytes}:${atRung ?? ''}`;
+  if (!perWorld.has(cacheKey)) {
+    perWorld.set(cacheKey, build(world, targetBytes, atRung));
   }
-  return perWorld.get(targetBytes);
+  return perWorld.get(cacheKey);
 }
 
-// toSkill(world, {targetBytes}) -> sloppy SKILL.md text, deterministic per (world.seed, targetBytes).
+// toSkill(world, {targetBytes, atRung}) -> sloppy SKILL.md text, deterministic per
+// (world.seed, targetBytes, atRung). `atRung` (Addendum Q rule 4) is the rung the reader has
+// reached: amendments announced at or before it are folded into the document; omitting it (the
+// default) renders the document with no amendments applied at all, unchanged from before this
+// option existed.
 export function toSkill(world, opts = {}) {
   const targetBytes = opts.targetBytes ?? DEFAULT_TARGET_BYTES;
-  return memoBuild(world, targetBytes).doc;
+  return memoBuild(world, targetBytes, opts.atRung).doc;
 }
 
 // truthTable(world, {targetBytes}) -> { precedence, fourThings, rules: [{key,label,truth,decoys}],
@@ -735,8 +911,15 @@ export function toSkill(world, opts = {}) {
 // claimOffset, retractionOffset}}` -- `chainKey` names which of `rules` it restates, `localType`
 // is always the OPPOSITE of `precedence.type`, and `retracted` is the newer-dated decoy that is
 // explicitly retracted two document lines below its own claim (`retractionOffset`'s line is
-// exactly `claimOffset`'s line + 2).
+// exactly `claimOffset`'s line + 2). `amendments` (Addendum Q rule 4) is one entry per amendment
+// in force as of `opts.atRung` -- `{rule, chainKey, atRung, from, to, toOffset, toHeading,
+// fromOffset, fromHeading}` (`rule` is world.js's own AMENDMENT_RULES name, e.g. `hmacCanon`;
+// `chainKey` is this module's matching rule-chain key, e.g. `canon`, and is what `rules` above is
+// keyed by) -- empty when `opts.atRung` is omitted. Every `rules[].truth`/`.decoys[]` entry
+// also now carries `heading` (the exact heading text, sans `### `) and `noiseHeaded` (Addendum Q
+// rule 5): when true, `doc.slice(blockStart, blockStart + heading.length + 4)` is
+// `### ${heading}` and `heading` starts with `Sync notes`, `Changelog`, or `Pasted from`.
 export function truthTable(world, opts = {}) {
   const targetBytes = opts.targetBytes ?? DEFAULT_TARGET_BYTES;
-  return memoBuild(world, targetBytes).truth;
+  return memoBuild(world, targetBytes, opts.atRung).truth;
 }

@@ -141,6 +141,17 @@ export function gracefulKillTree(child, { drainMs = DEFAULT_DRAIN_MS } = {}) {
 // stderr chunk (`{ts, type:'stderr', text}`), and per newly observed submission (`{ts,
 // type:'submission', submission}`) -- run-cli.js builds transcript.jsonl straight from these
 // rather than reconstructing timing after the fact.
+//
+// `onAdvance({rung, submission})` (Addendum Q rule 4): awaited right after a passing submission's
+// `/admin/rungs/advance` call succeeds, before this function looks at the next fresh submission
+// in the same batch -- `rung` is the new current rung (the server's own `current`, falling back
+// to `submission.rung + 1` if the admin response doesn't carry one). This function stays
+// domain-agnostic (no world/skill import here); run-cli.js's caller is the one that knows what an
+// "amendment rung" is and rewrites HOUSE-RULES.md, so this is only a serialization point, always
+// awaited inside the same check chain a poll tick and the exit handler already share, which is
+// what makes "before the next thing this function does" a real guarantee rather than a race.
+// Defaults to a no-op; a hook that throws is caught and reported as an `onAdvanceError` event
+// rather than killing the supervised process over a side channel unrelated to the climb itself.
 export function superviseProcess({
   cmd,
   args = [],
@@ -155,6 +166,7 @@ export function superviseProcess({
   knownSubmissionsCount = 0,
   maxBruTurns = DEFAULT_MAX_BRU_TURNS,
   onEvent = () => {},
+  onAdvance = () => {},
   // Addendum P: injectable clock, purely for tests -- see run-cli.js's climb() for the shared
   // rationale. A real run never passes this and gets the real Date.now.
   now = Date.now,
@@ -261,6 +273,17 @@ export function superviseProcess({
           });
           gracefulKillTree(child, { drainMs });
           return;
+        }
+        // Addendum Q rule 4: give the caller a chance to rewrite HOUSE-RULES.md for an amendment
+        // landing on this rung, awaited (so it is done) before the next fresh submission in this
+        // same batch is looked at, and always before this poll tick's check chain link resolves --
+        // i.e. strictly before the process's next poll tick or its next exit-triggered check.
+        const newRung = advanced && typeof advanced.current === 'number' ? advanced.current : s.rung + 1;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await onAdvance({ rung: newRung, submission: s });
+        } catch (err) {
+          onEvent({ ts: iso(), type: 'onAdvanceError', text: err && err.message ? err.message : String(err) });
         }
       }
     }

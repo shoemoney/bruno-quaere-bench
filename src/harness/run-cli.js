@@ -8,11 +8,11 @@
 // Wall-clock timing (Date.now()) is allowed throughout: this is the harness, never anything that
 // feeds an artifact, a spec, a skill, or a rung (ARCHITECTURE.md's determinism rule).
 
-import { mkdir, writeFile, readFile, cp, chmod } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, cp, chmod, readdir, stat } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
-import { makeWorld, VERSION as LADDER_VERSION } from '../world.js';
+import { makeWorld, VERSION as LADDER_VERSION, amendmentsAt } from '../world.js';
 import { createServer } from '../api/server.js';
 import { toOpenApi } from '../spec.js';
 import { toSkill } from '../skill.js';
@@ -173,6 +173,71 @@ async function copyCollection(sandboxDir, collectionDir) {
   });
 }
 
+// --- Addendum Q rule 13: codeWrites / docReads (CLI-driver side) --------------------------------
+//
+// Unlike run.js's message-loop driver, this harness never sees the product's own tool calls --
+// only its stdout/stderr and the sandbox filesystem, exactly the two things ARCHITECTURE.md's Q13
+// brief says to fall back to: "file creations/patches under the sandbox detected by mtime scans
+// between turns" for codeWrites, and "grep/cat/sed invocations of HOUSE-RULES.md in the CLI's own
+// transcript events where available, else null" for docReads.
+
+const SCRIPT_EXT_RE = /\.(py|js|sh|ts)$/i;
+
+// scanScriptMtimes(root) -> Map<relPath, mtimeMs> for every script file (.py/.js/.sh/.ts) under
+// the sandbox, skipping `bin/` (the bru shim this harness plants, never the CLI's own work).
+// Best-effort: a file that vanishes between readdir and stat (mid-write, or removed) is skipped
+// rather than thrown over, since this only ever runs between spawns, not during one.
+async function scanScriptMtimes(root, dir = root, skipDirs = new Set(['bin'])) {
+  const out = new Map();
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (skipDirs.has(path.relative(root, full))) continue;
+      // eslint-disable-next-line no-await-in-loop
+      for (const [rel, mtimeMs] of await scanScriptMtimes(root, full, skipDirs)) out.set(rel, mtimeMs);
+    } else if (entry.isFile() && SCRIPT_EXT_RE.test(entry.name)) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const st = await stat(full);
+        out.set(path.relative(root, full), st.mtimeMs);
+      } catch {
+        // race: gone between readdir and stat -- skip it, next scan will see whatever lands
+      }
+    }
+  }
+  return out;
+}
+
+// countScriptWrites(before, after) -> how many script files are new, or changed mtime, between
+// two scanScriptMtimes() snapshots taken either side of one spawn's supervision window. A file
+// deleted between scans is not counted (nothing was "written"); a file rewritten more than once
+// inside the same window is still one count, since mtime scanning can't see intermediate writes.
+function countScriptWrites(before, after) {
+  let count = 0;
+  for (const [rel, mtimeMs] of after) {
+    if (!before.has(rel) || before.get(rel) !== mtimeMs) count += 1;
+  }
+  return count;
+}
+
+// docReadInvocationsIn(text) -> count of grep/cat/sed invocations of HOUSE-RULES.md found in a
+// blob of the CLI's own stdout/stderr (e.g. a real CLI's --output-format json tool-use events, or
+// a shell trace) -- a plain substring/regex scan, not a shell parser, so it only ever
+// UNDER-counts (an invocation split across two stdout chunks, or spelled with an escaped path,
+// can be missed) and never invents one that isn't textually present.
+const DOC_READ_RE = /\b(?:cat|grep|sed)\b[^\n]{0,200}HOUSE-RULES\.md/gi;
+function docReadInvocationsIn(text) {
+  if (!text) return 0;
+  const matches = String(text).match(DOC_READ_RE);
+  return matches ? matches.length : 0;
+}
+
 // ---------------------------------------------------------------------------
 // climb
 // ---------------------------------------------------------------------------
@@ -289,8 +354,11 @@ export async function climb({
   // superviseProcess() too, so a sleep detected mid-spawn (inside its poll loop) uses the same
   // clock as gaps detected here, between spawns.
   now = Date.now,
+  // Addendum Q rule 4 test hook: a pre-built world, skipping makeWorld(seed) -- see run.js's
+  // identical param for the full rationale (world.amendments isn't produced by makeWorld() yet).
+  world: providedWorld,
 } = {}) {
-  const world = makeWorld(seed);
+  const world = providedWorld || makeWorld(seed);
   const label = model || (cliName ? `cli-${cliName}` : 'cli-fake');
   // Absolute, not relative: the sandbox path is handed to a CLI that has ALREADY chdir'd into the
   // sandbox (spawn cwd), so a relative `-C runs/.../sandbox` resolves against the sandbox itself
@@ -324,6 +392,10 @@ export async function climb({
   let usageEstimated = false;
   let sessionId = null;
   let resumes = 0;
+  // Addendum Q rule 13 (CLI-driver fallback -- see the block above climb()).
+  let codeWrites = 0;
+  let docReads = 0;
+  let sawAnyProcessOutput = false;
 
   // Addendum P: "the machine slept." Same rule as run.js's message loop -- a gap between two
   // consecutive ticks over SUSPEND_GAP_MS is a sleep/suspend, not the CLI working, and is folded
@@ -346,6 +418,26 @@ export async function climb({
     await adminPost(adminBase, '/admin/rungs', answerKey(world), adminToken);
 
     await prepareCliSandbox({ world, sandboxDir, baseUrl, budgetTokens, skillMode, skillBytes });
+
+    // Addendum Q rule 4: rewrite HOUSE-RULES.md the moment the ladder reaches an amendment rung,
+    // awaited from inside supervise.js's own serialized check chain (see its onAdvance doc
+    // comment) so this always lands before the process's next poll tick -- world.amendments isn't
+    // produced by makeWorld() yet (the [ladder]/[skill] workstreams' half of Addendum Q), so this
+    // is a no-op today and only starts firing once world.amendments exists.
+    async function applyAmendmentIfDue({ rung }) {
+      const amendments = amendmentsAt(world, rung);
+      if (amendments.length === 0) return;
+      await writeFile(
+        path.join(sandboxDir, 'HOUSE-RULES.md'),
+        toSkill(world, { mode: 'sloppy', atRung: rung, targetBytes: skillBytes }),
+        'utf8',
+      );
+      transcript.push({
+        ts: new Date().toISOString(),
+        type: 'amendment',
+        amendments: amendments.map((a) => ({ atRung: a.atRung, rule: a.rule, from: a.from, to: a.to })),
+      });
+    }
 
     const adapter = providedAdapter || (await resolveCliAdapter(cliName));
 
@@ -392,6 +484,10 @@ export async function climb({
         cwd: spawnSpec.cwd || sandboxDir,
         env: spawnSpec.env || {},
       });
+      // Addendum Q rule 13 (codeWrites): a script-file mtime snapshot taken either side of this
+      // spawn's whole supervision window -- see scanScriptMtimes()'s doc comment above.
+      // eslint-disable-next-line no-await-in-loop
+      const scriptMtimesBefore = await scanScriptMtimes(sandboxDir);
       const outcome = await superviseProcess({
         cmd: spawnSpec.cmd,
         args: spawnSpec.args || [],
@@ -405,6 +501,7 @@ export async function climb({
         wallMsLeft,
         pollMs,
         maxBruTurns,
+        onAdvance: applyAmendmentIfDue,
         // Addendum G: the baseline is per RUN, not per spawn -- `allSubmissions` is this climb's
         // own running total across every earlier spawn/resume, so a resume never re-reacts to
         // (re-advances for, or re-fails on) a submission an earlier spawn already handled.
@@ -415,6 +512,15 @@ export async function climb({
         now,
         onEvent: (entry) => transcript.push(entry),
       });
+      // Addendum Q rule 13: diff the script-file mtime snapshot (codeWrites), and scan this
+      // spawn's own stdout/stderr for grep/cat/sed invocations of HOUSE-RULES.md (docReads).
+      // eslint-disable-next-line no-await-in-loop
+      const scriptMtimesAfter = await scanScriptMtimes(sandboxDir);
+      codeWrites += countScriptWrites(scriptMtimesBefore, scriptMtimesAfter);
+      if ((outcome.stdout && outcome.stdout.length) || (outcome.stderr && outcome.stderr.length)) {
+        sawAnyProcessOutput = true;
+        docReads += docReadInvocationsIn(outcome.stdout) + docReadInvocationsIn(outcome.stderr);
+      }
       // Addendum P: a sleep detected inside the spawn's own poll loop (supervise.js) is reported
       // back here and folded into this climb's total -- also nudges this loop's own tick() so the
       // very next iteration's wall check doesn't re-count the same gap as a fresh one.
@@ -665,6 +771,11 @@ export async function climb({
       resumes,
       modelMismatch,
       usageEstimated,
+      // Addendum Q rule 13 (CLI-driver fallback -- mtime scan / transcript text scan, see the
+      // block above climb()). docReads is null, not 0, when this run's CLI never printed anything
+      // observable at all -- "we saw nothing" is not the same claim as "we saw zero reads."
+      codeWrites,
+      docReads: sawAnyProcessOutput ? docReads : null,
     };
 
     await writeFile(path.join(runDir, 'transcript.jsonl'), `${transcript.map((t) => JSON.stringify(t)).join('\n')}\n`);

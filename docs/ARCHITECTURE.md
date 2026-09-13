@@ -980,3 +980,18 @@ no model judge.
 Asymmetry: rules 1, 2, 5, 7, 9 are near-free for a correct agent and fatal to replay. Rules 4
 and 6 tax everyone and are the first that make the long-session axis measure something. Rule 11
 pays for 6 and 8 out of turns that currently buy nothing.
+
+### Round four result (ladder 0.6.0, seeds 700-706, caffeinated, one attempt each, 2026-09-13 13:18)
+
+| Model | Driver | Rung | Turns | Novel tokens | Wall | Fell on |
+|---|---|---|---|---|---|---|
+| gpt-6-astra | codex | 99, cleared | 3733 | 0.37M | 66 min | |
+| deepseek-flash | direct API | 99, cleared | 1740 | 0.93M | 96 min | |
+| qwen3.8-max | qwen CLI | 74 | 1111 | | 135 min | hash at 75, chain checks true |
+| claude-fable-5.1 | ai | 70 | 1060 | 0.27M | 33 min | own script's silent interpolation error at 71 |
+| gemini-3.8-flash | google direct | 59 | 1328 | 0.75M | 61 min | drafted the If-Match write, never ran it |
+| x-ai/grok-4.6 | openrouter | 39 | 504 | 0.25M | 38 min | ignored a pageSize anomaly at 40 |
+| kimi-k3 | kimi CLI | 2 | 25 | 0.12M | 9 min | lost a --env-var handoff, submitted rung 0's hash |
+
+Zero violations, zero admin probes, zero resumes across all seven. Two clears; every fall is
+`hash:false` with both chain checks true. This is the baseline 0.7.0 must move.

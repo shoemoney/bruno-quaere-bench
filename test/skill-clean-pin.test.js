@@ -24,7 +24,15 @@ import { sha256 } from '../src/canon.js';
 // to the stitched clip -- and "Video container facts" now states outright that a video converts
 // only to `qvid`. Both are real, intended content additions (see test/skill-rules-subset.test.js,
 // which proves docs/RULES-0.6.md rule 28's tokens are actually present), not a regression.
-const CLEAN_SEED_1_SHA256 = 'ca252369e37fd4df8626dff59f60b465fc6f4df6f4ef0cace987fb9c4cf5b228';
+// Rebaselined a fifth time for ladder 0.7.0 / docs/RULES-0.7.md rules 30-37 (Addendum Q): four new
+// sections -- "Cleared-out assets" (30), "Amendments" (33, plus the regression-task paragraph for
+// 34), "Negative-space grading" (36), "Byte budgets" (37) -- inserted between "Video container
+// facts" and "Overrides"; the Pagination section gained the short-page/undercount and
+// scoped-derived-count paragraphs (31, 32); the Publish signing section gained the digest-binding
+// paragraph (35, `X-Body-Digest`). test/skill-rules-subset.test.js (now pointed at RULES-0.7.md)
+// proves every new (skill) rule's tokens are actually present; this is a real, intended content
+// addition, not a regression.
+const CLEAN_SEED_1_SHA256 = '24a976da610db572d100e6cb6d767a3e8434d4628cb2815078700f2113c14b43';
 
 test('clean-mode toSkill(world) output for seed 1 is byte-identical to the pre-sloppy baseline', () => {
   const world = makeWorld(1);
