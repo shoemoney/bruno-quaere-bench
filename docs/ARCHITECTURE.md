@@ -871,3 +871,20 @@ Rules for ladder 0.6.0:
   fallback in the gate).
 - Version 0.6.0. Round two on 0.5.0 is superseded; its comparable facts are Gemini 59 (real,
   fell at 60 on bookkeeping), Grok 40, Kimi 25, and the three voided 59s.
+
+## Addendum P: the machine slept; rounds run under caffeinate, and transport errors retry
+
+Added 2026-09-13 11:05. Round three (0.6.0, seeds 600-606) launched 04:50; `pmset -g log`
+shows the Mac entered sleep at 05:16 and woke from hibernate at 11:00. Six of seven runs report
+`stoppedBecause: 'time'` with 371 wall minutes against a 180-minute cap: 26 minutes of compute,
+344 minutes suspended, then the wall check fired on wake. All six were still clean (last
+submission passed all three checks). Only deepseek's fall (rung 56, hash mismatch with the chain
+checks true) is a real result. The round is void as a ceiling measurement; it is valid as a rate:
+astra 63 rungs, fable 52, gemini 43, grok 29, qwen 23, kimi 11 in 26 minutes each.
+
+Rules: every climb process is launched under `caffeinate -i -s` (no idle sleep while it runs, on
+AC power); the wall is 6 hours so the 3M novel-token budget, not the clock, is the binding limit;
+the harness records `suspendedMs` (sum of gaps between consecutive turns over 5 minutes) and
+subtracts it from the wall check, so a sleep can never end a run by itself. And the Addendum M
+transient rule is implemented, not just written: grok died on `terminated` a second time (seed
+605, clean at rung 29).
