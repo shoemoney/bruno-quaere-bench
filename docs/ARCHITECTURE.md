@@ -737,6 +737,11 @@ climbed by one script. The steepening must add kinds of difficulty a script cann
    scripts cannot have seen. 0.5.0 adds `diff` over audio and `sequence` over video.
 9. **Band table.** Steps per rung: 0-9: 1-2; 10-29: 3-5; 30-49: 6-9; 50-69: 10-14; 70-89: 15-20;
    90-99: 20-30, with the dependencies above layered in by band. Difficulty stays monotone.
+   *Amended by Addendum O (ladder 0.6.0):* the 50-69 row splits into **50-59: 10-15** and
+   **60-69: 10-14**. Tier 5 stopped at `rendered` through 0.5.1; grading the chain from rung 50
+   up means it now walks the release too, which is exactly one more plan step on the tier-5
+   rungs that also save. `RULE_9_STEPS` in `test/ladder-0-5.test.js` is the live copy of this
+   table and pins the split.
 
 ### Harness rules
 

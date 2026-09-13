@@ -25,7 +25,16 @@ import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 // chains at 50+ (rule 4), audio/video math at 50+ (rules 5 and 8), multi-rule ordering at 70+
 // (rule 6) and a much longer step envelope (rule 9). Every 0.4.x hash is superseded and no 0.4.x
 // board row is comparable with a 0.5.x one.
-export const VERSION = '0.5.1';
+// Bumped to 0.6.0 by Addendum O, the rung-60 audit. Three changes a 0.5.x row cannot be compared
+// against: (1) every stitch rung's text now states the antecedent of the chain that follows it
+// ("That stitched piece is only there to be counted; carry on with the finished picture."), the
+// missing sentence that cost three of five finished climbs a rung-60 fall at fidelity 0.03;
+// (2) the answer key grades the chain from rung 50 up -- beside the hashes it records the project
+// state the submitted asset must have reached (`published`, in order) and the label the text told
+// the agent to write under If-Match, so six mechanisms of work that were invisible to the scorer
+// now count, and tier 5 walks the release it always described; (3) the conditional write's label
+// is a seeded word stated in the task text instead of an ungradeable "a word of your own".
+export const VERSION = '0.6.0';
 
 // ---------------------------------------------------------------------------
 // Addendum J rule 3: announced per-rung mutations

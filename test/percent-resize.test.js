@@ -63,7 +63,7 @@ test('runCompute percentOfDims always matches roundToGrid(snap6(raw), roundTo, r
   // Rebaselined by Addendum M: the floor is now `roundTo` (one whole grid step), not bare `1` --
   // a bare-1 floor is not itself grid-aligned whenever roundTo > 1, so the next grid-rounding
   // pass (what a live resize target goes through next) rounded it straight back down to 0, which
-  // is what OOM'd seed 525's answer key. See docs/RULES-0.5.md rule 5 and grammar.js's
+  // is what OOM'd seed 525's answer key. See docs/RULES-0.6.md rule 5 and grammar.js's
   // runCompute for the full mechanism.
   const cases = [
     { of: { width: 100, height: 50 }, percent: 33 },

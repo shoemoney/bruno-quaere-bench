@@ -1,7 +1,12 @@
 // Addendum I rule 4: the answer key must be derivable from the documents.
-// docsolver.js is written clean-room from docs/RULES-0.5.md, the skill, the spec and the
+// docsolver.js is written clean-room from docs/RULES-0.6.md, the skill, the spec and the
 // rung text. If it disagrees with makeRung on any rung, one of the two is wrong and the
 // build is red.
+//
+// Addendum O rule 4 ("gates cover the seeds that run"): seeds 1-20 were the whole gate
+// through 0.5.1 while every round ran on the 5xx block, so the seeds that burned money
+// were never the seeds the build checked. The default list is now both. QUAERE_GATE_SEEDS
+// overrides it ("1-20,500-540", "525", "600-620") for a round on a different block.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,12 +14,38 @@ import assert from 'node:assert/strict';
 import { makeWorld } from '../src/world.js';
 import { makeRung } from '../src/ladder/rung.js';
 import {
-  solve, gate, snap6, roundToGrid, gridAfterScale, firstDifference, DocSolveError,
+  solve, solveGraded, gate, solverOpts, snap6, roundToGrid, gridAfterScale, firstDifference,
+  STITCH_ANTECEDENT, DocSolveError,
 } from '../src/ladder/docsolver.js';
 
-const SEEDS = Array.from({ length: 20 }, (_, i) => i + 1);
+const range = (lo, hi) => Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+
+// "1-20,500-540" -> [1..20, 500..540]; a bare number is a one-seed range.
+function parseSeeds(spec) {
+  const seeds = [];
+  for (const piece of spec.split(',').map((s) => s.trim()).filter((s) => s !== '')) {
+    const m = /^(\d+)(?:-(\d+))?$/.exec(piece);
+    if (m === null) throw new Error(`QUAERE_GATE_SEEDS: cannot read ${JSON.stringify(piece)}`);
+    const lo = Number(m[1]);
+    const hi = m[2] === undefined ? lo : Number(m[2]);
+    if (hi < lo) throw new Error(`QUAERE_GATE_SEEDS: ${piece} runs backwards`);
+    seeds.push(...range(lo, hi));
+  }
+  if (seeds.length === 0) throw new Error('QUAERE_GATE_SEEDS is empty');
+  return [...new Set(seeds)];
+}
+
+// The rounds run on the 5xx block; the ladder is developed on 1-20. Both are gated.
+const DEFAULT_SEEDS = [...range(1, 20), ...range(500, 540)];
+const SEEDS = process.env.QUAERE_GATE_SEEDS === undefined
+  ? DEFAULT_SEEDS
+  : parseSeeds(process.env.QUAERE_GATE_SEEDS);
 const FROM = 0;
 const TO = 99;
+
+// Addendum O: from this rung up a submission is graded on the project state and the label
+// as well as the hash.
+const GRADED_FROM = 50;
 
 function describe(entry) {
   const head = `  seed ${entry.seed} rung ${entry.n}`;
@@ -34,11 +65,11 @@ function describe(entry) {
 // A task the solver can chew on without any live state, used by the loud-failure tests.
 const PLAIN_SHAPE = 'a rectangle 10 across and 10 down, its top-left corner 1 from the left '
   + 'and 1 from the top, painted #ffffff at 50 percent solid';
-const plainTask = (middle) =>
+const plainTask = (middle, tail = '') =>
   `Make a picture 100 by 100 pixels, on a #000000 ground, carrying these, bottom of the pile first: `
-  + `(1) ${PLAIN_SHAPE}. ${middle}Turn in exactly that piece.`;
+  + `(1) ${PLAIN_SHAPE}. ${middle}${tail}Turn in exactly that piece.`;
 
-test('house arithmetic matches the rules RULES-0.5 states', () => {
+test('house arithmetic matches the rules RULES-0.6 states', () => {
   // rule 2: the six-decimal snap, so 0.56 in at 300 dpi is 168, never 168.00000000000003
   assert.equal(snap6(168.00000000000003), 168);
   assert.equal(snap6(0.1234565), 0.123457);
@@ -138,7 +169,7 @@ test('a cross-rung reference with nothing remembered fails loudly rather than gu
   assert.equal(recalled.background.color, '#abcdef');
 });
 
-test('an announced change never alters the finished artifact (RULES-0.5 rule 27)', () => {
+test('an announced change never alters the finished artifact (RULES-0.6 rule 27)', () => {
   const world = makeWorld(1);
   const warning = 'Fair warning: the house has changed something about the way it answers, starting with this '
     + 'piece of work. Nobody will tell you what. Read what actually comes back on every call rather than what '
@@ -164,8 +195,8 @@ test('a library haul with no listing to read fails loudly rather than inventing 
   );
 });
 
-// The one rule this solver uses that docs/RULES-0.5.md does not state. If a future
-// change makes media.js snap inside a scale lora, or RULES-0.5.md grows the sentence
+// The one rule this solver uses that docs/RULES-0.6.md does not state. If a future
+// change makes media.js snap inside a scale lora, or RULES-0.6.md grows the sentence
 // that says it does not, THIS test is the one to delete -- not the carve-out on its own.
 test('gridAfterScale is load-bearing: the scale lora grids the raw product, not the snapped one', () => {
   // seed 10: roundTo 2, direction up. 75 x 1.36 is 102.00000000000001 in IEEE-754.
@@ -201,7 +232,7 @@ test('firstDifference reports the first differing leaf', () => {
 
 // Every 0.5.0 obligation has to be on the ladder somewhere, or the gate above is green
 // for the wrong reason: it cannot prove a rule is right if no rung ever exercises it.
-test('the ladder exercises every 0.5.0 obligation the solver models', () => {
+test('the ladder exercises every obligation the solver models', () => {
   const wanted = {
     'cross-rung recalled size (rule 21)': /as wide and as tall as the piece you turned in at step \d+/,
     'cross-rung recalled ground (rule 21)': /same ground colour as the piece you turned in at step \d+/,
@@ -211,22 +242,155 @@ test('the ladder exercises every 0.5.0 obligation the solver models', () => {
     'derived count: stitched frames (rules 16, 17, 19)': /every frame in the stitched clip/,
     'derived count: standing copies (rule 19)': /every copy of yours still standing in that listing/,
     'announced change (rule 26)': /Fair warning: the house has changed something/,
+    'house stages (rule 23)': /Walk it all the way through the house/,
     'signing chain (rule 24)': /sign and send the release notice/,
-    'conditional write (rule 25)': /write a word of your own onto it/,
+    'conditional write, stated word (rules 25, 29)': /write the word "[^"]+" onto it/,
+    'stitch antecedent (rule 28)': STITCH_ANTECEDENT,
     'content negotiation': /as a spreadsheet/,
     'soft delete': /clear out the last/,
     'multi-rule ordering (0.5.0 rule 6)': /Order is the whole game here/,
   };
   const seen = Object.fromEntries(Object.keys(wanted).map((k) => [k, 0]));
-  for (const seed of SEEDS) {
+  const outstanding = new Set(Object.keys(wanted));
+  // Deliberately DEFAULT_SEEDS and not SEEDS: whether the grammar can emit an obligation
+  // at all is a property of the grammar, not of whichever block a round happens to run on,
+  // and the rarest of these (a recalled ground colour) does not turn up inside every
+  // eleven-seed window. Narrowing this with QUAERE_GATE_SEEDS would turn a coverage claim
+  // into a coin flip. The early exit is what keeps a 61-seed sweep cheap: stop as soon as
+  // the grammar has shown it can emit all of them.
+  for (const seed of DEFAULT_SEEDS) {
+    if (outstanding.size === 0) break;
     const world = makeWorld(seed);
     for (let n = FROM; n <= TO; n += 1) {
       const { text } = makeRung(world, n);
-      for (const [label, re] of Object.entries(wanted)) if (re.test(text)) seen[label] += 1;
+      for (const label of [...outstanding]) {
+        if (wanted[label].test(text)) { seen[label] += 1; outstanding.delete(label); }
+      }
     }
   }
-  const missing = Object.entries(seen).filter(([, count]) => count === 0).map(([label]) => label);
-  assert.deepEqual(missing, [], `no rung on seeds ${SEEDS[0]}-${SEEDS[SEEDS.length - 1]} exercises: ${missing.join(', ')}`);
+  const missing = [...outstanding];
+  assert.deepEqual(missing, [], `no rung on seeds ${DEFAULT_SEEDS[0]}-${DEFAULT_SEEDS[DEFAULT_SEEDS.length - 1]} exercises: ${missing.join(', ')}`);
+});
+
+// ---------------------------------------------------------------------------
+// Ladder 0.6.0: the stitch antecedent and the graded chain (Addendum O)
+// ---------------------------------------------------------------------------
+
+const STAGES = 'Walk it all the way through the house stages in the house order -- lock it in, '
+  + 'kick off the finishing run, and do not call it done until you check back and it actually says '
+  + 'finished. ';
+const SIGN = 'Then sign and send the release notice the house requires before anything can go out '
+  + 'the door. ';
+const writeNote = (word) => `Once you have that last piece, write the word "${word}" onto it -- and `
+  + 'do it in a way that will fail rather than overwrite if anyone touched it between your reading '
+  + 'it and your writing. ';
+
+// The first rung on a seed whose text stitches, together with everything solve() needs to
+// reach it: the injected oracles and this solver's memory of every rung below it, since a
+// stitch rung is deep enough to recall a piece it turned in thirty rungs ago (rule 21).
+// These tests run against real generated text, never a hand-written imitation of it.
+async function findStitchRung(seed) {
+  const world = makeWorld(seed);
+  const base = await solverOpts(world);
+  const history = new Map();
+  for (let n = FROM; n <= TO; n += 1) {
+    const rung = makeRung(world, n);
+    if (STITCH_ANTECEDENT.test(rung.text)) return { world, n, rung, opts: { ...base, history } };
+    try {
+      history.set(n, solve(world, rung.text, n, { ...base, history })[0]);
+    } catch { /* only the stitch rung itself has to solve for these tests */ }
+  }
+  return assert.fail(`no rung on seed ${seed} stitches; the antecedent tests have nothing to bite on`);
+}
+
+// Rule 28. This is the rung-60 fall of 0.5.0 round two: three climbs did the arithmetic
+// perfectly and applied it to the stitched clip instead of the picture.
+test('after a stitch the chain carries on with the picture, not the clip', async () => {
+  const { world, n, rung, opts } = await findStitchRung(SEEDS[0]);
+  const [out] = solve(world, rung.text, n, opts);
+  assert.equal(out.kind, 'image', `rung ${n} should turn in the picture, not the ${out.kind}`);
+  assert.match(rung.text, /every frame in the stitched clip/);
+});
+
+test('a stitch rung whose text drops the antecedent fails loudly rather than inferring it', async () => {
+  const { world, n, rung, opts } = await findStitchRung(SEEDS[0]);
+  const stripped = rung.text.replace(STITCH_ANTECEDENT, '').replace(/  +/g, ' ');
+  assert.notEqual(stripped, rung.text);
+  assert.throws(
+    () => solve(world, stripped, n, opts),
+    (err) => {
+      assert.ok(err instanceof DocSolveError, `expected DocSolveError, got ${err && err.name}`);
+      assert.match(err.message, /antecedent of the chain that follows \(rule 28\)/);
+      return true;
+    },
+  );
+});
+
+// Rules 25 + 29 and Addendum O's "grade the chain": the word is stated in the text, goes
+// on the last piece, and is part of the answer from rung 50 up.
+test('the conditional write names the word, and it is read off the text never chosen', () => {
+  const world = makeWorld(SEEDS[0]);
+  const graded = solveGraded(world, plainTask(`${STAGES}${SIGN}`, writeNote('quartz')), 0);
+  assert.equal(graded.expectedLabel, 'quartz');
+  assert.equal(graded.expectedProjectState, 'published');
+  // Rule 25: the write changes labels only, never the descriptor.
+  assert.deepEqual(graded.descriptors, solve(world, plainTask(''), 0));
+});
+
+test('a rung that demands no stages and no word grades neither', () => {
+  const graded = solveGraded(makeWorld(SEEDS[0]), plainTask(''), 0);
+  assert.equal(graded.expectedProjectState, null);
+  assert.equal(graded.expectedLabel, null);
+});
+
+test('a release notice with no finishing run before it fails loudly (rule 23)', () => {
+  const world = makeWorld(SEEDS[0]);
+  assert.throws(
+    () => solve(world, plainTask(SIGN), 0),
+    (err) => {
+      assert.ok(err instanceof DocSolveError);
+      assert.match(err.message, /published stage out of turn \(rule 23\)/);
+      return true;
+    },
+  );
+  assert.equal(solveGraded(world, plainTask(STAGES), 0).expectedProjectState, 'rendered');
+});
+
+test('a word written after the turn-in would label a different piece, and fails loudly', () => {
+  const world = makeWorld(SEEDS[0]);
+  const text = `${plainTask(`${STAGES}${SIGN}`)} ${writeNote('quartz').trim()}`;
+  assert.throws(
+    () => solve(world, text, 0),
+    (err) => {
+      assert.ok(err instanceof DocSolveError);
+      assert.match(err.message, /conditional write lands after the turn-in \(rule 29\)/);
+      return true;
+    },
+  );
+});
+
+// The whole of Addendum O's grading rule, over a real ladder: the key and the solver agree
+// on what is graded, only rungs at or above GRADED_FROM are graded, and every graded label
+// is a word the task text actually states.
+test('the graded chain rides beside the descriptors, and only from rung 50 up', async () => {
+  for (const seed of [SEEDS[0], SEEDS[SEEDS.length - 1]]) {
+    const world = makeWorld(seed);
+    let gradedRungs = 0;
+    for (let n = FROM; n <= TO; n += 1) {
+      const rung = makeRung(world, n);
+      const where = `seed ${seed} rung ${n}`;
+      if (rung.expectedProjectState === null) {
+        assert.equal(rung.expectedLabel, null, `${where}: a label with no project state`);
+        assert.doesNotMatch(rung.text, /write the word "/, `${where}: demands a word nothing grades`);
+        continue;
+      }
+      gradedRungs += 1;
+      assert.ok(n >= GRADED_FROM, `${where}: graded below rung ${GRADED_FROM}`);
+      assert.equal(rung.expectedProjectState, 'published', `${where}: graded short of published`);
+      assert.match(rung.text, new RegExp(`write the word "${rung.expectedLabel}" onto it`), where);
+    }
+    assert.ok(gradedRungs > 0, `seed ${seed} grades no rung at all`);
+  }
 });
 
 for (const seed of SEEDS) {

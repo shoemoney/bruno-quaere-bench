@@ -43,9 +43,10 @@ test('world.version is pinned', () => {
   // 0.4.0 -> 0.5.0 by Addendum J, which changed the ladder grammar wholesale (cross-rung
   // references, derived parameters, announced per-rung mutations, state-machine/HMAC/ETag chains,
   // audio and video math, multi-rule ordering, a much longer step envelope), then 0.5.0 -> 0.5.1
-  // by Addendum M's descriptor caps and percentOfDims grid-floor fix -- see world.js's VERSION
-  // comment.
-  assert.equal(makeWorld(1).version, '0.5.1');
+  // by Addendum M's descriptor caps and percentOfDims grid-floor fix, then 0.5.1 -> 0.6.0 by
+  // Addendum O (the stitch antecedent stated in text and skill, the house refusing a lora on a
+  // non-image, and the chain graded from rung 50 up) -- see world.js's VERSION comment.
+  assert.equal(makeWorld(1).version, '0.6.0');
 });
 
 test('vocab has the four required nouns as non-empty strings', () => {

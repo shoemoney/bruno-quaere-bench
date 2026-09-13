@@ -13,6 +13,15 @@ import { hashArtifact } from '../canon.js';
 import { makeRung } from './rung.js';
 import { runCompute, resolveRefs, recallValue } from './grammar.js';
 
+// recallFallbackResolver(world) -> (fromRung, field) -> value. The OPT-IN escape hatch for a
+// climb that starts mid-ladder (`--from 40`) and so cannot possibly remember what rung 12 turned
+// in. It recomputes the earlier rung's submitted descriptor locally, which is exactly what the
+// 0.5.x climb path did silently -- and exactly why an unretrievable cross-rung value was never
+// detected (Addendum O finding 4). It is never wired in by default: a caller has to name it.
+export function recallFallbackResolver(world) {
+  return (fromRung, field) => recallValue(world, fromRung, field);
+}
+
 // ---------------------------------------------------------------------------
 // answer key
 // ---------------------------------------------------------------------------
@@ -23,8 +32,11 @@ function hashDescriptorLocal(desc) {
 }
 
 // answerKey(world) -> the admin payload for POST /admin/rungs: every rung's text, its expected
-// hashes (hash(render(expectedDescriptor)), the only thing the judge compares), and the
-// descriptors themselves (used by the API to also report fidelity on a fail).
+// hashes (hash(render(expectedDescriptor)), the only thing the judge compared through 0.5.x), the
+// descriptors themselves (used by the API to also report fidelity on a fail), and -- new in
+// 0.6.0, Addendum O -- the two things beside the hash a rung's own text demanded and nothing
+// graded: the project state the submitted asset must have reached, and the label it must carry.
+// The full shape is written out once, at the top of src/ladder/rung.js.
 export function answerKey(world) {
   const rungs = [];
   for (let n = 0; n < 100; n += 1) {
@@ -34,6 +46,8 @@ export function answerKey(world) {
       text: rung.text,
       expected: rung.expectedDescriptors.map(hashDescriptorLocal),
       expectedDescriptors: rung.expectedDescriptors,
+      expectedProjectState: rung.expectedProjectState,
+      expectedLabel: rung.expectedLabel,
     });
   }
   return { rungs };
@@ -292,7 +306,7 @@ async function httpEtag(ctx, args, assetId) {
 // `n` (the rung number) is folded into every Idempotency-Key: resultKey names ('a', 'final', ...)
 // repeat across rungs, and the idempotency store is keyed only by (token, route, key), so without
 // `n` the second rung to reuse a name would silently get back the FIRST rung's cached asset.
-async function execPlanHttp(ctx, plan, n, history) {
+async function execPlanHttp(ctx, plan, n, history, resolveMissingRecall) {
   const env = new Map();
   const ids = new Map();
   const projects = new Map();
@@ -362,18 +376,25 @@ async function execPlanHttp(ctx, plan, n, history) {
       env.set(step.resultKey, env.get(args.renderKey));
       ids.set(step.resultKey, ids.get(args.renderKey));
     } else if (step.op === 'recall') {
-      // Addendum J rule 1: the reference resolves a cross-rung reference out of its OWN history
-      // of what it turned in, exactly as the agent is expected to resolve it out of its
-      // collection on disk. The local recomputation is the fallback for a partial climb
-      // (`--from 40`) where the earlier rung was never actually run in this process; the two
-      // agree by construction, since both are pure functions of (world, fromRung).
-      const remembered = history && history.get(args.fromRung);
-      const desc = remembered !== undefined ? remembered : null;
+      // Addendum J rule 1 as tightened by Addendum O: the reference resolves a cross-rung
+      // reference STRICTLY out of its own history of what it turned in, exactly as the agent has
+      // to resolve it out of its collection on disk. 0.5.x fell back to recomputing the earlier
+      // rung locally, which meant a value the agent could never actually retrieve still let the
+      // gate pass -- the reference proved nothing about retrievability. It now fails loudly.
+      // A caller that genuinely cannot have the history (a partial climb started mid-ladder) has
+      // to opt in by passing `resolveMissingRecall`; see recallFallbackResolver below.
+      const remembered = history ? history.get(args.fromRung) : undefined;
       let value;
-      if (desc !== null) {
-        value = args.field === 'dims' ? { width: desc.width, height: desc.height } : desc.background.color;
+      if (remembered !== undefined) {
+        value = args.field === 'dims'
+          ? { width: remembered.width, height: remembered.height }
+          : remembered.background.color;
+      } else if (resolveMissingRecall) {
+        value = resolveMissingRecall(args.fromRung, args.field);
       } else {
-        value = recallValue(ctx.world, args.fromRung, args.field);
+        throw new Error(
+          `recall: rung ${n} borrows ${args.field} from rung ${args.fromRung}, which this climb never submitted`,
+        );
       }
       env.set(step.resultKey, value);
     } else if (step.op === 'listCount') {
@@ -406,7 +427,11 @@ async function execPlanHttp(ctx, plan, n, history) {
 //
 //   * It keeps a history of the descriptor it turned in at each rung, so Addendum J rule 1's
 //     cross-rung references resolve out of the climb's own past rather than out of a
-//     recomputation -- the same memory the agent is expected to keep, kept the same way.
+//     recomputation -- the same memory the agent is expected to keep, kept the same way. Since
+//     Addendum O that is the ONLY way they resolve: a rung that borrows from a rung this climb
+//     never submitted fails loudly, so an unretrievable cross-rung value cannot slip the gate.
+//     `resolveMissingRecall` (see recallFallbackResolver) is the explicit opt-out, for a partial
+//     climb that starts mid-ladder and has no history to have kept.
 //   * When `adminBaseUrl` is given it advances the admin-side current rung in step with itself,
 //     so Addendum J rule 3's announced mutation for rung n is LIVE for the whole of rung n. A
 //     rung the reference cannot pass with its own announced mutation applied is a generator bug,
@@ -419,7 +444,9 @@ async function execPlanHttp(ctx, plan, n, history) {
 // (e.g. via `POST /admin/mutate`) before the climb started would otherwise have it wiped out the
 // moment the climb advances past rung 1. The hook exists so such a caller can re-force it, live
 // again, for each rung it actually needs to test.
-export async function climb({ world, baseUrl, apiKey, adminBaseUrl, adminToken, from = 0, to = 99, log, onRungReady }) {
+export async function climb({
+  world, baseUrl, apiKey, adminBaseUrl, adminToken, from = 0, to = 99, log, onRungReady, resolveMissingRecall,
+}) {
   const ctx = createClient(world, baseUrl, apiKey);
   const passed = [];
   const failed = [];
@@ -447,7 +474,7 @@ export async function climb({ world, baseUrl, apiKey, adminBaseUrl, adminToken, 
       if (onRungReady) await onRungReady(n);
       const rung = makeRung(world, n);
       // eslint-disable-next-line no-await-in-loop
-      const { env, ids } = await execPlanHttp(ctx, rung.plan, n, history);
+      const { env, ids } = await execPlanHttp(ctx, rung.plan, n, history, resolveMissingRecall);
       const lastKey = rung.plan[rung.plan.length - 1].resultKey;
       const submitId = ids.get(lastKey);
       history.set(n, env.get(lastKey));

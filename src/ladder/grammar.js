@@ -89,11 +89,14 @@ export const BANDS = [
     behaviors: ['paginationBatch', 'rateLimit', 'liveTrap', 'derivedParam', 'rungMutation'],
   },
   {
+    // Addendum O: 10-14 through 0.5.1, when tier 5 stopped at `rendered`. It now walks the
+    // release as well (the key grades `published`, reached in order, from rung 50 up), which is
+    // one more plan step on the five rungs that also save.
     tier: 5, min: 50, max: 59,
-    steps: [10, 14], params: [33, 38], lookups: [3, 4], quant: [3, 4],
+    steps: [10, 15], params: [33, 38], lookups: [3, 4], quant: [3, 4],
     kinds: ['image'],
     features: { derived: 0, stateChain: 0, audioMath: 0, save: 5 },
-    behaviors: ['asyncRender', 'stateMachine', 'roundingOrder2', 'audioDiff', 'etagConditional', 'recover409'],
+    behaviors: ['asyncRender', 'stateMachine', 'roundingOrder2', 'audioDiff', 'etagConditional', 'recover409', 'hmacPublish'],
   },
   {
     tier: 6, min: 60, max: 69,
@@ -418,7 +421,7 @@ export function runCompute(world, fn, args) {
     const { roundTo, roundMode } = world.rules;
     const rawW = snap6(of.width * (percent / 100));
     const rawH = snap6(of.height * (percent / 100));
-    // RULES-0.5.md rule 5 ("a width can never come out below 1") and rule 3 ("every size the
+    // RULES-0.6.md rule 5 ("a width can never come out below 1") and rule 3 ("every size the
     // house stores is rounded onto the house grid") were jointly unsatisfiable whenever roundTo >
     // 1: flooring at bare `1` (the old code) satisfies rule 5 but hands back a value that is NOT
     // itself on the grid, so the very next grid-rounding pass rule 3 requires -- which is exactly
@@ -430,7 +433,7 @@ export function runCompute(world, fn, args) {
     // The floor is now `roundTo` itself (one whole grid step) rather than bare pixels: still
     // "never below 1" (roundTo is always >= 1) but now ALSO already on the grid, so the very next
     // roundToGrid pass is a no-op and the collapse can't happen. Addendum M rebaselines rule 5's
-    // wording (docs/RULES-0.5.md) and percent-resize.test.js's pinned oracle to match -- no rung
+    // wording (docs/RULES-0.6.md) and percent-resize.test.js's pinned oracle to match -- no rung
     // that ever produced a real (non-crashing) descriptor depended on the old bare-1 floor, since
     // any rung that would have needed it crashed before it could be submitted.
     return {
@@ -1326,9 +1329,33 @@ function tier4(world, r, band, n) {
   return { plan, submitKey, narrative: { tier: 4, ...narrative } };
 }
 
+// ---------------------------------------------------------------------------
+// Addendum O: the label written under If-Match
+//
+// 0.5.0 tagged every rung with a constant `rung-{n}` and never said so in the task text, so the
+// conditional write was six mechanisms of work that contributed nothing to the grade and nothing
+// the text actually demanded. 0.6.0 states the word in the rung text ("write the word \"X\" onto
+// it") and records it in the answer key as `expectedLabel`, so the write is graded.
+//
+// The word is drawn from its OWN sub-seed rather than off the composer's `r`, so adding it does
+// not shift a single downstream draw: every descriptor a 0.5.1 seed produced, it still produces.
+// ---------------------------------------------------------------------------
+
+const LABEL_WORDS = [
+  'amber', 'basil', 'cobalt', 'dune', 'ember', 'fennel', 'garnet', 'harbor',
+  'indigo', 'juniper', 'kestrel', 'lantern', 'marble', 'nectar', 'onyx', 'pewter',
+  'quartz', 'rowan', 'saffron', 'thistle', 'umber', 'violet', 'willow', 'zephyr',
+];
+
+// labelFor(world, n) -> the word rung n's conditional write must put on its asset. Pure in
+// (seed, n): the task text, the plan and the answer key all call this and cannot drift apart.
+export function labelFor(world, n) {
+  return pick(rng(sub(world.seed, `etagLabel:${n}`)), LABEL_WORDS);
+}
+
 // renderTier: Addendum J rule 4. Compose, an asynchronous render polled to done, an
-// ETag-conditional metadata update, a deliberate 409 recovery, and (at tier 6) an HMAC-signed
-// release, all in one rung, with the rounding ladder hung off the far end of it.
+// ETag-conditional metadata update, a deliberate 409 recovery, and an HMAC-signed release, all in
+// one rung, with the rounding ladder hung off the far end of it.
 function renderTier(world, r, band, n, { withPublish, chain, prePlan = [], postPlan = [], crossRef = null }) {
   const store = seedSnapshot(world);
   const workspace = pick(r, listWorkspaces(store));
@@ -1349,17 +1376,26 @@ function renderTier(world, r, band, n, { withPublish, chain, prePlan = [], postP
   if (resolvedCrossRef) plan.push(recallStep(resolvedCrossRef));
   plan.push({ op: 'render', resultKey: 'rendered', args: { kind: 'image', params, workspaceId, recover409: true } });
   if (withPublish) plan.push({ op: 'publish', resultKey: 'published', args: { renderKey: 'rendered' } });
-  const tagFrom = withPublish ? 'published' : 'rendered';
-  plan.push({ op: 'etag', resultKey: 'tagged', args: { from: tagFrom, label: `rung-${n}` } });
+  // The finished picture the rest of the rung works over: the released one where there is a
+  // release, the rendered one otherwise. Identical descriptors -- publishing is a project state
+  // change, not an edit -- so which key the chain hangs off never moves a hash.
+  const finished = withPublish ? 'published' : 'rendered';
   plan.push(...postPlan);
-  fixChainPercents(world, plan, chain, 'tagged', store);
-  const { steps, lastKey } = chainSteps(chain, 'tagged', 'c');
+  fixChainPercents(world, plan, chain, finished, store);
+  const { steps, lastKey } = chainSteps(chain, finished, 'c');
   plan.push(...steps);
+  // Addendum O, "grade the chain": the conditional write lands LAST, on the piece that actually
+  // gets turned in. Through 0.5.x it sat mid-plan, on the rendered asset, and every convert after
+  // it produced a fresh asset carrying none of it -- so the label could never be graded on what
+  // was submitted no matter how faithfully it was written. The tag step passes its input straight
+  // through (metadata only, no descriptor change), so it is also the plan's submit key.
+  const label = labelFor(world, n);
+  plan.push({ op: 'etag', resultKey: 'tagged', args: { from: lastKey, label } });
   return {
     plan,
-    submitKey: lastKey,
+    submitKey: 'tagged',
     narrative: {
-      kind: 'image', params, workspaceId, workspaceLabel: workspace.name, withPublish, chain, crossRef: resolvedCrossRef,
+      kind: 'image', params, workspaceId, workspaceLabel: workspace.name, withPublish, chain, crossRef: resolvedCrossRef, label,
     },
   };
 }
@@ -1384,8 +1420,11 @@ function tier5(world, r, band, n) {
     { op: 'diff', resultKey: 'sd', args: { a: 'sa', b: 'sb' } },
     { op: 'convert', resultKey: 'sc', args: { from: 'sd', opts: { format: audioFormat, sampleRate } } },
   ];
-  // the sounds come first: the whole rung's resize hangs off their difference
-  const built = renderTier(world, r, band, n, { withPublish: false, chain, prePlan: audioPrefix });
+  // the sounds come first: the whole rung's resize hangs off their difference.
+  // Addendum O ("grade the chain"): from rung 50 up the submission is graded on the project having
+  // reached `published` in order, so tier 5 walks the release too -- it no longer stops at
+  // `rendered`. The publish step returns the render's own descriptor unchanged, so no hash moves.
+  const built = renderTier(world, r, band, n, { withPublish: true, chain, prePlan: audioPrefix });
   return {
     plan: built.plan,
     submitKey: built.submitKey,
@@ -1406,11 +1445,12 @@ function tier6(world, r, band, n) {
   const recall = pickRecall(world, n, r);
   const clipW = 320;
   const clipH = 240;
-  const videoA = makeVideoParams(world, r, { assetKey: 'tagged', width: clipW, height: clipH });
-  const videoB = makeVideoParams(world, r, { assetKey: 'tagged', width: clipW, height: clipH });
+  const videoA = makeVideoParams(world, r, { assetKey: 'published', width: clipW, height: clipH });
+  const videoB = makeVideoParams(world, r, { assetKey: 'published', width: clipW, height: clipH });
   // The clips point at the picture this rung has already walked through the state machine and
-  // signed out, so the video steps sit after the tagging step and before the resize chain that
-  // reads their stitched frame count.
+  // signed out (`published`), so the video steps sit after the release and before the resize
+  // chain that reads their stitched frame count. Since Addendum O the conditional write is the
+  // plan's LAST step, not a mid-plan one, so nothing here hangs off `tagged` any more.
   const videoPlan = [
     { op: 'create', resultKey: 'va', args: { kind: 'video', params: videoA } },
     { op: 'create', resultKey: 'vb', args: { kind: 'video', params: videoB } },

@@ -720,7 +720,18 @@ function diffVideo(a, b) {
 // applyLora
 // ---------------------------------------------------------------------------
 
+// Addendum O finding 2 / "The house refuses the wrong reading": a style is a house style
+// (RULES rule 12) and house styles apply to pictures, full stop -- before 0.6.0 a lora applied
+// to an audio or video descriptor 201'd and stamped `lora: {applied: true}` on a descriptor
+// `applyHueShift`/`applyScale`/`applyInvert` returned untouched (they all short-circuit on
+// `desc.kind !== 'image'`), which is exactly the "wrong reading" the fidelity-0.03 rung-60 falls
+// exposed: a caller sees 201 + applied:true and reasonably concludes something happened. Reject
+// before any op-specific branch runs, so applyLora never reaches the stamping step below for a
+// non-image descriptor and never again claims a style was applied when nothing was.
 export function applyLora(world = defaultWorld(), desc, lora) {
+  if (desc.kind !== 'image') {
+    throw new MediaValidationError([{ field: 'lora_id', message: 'styles apply to pictures only' }]);
+  }
   let next;
   if (lora.op === 'hueShift') next = applyHueShift(world, desc, lora.amount);
   else if (lora.op === 'scale') next = applyScale(world, desc, lora.amount);

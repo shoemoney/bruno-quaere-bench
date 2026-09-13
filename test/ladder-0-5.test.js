@@ -16,7 +16,7 @@ import { makeRung, difficulty } from '../src/ladder/rung.js';
 import { BANDS, bandFor, composePlan, runPlanLocallyTrace, submittedDescriptorFor } from '../src/ladder/grammar.js';
 
 const SEEDS = [1, 2, 3];
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.5.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.6.md', import.meta.url), 'utf8');
 
 function everyRung(fn) {
   for (const seed of SEEDS) {
@@ -29,11 +29,14 @@ function everyRung(fn) {
 // version
 // ---------------------------------------------------------------------------
 
-test('the world declares ladder 0.5.0', () => {
-  // Addendum M bumped 0.5.0 -> 0.5.1: descriptor caps plus the percentOfDims grid-floor fix, not
-  // a grammar change, so the running 0.5.0 round keeps its own label (Addendum M rule 3).
-  assert.equal(VERSION, '0.5.1');
-  assert.equal(makeWorld(1).version, '0.5.1');
+test('the world declares ladder 0.6.0', () => {
+  // Addendum M bumped 0.5.0 -> 0.5.1 (descriptor caps plus the percentOfDims grid-floor fix, not
+  // a grammar change, so the running 0.5.0 round kept its own label). Addendum O then bumped
+  // 0.5.1 -> 0.6.0: the stitch antecedent, the graded chain and the stated label are all
+  // generator changes, so no 0.5.x row is comparable with a 0.6.x one. Every rule pinned in the
+  // rest of this file is a 0.5.0 rule that 0.6.0 keeps; test/ladder-0-6.test.js pins the new ones.
+  assert.equal(VERSION, '0.6.0');
+  assert.equal(makeWorld(1).version, '0.6.0');
 });
 
 // ---------------------------------------------------------------------------
@@ -46,7 +49,12 @@ const RULE_9_STEPS = [
   { from: 0, to: 9, steps: [1, 2] },
   { from: 10, to: 29, steps: [3, 5] },
   { from: 30, to: 49, steps: [6, 9] },
-  { from: 50, to: 69, steps: [10, 14] },
+  // Addendum O widened the top of the 50-59 row by exactly one: tier 5 used to stop at
+  // `rendered`, and now walks the release too, because from rung 50 up the key grades the project
+  // having reached `published` in order. One graded step, one more step in the envelope. 60-69
+  // already published and is unchanged.
+  { from: 50, to: 59, steps: [10, 15] },
+  { from: 60, to: 69, steps: [10, 14] },
   { from: 70, to: 89, steps: [15, 20] },
   { from: 90, to: 99, steps: [20, 30] },
 ];
@@ -190,7 +198,7 @@ test('rule 2: the derived percent is never printed in the task text, only its re
   });
 });
 
-test('rule 2: every derived source the generator uses is documented in RULES-0.5.md', () => {
+test('rule 2: every derived source the generator uses is documented in RULES-0.6.md', () => {
   const seen = new Set();
   everyRung((world, n) => {
     for (const step of derivedChainSteps(composePlan(world, n).narrative)) seen.add(step.sourceKey);
@@ -205,7 +213,7 @@ test('rule 2: every derived source the generator uses is documented in RULES-0.5
   };
   for (const key of seen) {
     assert.ok(documented[key] !== undefined, `derived source "${key}" has no documented phrase`);
-    assert.ok(RULES_DOC.includes(documented[key]), `RULES-0.5.md does not document the derived source "${key}"`);
+    assert.ok(RULES_DOC.includes(documented[key]), `RULES-0.6.md does not document the derived source "${key}"`);
   }
 });
 
@@ -288,7 +296,7 @@ test('rule 8 primitive: a difference over two sounds leaves the tones A has and 
   const left = diff(world, a, b);
   assert.equal(left.kind, 'audio');
   assert.deepEqual(left.notes.map((n) => n.freq), [440, 660]);
-  // the leftover keeps A's length and sample rate, which is what rule 14/15 of RULES-0.5.md says
+  // the leftover keeps A's length and sample rate, which is what rule 14/15 of RULES-0.6.md says
   assert.equal(left.durationMs, a.durationMs);
   assert.equal(left.sampleRate, a.sampleRate);
   assert.equal(diff(world, a, a).notes.length, 0);
@@ -374,7 +382,7 @@ test('rule 6: every rung from 70 up applies three or more ordered house rules, w
 // the documents gate: nothing in a key may turn on a rule that is not written down
 // ---------------------------------------------------------------------------
 
-test('RULES-0.5.md documents every rule the 0.5.0 generator newly relies on', () => {
+test('RULES-0.6.md documents every rule the 0.5.0 generator newly relies on', () => {
   const required = [
     'snapped to six decimal places',
     'rounded onto the house grid',
@@ -390,7 +398,7 @@ test('RULES-0.5.md documents every rule the 0.5.0 generator newly relies on', ()
     'keyed hash over the house',
   ];
   for (const phrase of required) {
-    assert.ok(RULES_DOC.includes(phrase), `RULES-0.5.md is missing the rule: "${phrase}"`);
+    assert.ok(RULES_DOC.includes(phrase), `RULES-0.6.md is missing the rule: "${phrase}"`);
   }
 });
 

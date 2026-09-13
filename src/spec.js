@@ -24,6 +24,34 @@ const STATUS_OVERRIDES = {
   'projects.create': 201,
 };
 
+// Addendum O, "the house refuses the wrong reading": assets.convert.format is a per-kind enum,
+// not one flat list -- media.js's convertImage/convertAudio/convertVideo (src/media.js) 422 any
+// format outside the target asset's own kind, and this is that same fact stated in the doc. Kept
+// here as a literal, mirroring media.js's own IMAGE_FORMATS/AUDIO_FORMATS/VIDEO_FORMATS, for the
+// same reason STATUS_OVERRIDES above is a literal: it is a documentation fact independent of how
+// the api/ workstream implements the check, not a value to import across the ownership line.
+const CONVERT_FORMATS_BY_KIND = {
+  image: ['svg', 'png'],
+  audio: ['wav', 'qa8'],
+  video: ['qvid'],
+};
+
+// The convert request never states which kind it targets (that's implied by the asset in the
+// path), so there is no discriminator field to hang an `if`/`then` off of. A `oneOf` of
+// non-overlapping enums says the same thing a discriminated union would -- a submitted format
+// validates against exactly one branch, or none -- and each branch's description spells out
+// which kind it is for, which is the part a flat five-value enum (the old shape here) left the
+// reader to guess at, wrongly, for two of three kinds.
+function convertFormatSchema() {
+  return {
+    oneOf: [
+      { enum: CONVERT_FORMATS_BY_KIND.image, description: 'valid when converting an image asset' },
+      { enum: CONVERT_FORMATS_BY_KIND.audio, description: 'valid when converting an audio asset' },
+      { enum: CONVERT_FORMATS_BY_KIND.video, description: 'valid when converting a video asset' },
+    ],
+  };
+}
+
 function statusFor(route) {
   if (route.id in STATUS_OVERRIDES) return STATUS_OVERRIDES[route.id];
   if (route.method === 'DELETE') return 204;
@@ -241,9 +269,18 @@ function buildPaths(world) {
       security: UNAUTHENTICATED.has(route.id) ? [] : [{ bearerAuth: [] }],
     };
     if (route.requestSchema) {
+      const schema = transformSchema(world, structuredClone(route.requestSchema));
+      // Addendum O: route.requestSchema (routes.js) declares `format` as a bare `{type:
+      // 'string'}` with no enum at all, since routes.js has no notion of "which kind" a convert
+      // targets. Overlay the real per-kind constraint here, after the generic naming pass above,
+      // so `fieldName(world, 'format')` (a no-op -- `format` has no underscore either way) has
+      // already run and this doesn't have to duplicate it.
+      if (route.id === 'assets.convert' && schema.properties && schema.properties.format) {
+        schema.properties.format = convertFormatSchema();
+      }
       operation.requestBody = {
         required: true,
-        content: { 'application/json': { schema: transformSchema(world, structuredClone(route.requestSchema)) } },
+        content: { 'application/json': { schema } },
       };
     }
     if (route.behaviors.includes('deprecated')) operation.deprecated = true;

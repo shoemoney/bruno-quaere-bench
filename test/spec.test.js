@@ -265,3 +265,37 @@ test('auth.token and auth.refresh require no bearer security; every other operat
     }
   }
 });
+
+// Addendum O, "the house refuses the wrong reading": assets.convert.format documents a per-kind
+// enum -- image/audio/video each get their own non-overlapping branch -- rather than one flat
+// five-value list that reads as though any format is valid on any asset, which is exactly the
+// gap media.js's own per-kind 422 (src/media.js's convertImage/convertAudio/convertVideo) closes
+// at runtime but the pre-0.6.0 spec never documented.
+test('assets.convert.format is a per-kind oneOf enum: image/audio/video branches, no overlap, no leftover flat enum', () => {
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    const spec = toOpenApi(world);
+    const route = routes.find((r) => r.id === 'assets.convert');
+    const path = resolvePath(world, route.path);
+    const op = spec.paths[path][route.method.toLowerCase()];
+    const formatSchema = op.requestBody.content['application/json'].schema.properties.format;
+    assert.ok(!Array.isArray(formatSchema.enum), `seed ${seed}: format must not be a single flat enum`);
+    assert.ok(Array.isArray(formatSchema.oneOf), `seed ${seed}: format must be a oneOf of per-kind enums`);
+    assert.equal(formatSchema.oneOf.length, 3, `seed ${seed}: one branch per kind`);
+    const branches = formatSchema.oneOf.map((b) => [...b.enum].sort());
+    assert.deepEqual(branches, [['png', 'svg'], ['qa8', 'wav'], ['qvid']], `seed ${seed}: wrong per-kind format sets`);
+    // every branch documents which kind it's for
+    for (const branch of formatSchema.oneOf) {
+      assert.equal(typeof branch.description, 'string');
+      assert.ok(branch.description.length > 0, `seed ${seed}: branch missing a description`);
+    }
+    // the three branches never share a value -- a submitted format validates against exactly one
+    const seen = new Set();
+    for (const branch of formatSchema.oneOf) {
+      for (const v of branch.enum) {
+        assert.ok(!seen.has(v), `seed ${seed}: ${v} appears in more than one branch`);
+        seen.add(v);
+      }
+    }
+  }
+});

@@ -3,7 +3,7 @@
 // Clean room. This file was written without reading src/ladder/grammar.js,
 // src/ladder/rung.js or src/ladder/reference.js. solve() computes a rung's expected
 // descriptor from:
-//   - docs/RULES-0.5.md (the enumerated house rules the key is allowed to depend on)
+//   - docs/RULES-0.6.md (the enumerated house rules the key is allowed to depend on)
 //   - docs/ARCHITECTURE.md (descriptor shapes)
 //   - the generated skill (`quaere skill`, clean and sloppy) and `truthTable(world)`
 //   - the generated OpenAPI document (`quaere spec`)
@@ -30,14 +30,30 @@
 //      over HTTP. gate() reads it from the API's own store, never from the ladder.
 //   3. opts.history -- what THIS solver turned in at each earlier rung, which is how a
 //      0.5.0 cross-rung reference ("as wide and as tall as the piece you turned in at
-//      step 18", RULES-0.5 rule 21) is resolved. It is the solver's own memory, never
+//      step 18", RULES-0.6 rule 21) is resolved. It is the solver's own memory, never
 //      the generator's: gate() fills it from solve()'s own earlier answers, exactly as
 //      the climbing agent reads back its own collection on disk.
 //
-// Announced mutations (RULES-0.5 rule 26/27) never change the artifact, only the shape
+// Announced mutations (RULES-0.6 rule 26/27) never change the artifact, only the shape
 // of the replies on the way there, so the warning sentence is parsed and consumed and
 // has no effect on the descriptor. That IS the documented rule.
 //
+// Ladder 0.6.0 (Addendum O) adds two things this file has to model.
+//
+//   - Rule 28, the stitch antecedent. After a stitch, the ordered chain reattaches to the
+//     FINISHED PICTURE; the stitched clip is only a measuring stick for its frame count.
+//     0.5.0 never said so and three climbs read it the other way. Every stitch rung now
+//     states it in its own words, and solve() REQUIRES that sentence: a stitch rung whose
+//     text drops it is a generator bug and fails loudly here rather than being inferred.
+//
+//   - Rule 29 plus Addendum O's "grade the chain". From rung 50 up a submission passes only
+//     if the hashes match AND the project came through the house stages to `published` AND
+//     the piece carries the word the text names, written under a conditional write. Those
+//     two are as much a part of the answer as the descriptor, so solve() reads them off the
+//     text alongside the descriptors and gate() compares all three.
+//
+// solveGraded(world, rungText, n, opts)
+//   -> {descriptors: Descriptor[], expectedProjectState: string|null, expectedLabel: string|null}
 // solve(world, rungText, n, opts) -> Descriptor[]   (one per asset to submit)
 // gate(world, from, to, opts)     -> {agree: n[], disagree: [{n, leaf, doc, key}]}
 
@@ -56,7 +72,7 @@ const fail = (message, phrase) => {
 };
 
 // ---------------------------------------------------------------------------
-// House arithmetic (RULES-0.5 rules 1-6)
+// House arithmetic (RULES-0.6 rules 1-6)
 // ---------------------------------------------------------------------------
 
 // Rule 2: snap the raw product to 6 decimals before any rounding rule runs.
@@ -90,7 +106,7 @@ export function roundToGrid(value, roundTo, roundMode) {
 
 const grid = (world, value) => roundToGrid(value, world.rules.roundTo, world.rules.roundMode);
 
-// THE ONE RULE THIS SOLVER USES THAT docs/RULES-0.5.md DOES NOT STATE.
+// THE ONE RULE THIS SOLVER USES THAT docs/RULES-0.6.md DOES NOT STATE.
 //
 // Rule 13 says a house style that scales "re-rounds every shape figure onto the house
 // grid as it goes, the same grid rule as rule 3", and rule 2 says the six-decimal snap
@@ -103,10 +119,10 @@ const grid = (world, value) => roundToGrid(value, world.rules.roundTo, world.rul
 //
 // Nine rungs on seeds 1-20 are decided by this (seed 5 rung 90; seed 10 rungs 40, 77,
 // 81, 84, 86, 88, 91, 93), so it is an Addendum I class gap: a key that turns on a rule
-// absent from RULES-0.5.md. It is survivable for a climbing agent only because the agent
+// absent from RULES-0.6.md. It is survivable for a climbing agent only because the agent
 // POSTs to /{assets}/{id}/lora and reads the geometry back rather than computing it, the
 // same way it reads a hue shift back. The fix belongs upstream -- either media.js snaps
-// inside the scale lora, or RULES-0.5.md states that it does not. Until then this
+// inside the scale lora, or RULES-0.6.md states that it does not. Until then this
 // function models the house, and `gridAfterScale is load-bearing` in the test pins it so
 // nobody deletes it without reading this.
 export function gridAfterScale(world, value) {
@@ -431,23 +447,31 @@ function recall(opts, step, what) {
 // solve
 // ---------------------------------------------------------------------------
 
-export function solve(world, rungText, n, opts = {}) {
+// The graded answer: the descriptors, plus the two things Addendum O grades from rung 50
+// up. Both are read off the task text; both are null when the text demands neither.
+export function solveGraded(world, rungText, n, opts = {}) {
   const units = unitAlternation(world);
   const U = units.pattern;
   const c = new Cursor(rungText.trim());
 
   // Working state. `current` is "what you have"; `counts` holds the derived numbers a
-  // later chain step may ask for (RULES-0.5 rule 19).
-  const state = { current: null, counts: {} };
+  // later chain step may ask for (RULES-0.6 rule 19). `projectState` is how far through
+  // the house stages the text drives the project (rules 23, 24); `label` is the word the
+  // text names for the conditional write (rules 25, 29). `stitched` records that a stitch
+  // happened, so the antecedent sentence rule 28 requires can be checked for.
+  const state = {
+    current: null, counts: {}, projectState: null, label: null, stitched: false,
+  };
 
   // --- opener: either a library haul or a create clause -----------------------
   if (!parseBatch(c, world, state, opts, U, units)) {
     parseCreateSection(c, world, state, opts, U, units);
   }
 
-  // --- the house stages, signing, conditional writes (rules 23-25) ------------
-  // None of them changes the artifact; a conditional write changes labels only.
-  parseStages(c);
+  // --- the house stages and the release notice (rules 23, 24) -----------------
+  // Neither changes the artifact, but from rung 50 up how far they drive the project
+  // IS part of the answer, so parseStages records the state it reaches.
+  parseStages(c, state);
 
   // --- moving takes and the stitch (rules 16, 17, 19) ------------------------
   parseMovingTakes(c, world, state);
@@ -473,15 +497,25 @@ export function solve(world, rungText, n, opts = {}) {
     }
   }
 
-  // --- trailing notes, none of which touches the descriptor -------------------
-  parseTrailing(c);
+  // --- the conditional write and the trailing notes ---------------------------
+  // None of them touches the descriptor; the conditional write names the graded label.
+  parseTrailing(c, state);
 
   if (!c.atEnd()) fail('unconsumed task text', c.rest().slice(0, 200));
   if (state.current === null) fail('task produced nothing to turn in', rungText.slice(0, 120));
-  return [state.current];
+  return {
+    descriptors: [state.current],
+    expectedProjectState: state.projectState,
+    expectedLabel: state.label,
+  };
 }
 
-// --- the library haul (RULES-0.5 appendix "library haul") --------------------
+// The descriptors alone, which is every caller that predates 0.6.0.
+export function solve(world, rungText, n, opts = {}) {
+  return solveGraded(world, rungText, n, opts).descriptors;
+}
+
+// --- the library haul (RULES-0.6 appendix "library haul") --------------------
 function parseBatch(c, world, state, opts, U, units) {
   const opener = c.try(new RegExp(
     'Work through the pictures held in the \\w+ the house calls "([^"]+)", over in the \\w+ the house calls "([^"]+)", '
@@ -656,27 +690,53 @@ function tryImageClause(c, world, state, opts, U, units, lead) {
   };
 }
 
-// --- house stages, signing, conditional writes (rules 23-25) -----------------
-// Every one of these is process, not artifact: they change nothing about the
-// descriptor, which is the whole point of rule 25's "never changes the thing's
-// contents or its hash".
+// --- house stages and the release notice (rules 23, 24) ----------------------
+// Neither changes the descriptor -- but the project state they leave behind is graded
+// from rung 50 up (Addendum O), so each sentence advances `state.projectState` along the
+// one path the skill states: draft -> composed -> rendered -> published.
+//
+// `advances` is the state the sentence leaves the project in; null means the sentence is
+// process only (the out-of-turn refusal is a 409 the agent recovers from, not a stage).
 const STAGE_SENTENCES = [
-  /Walk it all the way through the house stages in the house order -- lock it in, kick off the finishing run, and do not call it done until you check back and it actually says finished\./,
-  /Walk it all the way through the house's usual stages -- lock it in, kick off the finishing run, and don't call it done until you check back and it actually says finished\./,
-  /If you reach for a stage out of turn the house will refuse you; take the refusal, put the missing stage in, and carry on\./,
-  /Then sign and send the release notice the house requires before anything can go out the door\./,
-  /Once it is finished, write a word of your own onto it -- and do it in a way that will fail rather than overwrite if anyone touched it between your reading it and your writing\./,
+  // "lock it in" is compose, "the finishing run ... actually says finished" is render.
+  [/Walk it all the way through the house stages in the house order -- lock it in, kick off the finishing run, and do not call it done until you check back and it actually says finished\./,
+    'rendered', null],
+  [/Walk it all the way through the house's usual stages -- lock it in, kick off the finishing run, and don't call it done until you check back and it actually says finished\./,
+    'rendered', null],
+  [/If you reach for a stage out of turn the house will refuse you; take the refusal, put the missing stage in, and carry on\./,
+    null, null],
+  // Rule 24: the release notice is the publish call, and publish 409s out of `rendered`.
+  [/Then sign and send the release notice the house requires before anything can go out the door\./,
+    'published', 'rendered'],
 ];
 
-function parseStages(c) {
+function parseStages(c, state) {
   let moved = true;
   while (moved) {
     moved = false;
-    for (const re of STAGE_SENTENCES) if (c.try(re) !== null) { moved = true; break; }
+    for (const [re, advances, requires] of STAGE_SENTENCES) {
+      if (c.try(re) === null) continue;
+      if (advances !== null) {
+        if (requires !== null && state.projectState !== requires) {
+          fail(
+            `the task asks for the ${advances} stage out of turn (rule 23): the project is `
+            + `${state.projectState === null ? 'never taken past draft' : state.projectState}`,
+            advances,
+          );
+        }
+        state.projectState = advances;
+      }
+      moved = true;
+      break;
+    }
   }
 }
 
-// --- moving takes and the stitch (rules 16, 17) ------------------------------
+// --- moving takes and the stitch (rules 16, 17, 28) --------------------------
+// RULES-0.6 rule 28, verbatim. Exported so the test can pin the exact sentence.
+export const STITCH_ANTECEDENT =
+  /That stitched piece is only there to be counted; carry on with the finished picture\./;
+
 function parseMovingTakes(c, world, state) {
   const TAKE = `one running (${NUM}) ms, (${NUM}) by (${NUM}) pixels, showing that picture from its very start for the whole of it, at full strength`;
   const m = c.try(new RegExp(
@@ -688,6 +748,20 @@ function parseMovingTakes(c, world, state) {
   }
   if (c.try(/Stitch the two end to end, first one first, into a single moving piece\./) === null) {
     fail('moving takes with no stitch instruction', c.rest().slice(0, 160));
+  }
+  state.stitched = true;
+  // Rule 28, new in 0.6.0: the antecedent of the chain that follows a stitch. THE SOLVER
+  // NEVER INFERS IT. On 0.5.0 this sentence did not exist and the chain's antecedent was
+  // knowable only from an API constraint no document stated; three climbs read it as the
+  // stitched clip and lost rung 60 with arithmetic that was 100 percent correct. The rule
+  // now lives in RULES-0.6.md rule 28 and in every stitch rung's own text, and a stitch
+  // rung that drops the sentence is a generator bug, not a rung to be guessed at.
+  if (c.try(STITCH_ANTECEDENT) === null) {
+    fail(
+      'a rung that stitches must state the antecedent of the chain that follows (rule 28): '
+      + 'expected "That stitched piece is only there to be counted; carry on with the finished picture."',
+      c.rest().slice(0, 160),
+    );
   }
   // Rule 9: nobody said how fast, so the house default frame rate applies.
   const fps = world.rules.defaultFps;
@@ -702,11 +776,18 @@ function parseMovingTakes(c, world, state) {
   }));
   const stitched = stitchClips(world, takes);
   state.counts.stitchedFrames = frameCount(stitched);
-  // The stitched clip is a measuring stick, not the artifact: the chain that follows
-  // says "save what you have as a vector file", so "what you have" is still the picture.
+  // The stitched clip is a measuring stick, not the artifact. `state.current` is left
+  // alone deliberately: rule 28 says the chain carries on with the finished picture, and
+  // the rung's own text -- checked for above -- is where that comes from.
 }
 
-// --- trailing notes ----------------------------------------------------------
+// --- the conditional write and the trailing notes ----------------------------
+// Rules 25 + 29: the write puts a stated word on the last piece under an If-Match, so it
+// changes labels only -- never the descriptor, never the hash -- but the word itself is
+// graded from rung 50 up, so it is captured rather than merely consumed.
+const CONDITIONAL_WRITE =
+  /Once you have that last piece, write the word "([^"]+)" onto it -- and do it in a way that will fail rather than overwrite if anyone touched it between your reading it and your writing\./;
+
 const TRAILING_SENTENCES = [
   /The house rounds every size to its usual grid; do that after every resize, in the order you do them, not just once at the end\./,
   /Order is the whole game here: a house style and a resize do not commute, and the grid rounding lands again after every single step\./,
@@ -719,13 +800,26 @@ const TRAILING_SENTENCES = [
   /Read what actually comes back on every call rather than what you expected to come back\./,
 ];
 
-function parseTrailing(c) {
+function parseTrailing(c, state) {
   let turnedIn = false;
   let moved = true;
   while (moved) {
     moved = false;
     if (c.try(/Turn in exactly that piece\./) !== null || c.try(/Turn in the last piece that leaves you with\./) !== null) {
       turnedIn = true;
+      moved = true;
+      continue;
+    }
+    const write = c.try(CONDITIONAL_WRITE);
+    if (write !== null) {
+      // Rule 29: the word is STATED, never chosen, and it goes on the LAST piece -- the
+      // one that gets turned in -- so the sentence has to arrive after the ordered chain
+      // and before the turn-in. A label does not travel from one piece to the next one
+      // made out of it, so a write sitting after the turn-in would grade a different
+      // piece than the one submitted.
+      if (turnedIn) fail('the conditional write lands after the turn-in (rule 29)', write[0]);
+      if (state.label !== null) fail('two conditional writes in one rung (rule 29)', write[1]);
+      state.label = write[1];
       moved = true;
       continue;
     }
@@ -822,12 +916,24 @@ function resizePercent(world, desc, pct, savedAs) {
 // gate
 // ---------------------------------------------------------------------------
 
+// The two injected oracles solve() needs for a real ladder: the seeded project listing a
+// library haul pages through, and the house's own answer for what a lora does to a colour.
+// Exported because anything driving solve() rung by rung (gate, and the tests that solve a
+// single deep rung) needs the same pair, built the same way.
+export async function solverOpts(world, opts = {}) {
+  return {
+    listProjectAssets: opts.listProjectAssets || (await defaultProjectAssets(world)),
+    colorOracle: opts.colorOracle === null
+      ? undefined
+      : (opts.colorOracle || (await makeColorOracle(world))),
+  };
+}
+
 // gate(world, from, to): compare solve() against the generator's answer key.
 // makeRung is imported dynamically HERE and nowhere else, so solve() stays clean-room.
 export async function gate(world, from = 0, to = 99, opts = {}) {
   const { makeRung } = await import('./rung.js');
-  const listProjectAssets = opts.listProjectAssets || (await defaultProjectAssets(world));
-  const colorOracle = opts.colorOracle === null ? undefined : (opts.colorOracle || (await makeColorOracle(world)));
+  const { listProjectAssets, colorOracle } = await solverOpts(world, opts);
   const agree = [];
   const disagree = [];
   // The solver's own memory of what it turned in, rung by rung. A cross-rung reference
@@ -839,7 +945,7 @@ export async function gate(world, from = 0, to = 99, opts = {}) {
   for (let n = 0; n < from; n += 1) {
     try {
       const pre = makeRung(world, n);
-      history.set(n, solve(world, pre.text, n, { listProjectAssets, colorOracle, history })[0]);
+      history.set(n, solveGraded(world, pre.text, n, { listProjectAssets, colorOracle, history }).descriptors[0]);
     } catch { /* reported only when that rung is itself inside the window */ }
   }
   for (let n = from; n <= to; n += 1) {
@@ -850,20 +956,35 @@ export async function gate(world, from = 0, to = 99, opts = {}) {
       disagree.push({ n, leaf: 'generator', doc: null, key: null, error: `makeRung threw: ${err.message}` });
       continue;
     }
-    let doc;
+    let solved;
     try {
-      doc = solve(world, rung.text, n, { listProjectAssets, colorOracle, history });
+      solved = solveGraded(world, rung.text, n, { listProjectAssets, colorOracle, history });
     } catch (err) {
       disagree.push({ n, leaf: 'solve', doc: null, key: null, error: `${err.name}: ${err.message}`, text: rung.text });
       continue;
     }
+    const doc = solved.descriptors;
     history.set(n, doc[doc.length - 1]);
-    const key = rung.expectedDescriptors;
-    const leaf = firstDifference(doc, key);
+    // Addendum O: the answer is the descriptors AND the graded chain. Both graded fields
+    // are compared on every rung, not only 50 and up -- below 50 the key records null and
+    // the text demands nothing, so a mismatch there means one side grew a demand the other
+    // does not grade, which is the "anything the text demands is graded or removed from
+    // the text" rule failing in whichever direction it failed.
+    const leaf = firstDifference(doc, rung.expectedDescriptors)
+      || diffField('expectedProjectState', solved.expectedProjectState, rung.expectedProjectState)
+      || diffField('expectedLabel', solved.expectedLabel, rung.expectedLabel);
     if (leaf === null) agree.push(n);
     else disagree.push({ n, leaf: leaf.path, doc: leaf.a, key: leaf.b, text: rung.text });
   }
   return { agree, disagree };
+}
+
+// One graded scalar, in the same {path, a, b} shape firstDifference reports, so a chain
+// mismatch and a descriptor mismatch read identically in the gate's output.
+function diffField(path, doc, key) {
+  const a = doc === undefined ? null : doc;
+  const b = key === undefined ? null : key;
+  return a === b ? null : { path: `$.${path}`, a, b };
 }
 
 // A black-box colour oracle: ask the house what a lora does to a colour, the way the

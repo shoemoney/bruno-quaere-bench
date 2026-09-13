@@ -401,6 +401,36 @@ test('applyLora: invert is an involution and marks lora.applied', () => {
   assert.equal(back.shapes[0].color, '#123456');
 });
 
+// Addendum O, "the house refuses the wrong reading": a style is a house style and house styles
+// apply to pictures only -- before 0.6.0 this 201'd for audio/video and stamped
+// `lora: {applied: true}` on a descriptor left otherwise untouched (hueShift/scale/invert all
+// short-circuit on a non-image kind), which is exactly the false "something happened" signal
+// that cost three of five finished 0.5.0 climbs their rung-60 fall. Every op is rejected the
+// same way, including `opacity` (which used to actually touch a video's clip opacities) --
+// "pictures only" has no per-op exception.
+test('applyLora: any op on an audio or video descriptor is a 422, never a 201 with lora.applied stamped on nothing', () => {
+  const world = testWorld();
+  const audio = create(world, 'audio', { durationMs: 100, notes: [] });
+  const video = create(world, 'video', { width: 10, height: 10, durationMs: 100, clips: [] });
+  for (const desc of [audio, video]) {
+    for (const lora of [
+      { id: 'l', op: 'hueShift', amount: 30 },
+      { id: 'l', op: 'scale', amount: 2 },
+      { id: 'l', op: 'opacity', amount: 0.5 },
+      { id: 'l', op: 'invert' },
+    ]) {
+      assert.throws(
+        () => applyLora(world, desc, lora),
+        (err) => {
+          assert.ok(err instanceof MediaValidationError, `${desc.kind}/${lora.op}: wrong error type`);
+          assert.deepEqual(err.errors, [{ field: 'lora_id', message: 'styles apply to pictures only' }], `${desc.kind}/${lora.op}`);
+          return true;
+        },
+      );
+    }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // fidelity
 // ---------------------------------------------------------------------------

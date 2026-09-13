@@ -405,6 +405,63 @@ test('media ops: convert, combine, diff, and lora each produce a new asset', asy
   assert.equal(loraBody.descriptor.lora.id, lora.id);
 });
 
+// Addendum O, "the house refuses the wrong reading": house styles apply to pictures only. Before
+// 0.6.0 this 201'd on audio/video and stamped `lora: {applied: true}` on a descriptor otherwise
+// untouched -- a false "something happened" signal.
+test('lora on a non-image asset is 422 problem+json, never a 201 with applied stamped on nothing', async () => {
+  const audioRes = await fetch(urlFor('audio.create'), {
+    method: 'POST',
+    headers: authHeaders(mainToken),
+    body: JSON.stringify({ durationMs: 100, notes: [] }),
+  });
+  assert.equal(audioRes.status, 201);
+  const audio = await audioRes.json();
+
+  const lora = world.loras[0];
+  const res = await fetch(urlFor('assets.lora', { asset_id: audio.id }), {
+    method: 'POST',
+    headers: authHeaders(mainToken),
+    body: JSON.stringify({ [f('lora_id')]: lora.id }),
+  });
+  assert.equal(res.status, 422);
+  assert.equal(res.headers.get('content-type'), 'application/problem+json');
+  const body = await res.json();
+  assert.deepEqual(body.errors, [{ field: 'lora_id', message: 'styles apply to pictures only' }]);
+
+  // and the audio asset itself is untouched -- no new asset, same hash, no lora field
+  const after = await fetch(urlFor('assets.get', { asset_id: audio.id }), { headers: authHeaders(mainToken) });
+  const afterBody = await after.json();
+  assert.equal(afterBody.hash, audio.hash);
+  assert.equal(afterBody.descriptor.lora, undefined);
+});
+
+// Addendum O: assets.convert.format is a per-kind enum, not a flat five-value list -- converting
+// an image to an audio/video-only format (or vice versa) 422s, exactly like any other field
+// outside its documented enum.
+test('convert: a format outside the target asset\'s own kind is 422, not silently accepted', async () => {
+  const img = await (await createImage(mainToken, { width: 10, height: 10, background: { color: '#ff0000' }, shapes: [] })).json();
+  const crossKindRes = await fetch(urlFor('assets.convert', { asset_id: img.id }), {
+    method: 'POST',
+    headers: authHeaders(mainToken),
+    body: JSON.stringify({ format: 'wav' }),
+  });
+  assert.equal(crossKindRes.status, 422);
+  assert.equal(crossKindRes.headers.get('content-type'), 'application/problem+json');
+
+  const audioRes = await fetch(urlFor('audio.create'), {
+    method: 'POST',
+    headers: authHeaders(mainToken),
+    body: JSON.stringify({ durationMs: 50, notes: [] }),
+  });
+  const audio = await audioRes.json();
+  const audioCrossKindRes = await fetch(urlFor('assets.convert', { asset_id: audio.id }), {
+    method: 'POST',
+    headers: authHeaders(mainToken),
+    body: JSON.stringify({ format: 'qvid' }),
+  });
+  assert.equal(audioCrossKindRes.status, 422);
+});
+
 test('422: invalid media params return problem+json with a field-level errors array', async () => {
   const res = await createImage(mainToken, { width: -5 });
   assert.equal(res.status, 422);

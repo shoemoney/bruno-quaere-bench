@@ -215,6 +215,12 @@ async function dispatch(id, state, { req, res, reset }) {
   }
 
   if (id === 'admin.rungs.set') {
+    // Addendum O, "grade the chain": each rung entry is stored verbatim, whatever fields it
+    // carries -- `n`/`text`/`expected`/`expectedDescriptors` from every ladder version, plus
+    // `expectedProjectState`/`expectedLabel` from 0.6.0 on (see src/ladder/rung.js's answer-key
+    // shape comment). No allowlist here on purpose: the answer key is the ladder workstream's
+    // contract, and rungs.submit (server.js) is the only place that decides which of a rung's own
+    // fields it grades on.
     const body = await readJsonBody(req);
     const rungs = Array.isArray(body.rungs) ? body.rungs : [];
     state.rungs.answers = new Map(rungs.map((r) => [r.n, r]));

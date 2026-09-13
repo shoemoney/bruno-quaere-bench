@@ -1,7 +1,8 @@
-# House rules the ladder 0.5.0 answer key depends on
+# House rules the ladder answer key depends on
 
-Ladder version **0.5.0** (`src/world.js` `VERSION`). Written by the ladder workstream for the
-skill workstream and the docsolver workstream.
+Ladder version **0.6.0** (`src/world.js` `VERSION`). Written by the ladder workstream for the
+skill workstream and the docsolver workstream. Was `docs/RULES-0.5.md` through 0.5.1; renamed,
+not restarted, so every rule number below is stable across the bump.
 
 **The contract.** Nothing in any rung's answer key may turn on a rule that is not in this file.
 Every rule below is stated in plain language, the way `skill.js` has to say it and the way an
@@ -9,7 +10,8 @@ agent has to be able to find it in the sloppy 5 MB document. If the key ever nee
 not here, that is a generator bug of exactly the kind Addendum I was written about — the
 `docsolver` gate exists to catch it, and this file is what `docsolver` is allowed to read.
 
-Rules 1–15 carried over from 0.4.0 and are unchanged in substance; 16–27 are new in 0.5.0.
+Rules 1–15 carried over from 0.4.0 and are unchanged in substance; 16–27 are new in 0.5.0; 28–29
+are new in 0.6.0 and are appended rather than slotted in, so nothing renumbers.
 Sections marked **(skill)** must appear in `SKILL.md` (and therefore, verbatim, inside the sloppy
 expansion). Sections marked **(task text)** are stated in the rung text itself and are listed here
 only so the docsolver knows to parse them.
@@ -138,7 +140,8 @@ only so the docsolver knows to parse them.
 
 25. **(skill)** A conditional write sends the tag the house last handed out for that thing. If the
     thing has changed since, the house refuses the write rather than overwriting. A conditional
-    write changes only labels; it never changes the thing's contents or its hash.
+    write changes only labels; it never changes the thing's contents or its hash. Which word goes
+    on is stated in the task text, never chosen by the writer (rule 29).
 
 ## Announced changes
 
@@ -153,6 +156,24 @@ only so the docsolver knows to parse them.
 27. **(new in 0.5.0)** An announced change never alters what the finished artifact should be. It
     changes only what the replies look like on the way there. An answer that was right before the
     change is still right after it.
+
+## What a stitched clip is for — new in 0.6.0
+
+28. **(skill, new in 0.6.0)** A stitched moving piece is only there to be counted; the chain
+    carries on with the finished picture. Stitching two takes together produces a measuring stick,
+    not a new thing to work on: the ordered chain that follows a stitch — the style lookups, the
+    resizes, the save — still applies to the **picture** the takes were made over, never to the
+    stitched clip. The only thing the stitch contributes to the answer is its frame count
+    (rules 16, 17 and 19). Every rung that stitches says so in its own words:
+    *That stitched piece is only there to be counted; carry on with the finished picture.*
+
+29. **(task text, new in 0.6.0)** The conditional write of rule 25 puts a **stated** word on the
+    thing. The task text names it — *write the word "X" onto it* — and it is written onto the
+    **last** piece, after every ordered step is done, because that is the piece that gets turned
+    in and a label does not travel from one piece to the next one made out of it. From rung 50 up
+    it is graded: a piece whose hash is right but which never got the word written onto it, or
+    whose project never came all the way through the house stages to released, does not pass.
+    Everything the task text demands is graded; nothing is demanded for decoration.
 
 ---
 
@@ -206,14 +227,15 @@ already does for an unknown create clause). Square brackets are placeholders.
 - announced change (rule 26): `Fair warning: the house has changed something about the way it answers, starting with this piece of work. ...`
 - stages (rule 23): `Walk it all the way through the house stages in the house order -- ...`
 - signing (rule 24): `Then sign and send the release notice the house requires before anything can go out the door.`
-- conditional write (rule 25): `Once it is finished, write a word of your own onto it -- ...`
+- conditional write (rules 25, 29), always the last act before the turn-in: `Once you have that last piece, write the word "[word]" onto it -- and do it in a way that will fail rather than overwrite if anyone touched it between your reading it and your writing.`
+- stitch antecedent (rule 28), emitted by every rung that stitches: `That stitched piece is only there to be counted; carry on with the finished picture.`
 - turn-in: `Turn in the last piece that leaves you with.` or `Turn in exactly that piece.`
 
 **Whole-rung shapes**
 
 - library haul: `Work through the pictures held in the [project noun] the house calls "[label]", over in the [workspace noun] the house calls "[label]", [K] at a time.`
 - clearing out: `clear out the last [one | N of them] of the copies you just made -- confirm they really are gone from the ordinary listing, and that they still turn up when you ask for the cleared-out ones as well -- and then count how many of your copies are still standing in the ordinary listing, remembering it comes back a page at a time`
-- moving takes: `Then build a pair of short moving takes over that same finished picture: (1) one running [D] ms, [W] by [H] pixels, showing that picture from its very start for the whole of it, at full strength; (2) ... Don't tell the house how fast to run them -- let it use its own usual speed. Stitch the two end to end, first one first, into a single moving piece.`
+- moving takes: `Then build a pair of short moving takes over that same finished picture: (1) one running [D] ms, [W] by [H] pixels, showing that picture from its very start for the whole of it, at full strength; (2) ... Don't tell the house how fast to run them -- let it use its own usual speed. Stitch the two end to end, first one first, into a single moving piece. That stitched piece is only there to be counted; carry on with the finished picture.`
 - sound difference: `Work out every tone the first sound has that the second one does not -- that leftover sound is the one that matters later -- and re-encode it as [flavor] at [N] samples a second.`
 - picture difference: `Work out everything the first one has that the second one does not -- that leftover piece is what you carry on with.`
 

@@ -3,9 +3,19 @@
 // so a later correct submit to the same rung still works. Wrong count and wrong hash are real
 // attempts: they are recorded as a fail. Also covers the admin request log's `ua` field and
 // GET /admin/violations.
+//
+// Addendum O, "grade the chain": from rung 50 up an answer key entry may also carry
+// expectedProjectState/expectedLabel (src/ladder/rung.js's answer-key shape). A submit then
+// passes only if the hash matches AND the submitted asset's project reached that state (through
+// compose -> render -> publish, in order) AND the asset's display name equals the label written
+// under If-Match -- and the response/recorded submission say which of the three failed. Tested
+// here on rungs well under 50 (the check itself doesn't care what rung number it's attached to;
+// the ladder workstream is what restricts it to 50+ in practice) so this file doesn't have to
+// duplicate the full 100-rung ladder to prove the three-way check.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 
 import { makeWorld, resolvePath, fieldName } from '../src/world.js';
 import { routes } from '../src/routes.js';
@@ -25,6 +35,20 @@ function f(name) {
 function submitUrl(n) {
   const route = routes.find((r) => r.id === 'rungs.submit');
   return `${base}${resolvePath(world, route.path).replace('{n}', String(n))}`;
+}
+
+function routeTemplate(id) {
+  return resolvePath(world, routes.find((r) => r.id === id).path);
+}
+
+function withParams(template, params) {
+  let out = template;
+  for (const [k, v] of Object.entries(params)) out = out.replace(`{${k}}`, encodeURIComponent(v));
+  return out;
+}
+
+function urlFor(id, params = {}) {
+  return `${base}${withParams(routeTemplate(id), params)}`;
 }
 
 async function getToken() {
@@ -78,10 +102,77 @@ async function advanceRung() {
   return res.json();
 }
 
+// walkProjectTo(status, token, wsId, assetId): drives a fresh project through
+// draft -> composed -> [rendered] -> [published] up to (and including) `status`, composing in
+// `assetId` along the way. Used to build the Addendum O chain-grading fixtures below: a
+// submission's expectedProjectState is checked against the STATUS the submitted asset's project
+// actually reached, and the only way to reach `published` at all is compose -> render -> publish
+// in that order (each 409s out of turn), so "reached `rendered`" and "reached `published`" are
+// each built by simply stopping the walk at the right step.
+async function walkProjectTo(status, token, wsId, assetId) {
+  const created = await fetch(urlFor('projects.create', { workspace_id: wsId }), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ [f('name')]: `chain-grading fixture (${status})` }),
+  });
+  const project = await created.json();
+
+  const compose = await fetch(urlFor('projects.compose', { workspace_id: wsId, project_id: project.id }), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ [f('asset_ids')]: [assetId] }),
+  });
+  assert.equal(compose.status, 200);
+  if (status === 'composed') return project.id;
+
+  const render = await fetch(urlFor('projects.render', { workspace_id: wsId, project_id: project.id }), {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  assert.equal(render.status, 202);
+  const location = render.headers.get('location');
+  // jobs.get's status ladder is queued -> running -> done, one step per poll (see server.js's
+  // jobs.get handler): three polls always reaches 'done'. project.status itself already flipped
+  // to 'rendered' synchronously inside projects.render above, and publish gates on THAT, not on
+  // the job -- polling to completion here is just exercising the documented flow faithfully.
+  await fetch(`${base}${location}`, { headers: authHeaders(token) });
+  await fetch(`${base}${location}`, { headers: authHeaders(token) });
+  await fetch(`${base}${location}`, { headers: authHeaders(token) });
+  if (status === 'rendered') return project.id;
+
+  const publishPath = withParams(routeTemplate('projects.publish'), { workspace_id: wsId, project_id: project.id });
+  const ts = String(Math.floor(Date.now() / 1000));
+  const sig = createHmac(world.hmac.algo, world.auth.secret).update(`${ts}POST${publishPath}`).digest('hex');
+  const publish = await fetch(`${base}${publishPath}`, {
+    method: 'POST',
+    headers: { ...authHeaders(token), [world.hmac.tsHeader]: ts, [world.hmac.header]: sig },
+  });
+  assert.equal(publish.status, 200);
+  assert.equal((await publish.json()).status, 'published');
+  return project.id;
+}
+
+async function patchLabel(token, assetId, etag, label) {
+  const res = await fetch(urlFor('assets.patch', { asset_id: assetId }), {
+    method: 'PATCH',
+    headers: { ...authHeaders(token), 'if-match': etag },
+    body: JSON.stringify({ [f('display_name')]: label }),
+  });
+  assert.equal(res.status, 200);
+}
+
 let token;
 let assetId;
 let assetHash;
 let assetDescriptor;
+// Addendum O chain-grading fixtures, built once up front alongside everything else the initial
+// setRungs() call below needs -- see the rung comments for which of the three checks each one
+// isolates.
+let chainPassAsset;
+let chainStateFailAsset;
+let chainLabelFailAsset;
+let chainHashFailAsset;
+const CHAIN_LABEL = 'quartz';
 
 test.before(async () => {
   world = makeWorld(SEED);
@@ -96,6 +187,41 @@ test.before(async () => {
   assetHash = asset.hash;
   assetDescriptor = asset.descriptor;
 
+  const wsListRes = await fetch(urlFor('workspaces.list'), { headers: authHeaders(token) });
+  const wsId = (await wsListRes.json()).data[0].id;
+
+  // Each fixture below runs 7-8 requests (create, patch, compose, render, three job polls,
+  // publish) through the state machine -- comfortably under world.rate.limit per token on its
+  // own, but not shared with `token`, which the numbered-rung tests further down also spend
+  // against across the same 10-second window. A fresh token per fixture keeps this setup from
+  // ever tripping the very rate limit Addendum-era tests elsewhere exist to prove works.
+
+  // n=9: every check holds -- the control case a strict three-way AND has to still pass.
+  const t9 = await getToken();
+  chainPassAsset = await createImage(t9, { width: 8, height: 8, background: { transparent: true }, shapes: [] });
+  await patchLabel(t9, chainPassAsset.id, chainPassAsset.etag, CHAIN_LABEL);
+  await walkProjectTo('published', t9, wsId, chainPassAsset.id);
+
+  // n=10: hash and label are right, but the project only ever reached 'rendered' -- isolates the
+  // project-state check.
+  const t10 = await getToken();
+  chainStateFailAsset = await createImage(t10, { width: 8, height: 8, background: { transparent: true }, shapes: [] });
+  await patchLabel(t10, chainStateFailAsset.id, chainStateFailAsset.etag, CHAIN_LABEL);
+  await walkProjectTo('rendered', t10, wsId, chainStateFailAsset.id);
+
+  // n=11: hash and project state are right, but the display name was never patched to the
+  // expected word -- isolates the label check.
+  const t11 = await getToken();
+  chainLabelFailAsset = await createImage(t11, { width: 8, height: 8, background: { transparent: true }, shapes: [] });
+  await walkProjectTo('published', t11, wsId, chainLabelFailAsset.id);
+
+  // n=12: project state and label are right, but the submitted hash is wrong -- proves the hash
+  // check still gates the other two rather than being made redundant by them.
+  const t12 = await getToken();
+  chainHashFailAsset = await createImage(t12, { width: 8, height: 8, background: { transparent: true }, shapes: [] });
+  await patchLabel(t12, chainHashFailAsset.id, chainHashFailAsset.etag, CHAIN_LABEL);
+  await walkProjectTo('published', t12, wsId, chainHashFailAsset.id);
+
   await setRungs([
     { n: 0, text: 'invalid json', expected: [assetHash], expectedDescriptors: [assetDescriptor] },
     { n: 1, text: 'not an array', expected: [assetHash], expectedDescriptors: [assetDescriptor] },
@@ -106,6 +232,38 @@ test.before(async () => {
     { n: 6, text: 'happy path', expected: [assetHash], expectedDescriptors: [assetDescriptor] },
     { n: 7, text: 'non-current rung: future probe', expected: [assetHash], expectedDescriptors: [assetDescriptor] },
     { n: 8, text: 'non-current rung: stale probe', expected: [assetHash], expectedDescriptors: [assetDescriptor] },
+    {
+      n: 9,
+      text: 'chain grading: everything holds',
+      expected: [chainPassAsset.hash],
+      expectedDescriptors: [chainPassAsset.descriptor],
+      expectedProjectState: 'published',
+      expectedLabel: CHAIN_LABEL,
+    },
+    {
+      n: 10,
+      text: 'chain grading: project never reached published',
+      expected: [chainStateFailAsset.hash],
+      expectedDescriptors: [chainStateFailAsset.descriptor],
+      expectedProjectState: 'published',
+      expectedLabel: CHAIN_LABEL,
+    },
+    {
+      n: 11,
+      text: 'chain grading: label never written',
+      expected: [chainLabelFailAsset.hash],
+      expectedDescriptors: [chainLabelFailAsset.descriptor],
+      expectedProjectState: 'published',
+      expectedLabel: CHAIN_LABEL,
+    },
+    {
+      n: 12,
+      text: 'chain grading: wrong hash despite a correct state and label',
+      expected: ['sha256:not-the-real-hash'],
+      expectedDescriptors: [chainHashFailAsset.descriptor],
+      expectedProjectState: 'published',
+      expectedLabel: CHAIN_LABEL,
+    },
   ]);
 });
 
@@ -303,6 +461,91 @@ test('submit: a past rung (current-1) is 409 and records nothing', async () => {
   assert.equal(goodRes.status, 200);
   assert.equal((await goodRes.json()).pass, true);
   assert.equal((await submissionsFor(8)).length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Addendum O: chain grading -- hash AND project state AND label
+// ---------------------------------------------------------------------------
+
+test('submit: chain grading passes when the hash, the project state, and the label all hold', async () => {
+  await advanceRung(); // current: 8 -> 9
+  const res = await fetch(submitUrl(9), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ assets: [chainPassAsset.id] }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.pass, true);
+  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: true });
+  const recorded = await submissionsFor(9);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].pass, true);
+  assert.deepEqual(recorded[0].checks, { hash: true, project_state: true, label: true });
+});
+
+test('submit: chain grading fails, and names the project-state check, when the project never reached published', async () => {
+  await advanceRung(); // current: 9 -> 10
+  const res = await fetch(submitUrl(10), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ assets: [chainStateFailAsset.id] }),
+  });
+  assert.equal(res.status, 200, 'a resolvable but failing chain submission is a normal 200, never a 422');
+  const body = await res.json();
+  assert.equal(body.pass, false);
+  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: false, label: true });
+  const recorded = await submissionsFor(10);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].pass, false);
+  assert.deepEqual(recorded[0].checks, { hash: true, project_state: false, label: true });
+});
+
+test('submit: chain grading fails, and names the label check, when the display name was never written', async () => {
+  await advanceRung(); // current: 10 -> 11
+  const res = await fetch(submitUrl(11), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ assets: [chainLabelFailAsset.id] }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.pass, false);
+  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: false });
+  const recorded = await submissionsFor(11);
+  assert.equal(recorded.length, 1);
+  assert.deepEqual(recorded[0].checks, { hash: true, project_state: true, label: false });
+});
+
+test('submit: chain grading fails on hash alone even when the project state and label are both correct', async () => {
+  await advanceRung(); // current: 11 -> 12
+  const res = await fetch(submitUrl(12), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ assets: [chainHashFailAsset.id] }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.pass, false);
+  assert.deepEqual(body.checks, { hash: false, [f('project_state')]: true, label: true });
+});
+
+test('submit: a rung whose answer key never mentions project state or label grades on hashes alone (checks are vacuously true)', async () => {
+  await advanceRung(); // current: 12 -> 13
+  await setRungs([
+    { n: 13, text: 'no chain obligations', expected: [assetHash], expectedDescriptors: [assetDescriptor] },
+  ]);
+  // admin.rungs.set resets state.rungs.current to 0 -- put it back where this test needs it.
+  for (let i = 0; i < 13; i += 1) await advanceRung();
+  const res = await fetch(submitUrl(13), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ assets: [assetId] }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.pass, true);
+  assert.deepEqual(body.checks, { hash: true, [f('project_state')]: true, label: true });
 });
 
 // ---------------------------------------------------------------------------

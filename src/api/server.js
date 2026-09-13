@@ -632,9 +632,38 @@ async function routeHandlers(routeId, ctx) {
     const submittedHashes = submittedAssets.map((a) => a.hash);
     const answer = state.rungs.answers.get(n);
     const expectedHashes = answer ? answer.expected : [];
-    const pass =
+    const hashMatch =
       expectedHashes.length === submittedHashes.length &&
       expectedHashes.every((h, i) => h === submittedHashes[i]);
+
+    // Addendum O, "grade the chain": from rung 50 up the answer key also carries
+    // expectedProjectState/expectedLabel -- the state-machine walk and the conditional-write
+    // label a rung's text demands but the hash comparison alone never sees (four public calls
+    // reproduce a rung-60 hash exactly with none of that work done). Checked against the LAST
+    // submitted asset, the piece the rung text has the agent turn in ("Turn in the last piece
+    // that leaves you with" / "Turn in exactly that piece" -- always singular for a chain-graded
+    // rung). A field the answer key leaves undefined never gates the pass: a rung whose text
+    // never demanded a stage or a label is graded on hashes alone, exactly as before 0.6.0.
+    //
+    // `project.status === expectedProjectState` alone proves the walk happened IN ORDER, not
+    // just that the project now reads that way: compose/render/publish above each 409 unless the
+    // project is currently in the exact prior state they expect, so there is no route from
+    // `draft` to `published` other than draft -> composed -> rendered -> published in sequence.
+    const target = submittedAssets[submittedAssets.length - 1];
+    let stateMatch = true;
+    if (answer && answer.expectedProjectState !== undefined && answer.expectedProjectState !== null) {
+      const project = target && target.projectId !== null ? state.store.projects.get(target.projectId) : null;
+      stateMatch = !!project && project.status === answer.expectedProjectState;
+    }
+    let labelMatch = true;
+    if (answer && answer.expectedLabel !== undefined && answer.expectedLabel !== null) {
+      labelMatch = !!target && target.displayName === answer.expectedLabel;
+    }
+    const pass = hashMatch && stateMatch && labelMatch;
+    // Named per-check so the caller (and the recorded submission) can see exactly which of the
+    // three failed, rather than a single opaque `pass: false` -- the whole point of grading the
+    // chain instead of only the hash.
+    const checks = { hash: hashMatch, project_state: stateMatch, label: labelMatch };
     let fidelityScore = 0;
     if (answer && Array.isArray(answer.expectedDescriptors) && answer.expectedDescriptors.length > 0) {
       const scores = answer.expectedDescriptors.map((expected, i) =>
@@ -642,8 +671,8 @@ async function routeHandlers(routeId, ctx) {
       );
       fidelityScore = scores.reduce((sum, v) => sum + v, 0) / scores.length;
     }
-    state.rungs.submissions.push({ rung: n, pass, submittedHashes, expectedHashes, fidelity: fidelityScore });
-    finalizeAndSend(200, { pass, rung: n });
+    state.rungs.submissions.push({ rung: n, pass, submittedHashes, expectedHashes, fidelity: fidelityScore, checks });
+    finalizeAndSend(200, { pass, rung: n, checks });
     return;
   }
 

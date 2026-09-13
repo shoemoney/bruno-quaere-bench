@@ -1,6 +1,47 @@
 // (world, n) -> Rung: plain-language task text, the reference's exact execution plan, and the
 // answer-key descriptors computed purely through media.js (via grammar.js's local interpreter).
 
+// ===========================================================================================
+// ANSWER-KEY SHAPE, ladder 0.6.0 -- the contract between the ladder workstream and the API
+// workstream. This block is the single place it is written down; reference.js `answerKey()`
+// produces exactly this and `POST /admin/rungs` stores each entry verbatim.
+//
+//   { rungs: [ RungAnswer, ... ] }            // 100 entries, n ascending, 0..99
+//
+//   RungAnswer = {
+//     n:                    number,           // 0..99
+//     text:                 string,           // the task text the agent is given
+//     expected:             string[],         // hash(render(expectedDescriptor)) -- the judge
+//     expectedDescriptors:  Descriptor[],     // same order as `expected`; fidelity on a fail
+//
+//     // --- new in 0.6.0 (Addendum O, "grade the chain") --------------------------------
+//     expectedProjectState: 'published' | null,
+//     expectedLabel:        string | null,
+//   }
+//
+// Addendum O rule: from rung 50 up a submission passes only if the hashes match AND the
+// submitted asset's project reached `published` through compose -> render -> publish IN ORDER
+// AND the asset carries the label the rung text told the agent to write under If-Match.
+//
+// How the API workstream is expected to read the two new fields:
+//
+//   * `expectedProjectState === null` -> this rung's text demands no house-stage walk; grade on
+//     hashes alone, exactly as 0.5.x did. (True for rungs 0-49, and for the library-haul rungs
+//     70-99, whose text never mentions stages, a release, or a conditional write. "Anything the
+//     text demands is graded or removed from the text" cuts both ways: a rung that demands
+//     nothing is graded on nothing extra.)
+//   * `expectedProjectState === 'published'` -> the project the submitted asset was composed
+//     into must be in the `published` state, and must have got there in order (a project that
+//     jumped a stage is a fail even if it now reads `published`). True for rungs 50-69.
+//   * `expectedLabel === null` -> no label obligation.
+//   * `expectedLabel === 'quartz'` (a word from a fixed pool, deterministic in (seed, n)) -> the
+//     submitted asset's display name must equal that word exactly. The rung text states it
+//     verbatim as: Once you have that last piece, write the word "quartz" onto it -- ...
+//     `grammar.js` exports `labelFor(world, n)`; nothing should re-derive it another way.
+//
+// Both fields are additive. An older consumer that ignores them grades exactly as before.
+// ===========================================================================================
+
 import { bandFor, composePlan, runPlanLocally } from './grammar.js';
 
 // ---------------------------------------------------------------------------
@@ -217,19 +258,35 @@ function text4(world, narrative) {
 // really say finished, put a name on it without trampling anyone else's edit, and expect the
 // house to refuse anything asked out of order.
 const STAGE_NOTE = 'Walk it all the way through the house stages in the house order -- lock it in, kick off the finishing run, and do not call it done until you check back and it actually says finished. If you reach for a stage out of turn the house will refuse you; take the refusal, put the missing stage in, and carry on.';
-const TAG_NOTE = 'Once it is finished, write a word of your own onto it -- and do it in a way that will fail rather than overwrite if anyone touched it between your reading it and your writing.';
 const SIGN_NOTE = 'Then sign and send the release notice the house requires before anything can go out the door.';
 
+// Addendum O, "grade the chain". 0.5.0 said "write a word of your own onto it", which no key
+// could grade, and said it BEFORE the resize chain, so every convert after it produced a fresh
+// piece carrying none of it -- the label could never be on what got turned in. 0.6.0 names the
+// word (drawn by grammar.js's `labelFor(world, n)`, recorded in the key as `expectedLabel` --
+// one value, three readers, no drift) and makes writing it the last act before turning in.
+function tagNote(label) {
+  if (typeof label !== 'string' || label.length === 0) throw new Error('a conditional-write rung has no label word');
+  return `Once you have that last piece, write the word "${label}" onto it -- and do it in a way that will fail rather than overwrite if anyone touched it between your reading it and your writing.`;
+}
+
 function text5(world, narrative) {
-  return `Make ${describeCreate(world, 'audio', narrative.audioA)}. Then make a second sound ${describeTones(narrative.audioB)}. Work out every tone the first sound has that the second one does not -- that leftover sound is the one that matters later -- and re-encode it as ${describeKind('audio', narrative.audioFormat)} at ${narrative.sampleRate} samples a second. Then, inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params, narrative.crossRef)}. ${STAGE_NOTE} ${TAG_NOTE}${describeChain(narrative.chain)} ${TURN_IN_LAST}`;
+  return `Make ${describeCreate(world, 'audio', narrative.audioA)}. Then make a second sound ${describeTones(narrative.audioB)}. Work out every tone the first sound has that the second one does not -- that leftover sound is the one that matters later -- and re-encode it as ${describeKind('audio', narrative.audioFormat)} at ${narrative.sampleRate} samples a second. Then, inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params, narrative.crossRef)}. ${STAGE_NOTE} ${SIGN_NOTE}${describeChain(narrative.chain)} ${tagNote(narrative.label)} ${TURN_IN_LAST}`;
 }
 
 function describeClip(params, index) {
   return `(${index}) one running ${params.durationMs} ms, ${params.width} by ${params.height} pixels, showing that picture from its very start for the whole of it, at full strength`;
 }
 
+// Addendum O finding 1: the antecedent of the chain that follows a stitch was never stated
+// anywhere. Three of five finished climbs on 0.5.0 round two applied the chain to the stitched
+// clip instead of the picture -- arithmetic 100 percent right, fidelity 0.03. This sentence is
+// the fix, and it is a numbered (skill) rule in docs/RULES-0.6.md as well as a fixed note here.
+// Every rung whose plan stitches emits it; `makeRung` refuses to build one that does not.
+const STITCH_ANTECEDENT = 'That stitched piece is only there to be counted; carry on with the finished picture.';
+
 function text6(world, narrative) {
-  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params, narrative.crossRef)}. ${STAGE_NOTE} ${SIGN_NOTE} ${TAG_NOTE} Then build a pair of short moving takes over that same finished picture: ${describeClip(narrative.videoA, 1)}; ${describeClip(narrative.videoB, 2)}. Don't tell the house how fast to run them -- let it use its own usual speed. Stitch the two end to end, first one first, into a single moving piece.${describeChain(narrative.chain)} ${TURN_IN_LAST}`;
+  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params, narrative.crossRef)}. ${STAGE_NOTE} ${SIGN_NOTE} Then build a pair of short moving takes over that same finished picture: ${describeClip(narrative.videoA, 1)}; ${describeClip(narrative.videoB, 2)}. Don't tell the house how fast to run them -- let it use its own usual speed. Stitch the two end to end, first one first, into a single moving piece. ${STITCH_ANTECEDENT}${describeChain(narrative.chain)} ${tagNote(narrative.label)} ${TURN_IN_LAST}`;
 }
 
 // Addendum J rule 2's most literal form, in plain language. The count is never stated, the
@@ -267,7 +324,44 @@ export function makeRung(world, n) {
   const expectedDescriptors = [env.get(submitKey)];
   const body = TEXT_BUILDERS[band.tier](world, narrative);
   const text = mutation ? `${body} ${MUTATION_NOTE}` : body;
-  return { n, text, plan, expectedDescriptors, submitCount: expectedDescriptors.length, mutation };
+  const { expectedProjectState, expectedLabel } = gradedChain(plan, text, n);
+  return {
+    n,
+    text,
+    plan,
+    expectedDescriptors,
+    submitCount: expectedDescriptors.length,
+    mutation,
+    expectedProjectState,
+    expectedLabel,
+  };
+}
+
+// Addendum O, "grade the chain" and "state the antecedent". Both obligations are read off the
+// PLAN, not off the rung number, so the key can never demand something the text did not ask for
+// (nor stay silent about something it did). The three assertions are the generator's own gate:
+// a text/plan mismatch throws here rather than surfacing as a whole round of fidelity-0.03 falls.
+function gradedChain(plan, text, n) {
+  const publishes = plan.some((s) => s.op === 'publish');
+  const tag = plan.find((s) => s.op === 'etag');
+  const stitches = plan.some((s) => s.op === 'combine' && s.args && s.args.opts && s.args.opts.mode === 'sequence');
+
+  if (stitches && !text.includes(STITCH_ANTECEDENT)) {
+    throw new Error(`rung ${n} stitches moving clips but its text never states the antecedent`);
+  }
+  if (publishes !== text.includes(SIGN_NOTE)) {
+    throw new Error(`rung ${n}: plan publishes=${publishes} but its text demands a release notice=${!publishes}`);
+  }
+  if ((tag !== undefined) !== text.includes('write the word "')) {
+    throw new Error(`rung ${n}: plan tags=${tag !== undefined} but its text demands a label=${tag === undefined}`);
+  }
+  if (tag !== undefined && !text.includes(`write the word "${tag.args.label}"`)) {
+    throw new Error(`rung ${n}: the plan writes "${tag.args.label}" but the text names a different word`);
+  }
+  return {
+    expectedProjectState: publishes ? 'published' : null,
+    expectedLabel: tag !== undefined ? tag.args.label : null,
+  };
 }
 
 // difficulty(rung) -> number, strictly increasing in rung.n across 0..99 for any world: the band
