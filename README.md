@@ -65,9 +65,10 @@ No model ever grades anything.
 
 | | | |
 |---|---|---|
-| [🧒 Like you're five](#-like-youre-five) | [📊 Results](#-results) | [🧭 How a climb works](#-how-a-climb-works) | [🚦 Gates](#-gates-before-any-paid-climb) |
-| [🖥️ Lineup and drivers](#️-lineup-and-drivers) | [🚀 Quick start](#-quick-start) | [⌨️ CLI](#️-cli) |
-| [🪜 Ladder history](#-ladder-history) | [🧠 What 0.7.0 changes](#-what-070-changes) | [📁 Layout](#-layout) |
+| [🧒 Like you're five](#-like-youre-five) | [📊 Results](#-results) | [🧭 How a climb works](#-how-a-climb-works) |
+| [🚦 Gates](#-gates-before-any-paid-climb) | [🖥️ Lineup and drivers](#️-lineup-and-drivers) | [🚀 Quick start](#-quick-start) |
+| [⌨️ CLI](#️-cli) | [🪜 Ladder history](#-ladder-history) | [🧠 What 0.7.0 changes](#-what-070-changes) |
+| [📁 Layout](#-layout) | | |
 
 ## 📊 Results
 
