@@ -411,7 +411,15 @@ async function execPlanHttp(ctx, plan, n, history) {
 //     so Addendum J rule 3's announced mutation for rung n is LIVE for the whole of rung n. A
 //     rung the reference cannot pass with its own announced mutation applied is a generator bug,
 //     and without this the gate would never see one.
-export async function climb({ world, baseUrl, apiKey, adminBaseUrl, adminToken, from = 0, to = 99, log }) {
+//
+// `onRungReady(n)`, when given, is awaited after the climb has advanced the server to rung n but
+// before that rung's plan is executed or submitted. `POST /admin/rungs/advance` REPLACES the
+// server's active mutation set with whatever rung n naturally announces (admin.js), which is
+// empty for every rung below `FIRST_MUTATION_RUNG` -- so a caller that forced a mutation on
+// (e.g. via `POST /admin/mutate`) before the climb started would otherwise have it wiped out the
+// moment the climb advances past rung 1. The hook exists so such a caller can re-force it, live
+// again, for each rung it actually needs to test.
+export async function climb({ world, baseUrl, apiKey, adminBaseUrl, adminToken, from = 0, to = 99, log, onRungReady }) {
   const ctx = createClient(world, baseUrl, apiKey);
   const passed = [];
   const failed = [];
@@ -435,6 +443,8 @@ export async function climb({ world, baseUrl, apiKey, adminBaseUrl, adminToken, 
     try {
       // eslint-disable-next-line no-await-in-loop
       await advanceTo(n);
+      // eslint-disable-next-line no-await-in-loop
+      if (onRungReady) await onRungReady(n);
       const rung = makeRung(world, n);
       // eslint-disable-next-line no-await-in-loop
       const { env, ids } = await execPlanHttp(ctx, rung.plan, n, history);

@@ -46,10 +46,15 @@ async function climbSeed(seed, { from = 0, to = 99, mutate } = {}) {
     return await climb({
       world,
       baseUrl: `http://127.0.0.1:${publicPort}`,
-      adminBaseUrl: mutate ? undefined : `http://127.0.0.1:${adminPort}`,
+      adminBaseUrl: `http://127.0.0.1:${adminPort}`,
       apiKey: world.auth.apiKey,
       from,
       to,
+      // `POST /admin/rungs/advance` replaces the server's active mutation set with whatever rung n
+      // naturally announces (nothing, below FIRST_MUTATION_RUNG), so the mutation forced above gets
+      // wiped out the moment the climb advances past rung 1. Re-force it live for every rung this
+      // climb actually submits against.
+      onRungReady: mutate ? () => postAdminJson(adminPort, '/admin/mutate', { name: mutate }) : undefined,
     });
   } finally {
     await server.stop();
