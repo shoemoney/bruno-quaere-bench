@@ -49,6 +49,7 @@ function withSequentialFetch(responses, fn) {
       ok: entry.status < 300,
       status: entry.status,
       json: async () => entry.body,
+      text: async () => JSON.stringify(entry.body),
     };
   };
   return Promise.resolve()

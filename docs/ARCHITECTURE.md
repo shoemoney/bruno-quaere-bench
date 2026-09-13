@@ -995,3 +995,25 @@ pays for 6 and 8 out of turns that currently buy nothing.
 
 Zero violations, zero admin probes, zero resumes across all seven. Two clears; every fall is
 `hash:false` with both chain checks true. This is the baseline 0.7.0 must move.
+
+## Addendum R: a non-JSON gateway error body killed a clean climb as a hard error, not a retry
+
+Added 2026-09-13 17:35, during round five on ladder 0.7.0. grok-4.6 (OpenRouter) climbed clean
+through rung 36 and died with `stoppedBecause: 'error'`, `driverError: "Unexpected token '<',
+\"<!DOCTYPE \"... is not valid JSON"`. All three message-loop drivers (`openai.js`, `anthropic.js`,
+`google.js`) called `res.json()` before checking `res.ok`. A gateway failure -- a Cloudflare
+challenge, a 502/504 from the provider's own edge, a plain outage page -- serves HTML, and
+`res.json()` on that throws a bare `SyntaxError` with no `.status` field. `run.js`'s TRANSIENT
+classifier only inspects `.status` and message text for codes like 429/500-504, so it never saw
+this as retryable and the climb stopped as a hard error instead of retrying.
+
+Fix: every driver reads the body as text first, then parses; a parse failure throws an Error with
+a real `.status` (the HTTP status if non-2xx, else a synthetic 502 for a 2xx that still isn't
+JSON) and `.providerMessage` naming it a non-JSON body, so it retries exactly like any other
+transient provider failure. `test/driver-nonjson-response.test.js` pins it for all three drivers,
+both the non-2xx and the false-200 case. Six existing fake-fetch mocks across
+`test/harness-provider.test.js`, `test/harness-max-output-tokens.test.js`, and
+`test/harness-transcript.test.js` only implemented `.json()`, not `.text()` (real `fetch()`
+Response objects always have both); they were fixed to match, not the production code loosened
+to match them. grok-4.6's climb, clean through rung 36 when it died, is voided and rerun on a
+fresh seed.

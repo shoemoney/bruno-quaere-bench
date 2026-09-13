@@ -117,7 +117,27 @@ export function createDriver({
         tool_choice: 'auto',
       }),
     });
-    const data = await res.json();
+    // Read as text first, then parse: a gateway/proxy failure (Cloudflare challenge, a 502/504
+    // from the provider's edge, a plain outage page) serves HTML with a 200 or a non-JSON body
+    // on a 5xx, and `res.json()` on that throws a bare SyntaxError with no `.status` -- which
+    // run.js's TRANSIENT regex cannot see, so a clean climb died as a hard 'error' on one flaky
+    // response (caught live: grok-4.6 via OpenRouter, clean through rung 36, killed by
+    // `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`). Give every such failure a
+    // real `.status` (the HTTP status if it was a non-2xx, else a synthetic 502 for a 2xx that
+    // still isn't JSON) so it retries like any other transient provider failure instead of
+    // stopping the run.
+    const bodyText = await res.text();
+    let data;
+    try {
+      data = JSON.parse(bodyText);
+    } catch {
+      const err = new Error(
+        `openai-compatible ${res.status}: non-JSON response body (${bodyText.slice(0, 200).replace(/\s+/g, ' ')})`,
+      );
+      err.status = res.ok ? 502 : res.status;
+      err.providerMessage = 'non-JSON response body';
+      throw err;
+    }
     if (!res.ok) {
       const message = data && data.error ? data.error.message : res.statusText;
       const err = new Error(`openai-compatible ${res.status}: ${message}`);

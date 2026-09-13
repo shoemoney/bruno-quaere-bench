@@ -89,7 +89,21 @@ export function createDriver({ model, apiKey, systemPrompt, maxTokens = DEFAULT_
         tool_choice: 'auto',
       }),
     });
-    const data = await res.json();
+    // See openai.js's driver for why: read as text first, so a non-JSON body (a gateway HTML
+    // error page, a Cloudflare challenge) throws a real, retryable error with a `.status` on it
+    // instead of a bare SyntaxError that run.js's TRANSIENT classifier cannot see.
+    const bodyText = await res.text();
+    let data;
+    try {
+      data = JSON.parse(bodyText);
+    } catch {
+      const err = new Error(
+        `google ${res.status}: non-JSON response body (${bodyText.slice(0, 200).replace(/\s+/g, ' ')})`,
+      );
+      err.status = res.ok ? 502 : res.status;
+      err.providerMessage = 'non-JSON response body';
+      throw err;
+    }
     if (!res.ok) {
       // See file header point 2: unwrap the array-shaped error body before falling back to
       // res.statusText, so run.js's PROVIDER_AUTH_ERROR (401/403) and isContextLengthError

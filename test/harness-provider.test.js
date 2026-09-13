@@ -63,7 +63,7 @@ async function withStubbedFetch(fakeResponseBody, fn) {
   const seen = [];
   globalThis.fetch = async (url, opts) => {
     seen.push({ url, opts });
-    return { ok: true, json: async () => fakeResponseBody };
+    return { ok: true, json: async () => fakeResponseBody, text: async () => JSON.stringify(fakeResponseBody) };
   };
   try {
     return await fn(seen);
@@ -135,7 +135,8 @@ test('the google driver round-trips extra_content.google.thought_signature on a 
     globalThis.fetch = async (url, opts) => {
       seen.push(opts);
       call += 1;
-      return { ok: true, json: async () => (call === 1 ? firstResponse : FAKE_CHAT_RESPONSE) };
+      const body = call === 1 ? firstResponse : FAKE_CHAT_RESPONSE;
+      return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
     };
     try {
       const driver = resolveDriver('google', { model: 'gemini-3.8-flash', systemPrompt: 'sys' });
@@ -176,6 +177,7 @@ test('the google driver unwraps an array-shaped error body ([{error}]) instead o
       status: 403,
       statusText: 'Forbidden',
       json: async () => [{ error: { code: 403, message: 'team_blocked', status: 'PERMISSION_DENIED' } }],
+      text: async () => JSON.stringify([{ error: { code: 403, message: 'team_blocked', status: 'PERMISSION_DENIED' } }]),
     });
     try {
       const driver = resolveDriver('google', { model: 'gemini-3.8-flash', systemPrompt: 'sys' });

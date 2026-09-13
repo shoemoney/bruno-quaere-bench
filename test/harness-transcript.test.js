@@ -364,7 +364,7 @@ async function withStubbedFetch(fakeResponseBody, fn) {
   const seen = [];
   globalThis.fetch = async (url, opts) => {
     seen.push({ url, opts });
-    return { ok: true, json: async () => fakeResponseBody };
+    return { ok: true, json: async () => fakeResponseBody, text: async () => JSON.stringify(fakeResponseBody) };
   };
   try {
     return await fn(seen);
