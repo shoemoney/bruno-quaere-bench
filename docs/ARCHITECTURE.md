@@ -1017,3 +1017,41 @@ both the non-2xx and the false-200 case. Six existing fake-fetch mocks across
 Response objects always have both); they were fixed to match, not the production code loosened
 to match them. grok-4.6's climb, clean through rung 36 when it died, is voided and rerun on a
 fresh seed.
+
+## Addendum S: the audit check required a step the task text never asked for
+
+Added 2026-09-13 18:15, during round five on ladder 0.7.0. Three independent models on three
+different seeds -- gpt-6-astra (901), qwen3.8-flash (902), muse-spark-1.3-contributor (908) --
+each cleared through rung 49 and fell at rung 50 with `hash: true, project_state: true,
+label: true, audit: false`. The reference climbs the same rung 6/6 clean on seed 901, so the task
+is passable; three unrelated agents converging on the identical failure shape on different
+answers is the same tell that caught the 0.6.0 rung-60 antecedent gap.
+
+**Root cause.** `src/ladder/grammar.js` bakes `recover409: true` unconditionally into the render
+step's plan args for every rung with the `recover409` behavior (bands including 50-59 and 60-69).
+`src/ladder/rung.js`'s `auditFor()` reads that plan flag and requires `render:409` in the expected
+stage sequence whenever it's set. But the one fixed sentence every such rung's text uses --
+"Take it through every house stage, in the house's order... Reaching for a stage early earns a
+refusal -- accept it, do the stage you skipped, and go on." -- narrates the CONSEQUENCE of an
+early reach as a warning, never instructs the agent to attempt one on purpose. A competent agent
+that reads the sentence as a caution and does every stage correctly and in order the first time,
+exactly as the rest of the sentence literally says to do ("in the house's order"), never triggers
+a 409, and therefore cannot produce the sequence the key requires -- through no fault of its own
+reading. This is an Addendum I violation: the key depends on a fact (a mandatory out-of-turn
+attempt) that is not stated anywhere in RULES-0.7.md, the skill, or the rung text as an
+instruction.
+
+**Fix.** When `recover409` is true, the rung text states the requirement as a plain instruction,
+not a warning: something to the effect of "Before you compose it, reach for the render stage on
+purpose -- take the refusal, then walk every stage in the house's order starting from where you
+actually are." Add the (skill) rule to `docs/RULES-0.7.md`/the clean skill: "a rung that tests
+stage recovery says so outright; if a rung does not ask for an early reach, none is required and
+none is graded." `docsolver.js` must parse the new instructional sentence and require the
+`render:409` entry in its own computed audit only when that sentence is present -- never infer it
+from the plan, which it cannot see. Rebaseline every affected rung's `expectedAudit` and answer
+key (unchanged content, just confirms the sentence swap didn't touch the artifact hash, only the
+task text and the audit's stage list source). Version bumps to 0.7.1.
+
+The three rung-50 falls above are voided, not real results. Kimi and the grok-4.6 rerun (seed
+909) may hit the same wall before this lands; their falls there would be voided too, for the same
+reason.
