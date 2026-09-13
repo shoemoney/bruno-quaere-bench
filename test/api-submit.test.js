@@ -69,6 +69,15 @@ async function submissionsFor(n) {
   return data.filter((s) => s.rung === n);
 }
 
+// Addendum N: `state.rungs.current` only ever moves via /admin/rungs/advance. Every test below
+// submits against the CURRENT rung, so each move to the next rung number in the sequence calls
+// this once first.
+async function advanceRung() {
+  const res = await fetch(`${adminBase}/admin/rungs/advance`, { method: 'POST' });
+  assert.equal(res.status, 200);
+  return res.json();
+}
+
 let token;
 let assetId;
 let assetHash;
@@ -95,6 +104,8 @@ test.before(async () => {
     { n: 4, text: 'wrong count', expected: [assetHash, assetHash], expectedDescriptors: [assetDescriptor, assetDescriptor] },
     { n: 5, text: 'wrong hash', expected: ['sha256:not-the-real-hash'], expectedDescriptors: [assetDescriptor] },
     { n: 6, text: 'happy path', expected: [assetHash], expectedDescriptors: [assetDescriptor] },
+    { n: 7, text: 'non-current rung: future probe', expected: [assetHash], expectedDescriptors: [assetDescriptor] },
+    { n: 8, text: 'non-current rung: stale probe', expected: [assetHash], expectedDescriptors: [assetDescriptor] },
   ]);
 });
 
@@ -126,6 +137,7 @@ test('submit: invalid JSON body is 422 and records nothing; a later correct subm
 });
 
 test('submit: assets not an array is 422 and records nothing; a later correct submit still passes', async () => {
+  await advanceRung(); // current: 0 -> 1
   const badRes = await fetch(submitUrl(1), {
     method: 'POST',
     headers: authHeaders(token),
@@ -146,6 +158,7 @@ test('submit: assets not an array is 422 and records nothing; a later correct su
 });
 
 test('submit: missing assets field is 422 and records nothing; a later correct submit still passes', async () => {
+  await advanceRung(); // current: 1 -> 2
   const badRes = await fetch(submitUrl(2), {
     method: 'POST',
     headers: authHeaders(token),
@@ -169,6 +182,7 @@ test('submit: missing assets field is 422 and records nothing; a later correct s
 });
 
 test('submit: an unresolvable asset id is 422 and records nothing; a later correct submit still passes', async () => {
+  await advanceRung(); // current: 2 -> 3
   const badRes = await fetch(submitUrl(3), {
     method: 'POST',
     headers: authHeaders(token),
@@ -188,6 +202,7 @@ test('submit: an unresolvable asset id is 422 and records nothing; a later corre
 });
 
 test('submit: wrong count is a real attempt -- recorded as a fail, not a 422', async () => {
+  await advanceRung(); // current: 3 -> 4
   const res = await fetch(submitUrl(4), {
     method: 'POST',
     headers: authHeaders(token),
@@ -202,6 +217,7 @@ test('submit: wrong count is a real attempt -- recorded as a fail, not a 422', a
 });
 
 test('submit: wrong hash is a real attempt -- recorded as a fail, not a 422', async () => {
+  await advanceRung(); // current: 4 -> 5
   const res = await fetch(submitUrl(5), {
     method: 'POST',
     headers: authHeaders(token),
@@ -216,6 +232,7 @@ test('submit: wrong hash is a real attempt -- recorded as a fail, not a 422', as
 });
 
 test('submit: happy path passes and is recorded once; a second submit to the same rung is 409', async () => {
+  await advanceRung(); // current: 5 -> 6
   const res = await fetch(submitUrl(6), {
     method: 'POST',
     headers: authHeaders(token),
@@ -236,6 +253,56 @@ test('submit: happy path passes and is recorded once; a second submit to the sam
     body: JSON.stringify({ assets: [assetId] }),
   });
   assert.equal(dupe.status, 409, 'one submission per rung, even after a pass');
+});
+
+// Addendum N: a submission to a rung that is not the current rung is a 409, never a recorded
+// fall -- a probe or stale client hitting a future or past rung must not be scored, and the
+// current rung must still be submittable afterward.
+test('submit: a future rung (current+5) is 409 and records nothing; a correct submit to the current rung still passes', async () => {
+  await advanceRung(); // current: 6 -> 7
+  const futureRes = await fetch(submitUrl(12), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ assets: [assetId] }),
+  });
+  assert.equal(futureRes.status, 409);
+  assert.equal(futureRes.headers.get('content-type'), 'application/problem+json');
+  const futureBody = await futureRes.json();
+  assert.equal(futureBody.detail, 'rung 12 is not the current rung (7)');
+  assert.deepEqual(await submissionsFor(12), [], 'a wrong-rung probe must record nothing');
+
+  const goodRes = await fetch(submitUrl(7), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ assets: [assetId] }),
+  });
+  assert.equal(goodRes.status, 200);
+  const goodBody = await goodRes.json();
+  assert.equal(goodBody.pass, true);
+  assert.equal((await submissionsFor(7)).length, 1, 'the correct submit to the current rung is the only one recorded');
+});
+
+test('submit: a past rung (current-1) is 409 and records nothing', async () => {
+  await advanceRung(); // current: 7 -> 8
+  const staleRes = await fetch(submitUrl(7), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ assets: [assetId] }),
+  });
+  assert.equal(staleRes.status, 409);
+  assert.equal(staleRes.headers.get('content-type'), 'application/problem+json');
+  const staleBody = await staleRes.json();
+  assert.equal(staleBody.detail, 'rung 7 is not the current rung (8)');
+  assert.equal((await submissionsFor(7)).length, 1, 'the stale probe must not add another submission for rung 7');
+
+  const goodRes = await fetch(submitUrl(8), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ assets: [assetId] }),
+  });
+  assert.equal(goodRes.status, 200);
+  assert.equal((await goodRes.json()).pass, true);
+  assert.equal((await submissionsFor(8)).length, 1);
 });
 
 // ---------------------------------------------------------------------------

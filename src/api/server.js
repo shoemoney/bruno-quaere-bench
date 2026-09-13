@@ -587,6 +587,13 @@ async function routeHandlers(routeId, ctx) {
 
   if (routeId === 'rungs.submit') {
     const n = Number(params.n);
+    // Addendum N: a submission to a rung that is not the current rung is a 409, never a
+    // recorded fall. A probe or stale client hitting an old/future rung must not be scored --
+    // nothing is recorded, and the current-rung one-submission rule below is unaffected.
+    if (n !== state.rungs.current) {
+      sendProblem(res, 409, { detail: `rung ${n} is not the current rung (${state.rungs.current})` });
+      return;
+    }
     if (state.rungs.submissions.some((s) => s.rung === n)) {
       sendProblem(res, 409, { detail: `rung ${n} already submitted` });
       return;

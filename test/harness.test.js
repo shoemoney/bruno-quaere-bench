@@ -134,50 +134,38 @@ function buildEnvYml(baseUrl, apiKey) {
   ].join('\n');
 }
 
-// One request whose "tests" script does the actual work: authenticate, then create+submit for
-// every rung in `plans` (in order, by path -- submitting for rung n never depends on the server's
-// notion of "current rung", only on the answer key for n), then deliberately submit a wrong asset
-// for rung 3 so the run ends in a clean, deterministic fail.
-function buildClimbYml(plans) {
+// One request per rung, run through bru as its own separate invocation: authenticate, create,
+// submit to `/rungs/{n}/submit`, and assert the expected pass/fail. Addendum N ties a submit's
+// fate to the server's notion of "current rung", and that pointer only ever moves via run.js's
+// own /admin/rungs/advance call between turns -- so unlike the old single-script climb, each
+// rung here MUST be its own bru run, one per driver turn, so the harness's real poll-then-advance
+// cycle runs for real between them.
+function buildRungYml(n, kind, params, { expectPass = true } = {}) {
+  const label = expectPass ? 'submit passed' : 'submit correctly fails on a wrong asset';
   const codeLines = [
-    `const PLANS = ${JSON.stringify(plans)};`,
     "const base = bru.getEnvVar('baseUrl');",
     'let accessToken = res.body.accessToken || res.body.access_token;',
     '',
     'async function run() {',
-    '  const made = [];',
-    '  for (const p of PLANS) {',
-    "    const createPath = p.kind === 'image' ? '/images' : '/audio';",
-    '    const createRes = await fetch(base + createPath, {',
-    "      method: 'POST',",
-    "      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + accessToken },",
-    '      body: JSON.stringify(p.params),',
-    '    });',
-    '    const created = await createRes.json();',
-    '    made.push(created.id);',
-    "    test('rung ' + p.n + ' create succeeded', function () {",
-    '      expect(createRes.status).to.equal(201);',
-    '    });',
-    '',
-    "    const submitRes = await fetch(base + '/rungs/' + p.n + '/submit', {",
-    "      method: 'POST',",
-    "      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + accessToken },",
-    '      body: JSON.stringify({ assets: [created.id] }),',
-    '    });',
-    '    const submitBody = await submitRes.json();',
-    "    test('rung ' + p.n + ' submit passed', function () {",
-    '      expect(submitBody.pass).to.equal(true);',
-    '    });',
-    '  }',
-    '',
-    "  const failRes = await fetch(base + '/rungs/3/submit', {",
+    `  const createPath = ${JSON.stringify(kind === 'image' ? '/images' : '/audio')};`,
+    '  const createRes = await fetch(base + createPath, {',
     "    method: 'POST',",
     "    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + accessToken },",
-    '    body: JSON.stringify({ assets: [made[0]] }),',
+    `    body: JSON.stringify(${JSON.stringify(params)}),`,
     '  });',
-    '  const failBody = await failRes.json();',
-    "  test('rung 3 correctly fails on a wrong asset', function () {",
-    '    expect(failBody.pass).to.equal(false);',
+    '  const created = await createRes.json();',
+    `  test('rung ${n} create succeeded', function () {`,
+    '    expect(createRes.status).to.equal(201);',
+    '  });',
+    '',
+    `  const submitRes = await fetch(base + '/rungs/${n}/submit', {`,
+    "    method: 'POST',",
+    "    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + accessToken },",
+    '    body: JSON.stringify({ assets: [created.id] }),',
+    '  });',
+    '  const submitBody = await submitRes.json();',
+    `  test('rung ${n} ${label}', function () {`,
+    `    expect(submitBody.pass).to.equal(${expectPass});`,
     '  });',
     '}',
     '',
@@ -186,7 +174,7 @@ function buildClimbYml(plans) {
 
   return [
     'info:',
-    '  name: climb',
+    `  name: climb-${n}`,
     '  type: http',
     '  seq: 1',
     '',
@@ -216,9 +204,7 @@ function buildClimbYml(plans) {
   ].join('\n');
 }
 
-// A fake driver: a fixed script of tool calls, no model, no network call of its own. Turn 1-3
-// write the collection; turn 4 runs it, which is enough for run.js to see rungs 0-2 pass and
-// rung 3 fail on the very next submissions poll.
+// A fake driver: a fixed script of tool calls, no model, no network call of its own.
 function makeScriptedDriver(steps) {
   let i = 0;
   return {
@@ -287,8 +273,16 @@ test(
           { id: 't2', name: 'write_file', input: { path: 'environments/local.yml', content: buildEnvYml(baseUrl, world.auth.apiKey) } },
         ],
       },
-      { toolCalls: [{ id: 't3', name: 'write_file', input: { path: 'climb.yml', content: buildClimbYml(plans) } }] },
-      { toolCalls: [{ id: 't4', name: 'bru', input: { args: 'run . --env local --sandbox developer' } }] },
+      { toolCalls: [{ id: 't3', name: 'write_file', input: { path: 'climb-0.yml', content: buildRungYml(plans[0].n, plans[0].kind, plans[0].params) } }] },
+      { toolCalls: [{ id: 't4', name: 'bru', input: { args: 'run climb-0.yml --env local --sandbox developer' } }] },
+      { toolCalls: [{ id: 't5', name: 'write_file', input: { path: 'climb-1.yml', content: buildRungYml(plans[1].n, plans[1].kind, plans[1].params) } }] },
+      { toolCalls: [{ id: 't6', name: 'bru', input: { args: 'run climb-1.yml --env local --sandbox developer' } }] },
+      { toolCalls: [{ id: 't7', name: 'write_file', input: { path: 'climb-2.yml', content: buildRungYml(plans[2].n, plans[2].kind, plans[2].params) } }] },
+      { toolCalls: [{ id: 't8', name: 'bru', input: { args: 'run climb-2.yml --env local --sandbox developer' } }] },
+      // Rung 3 deliberately submits the wrong kind of asset (rung 0's plan) so the run ends in a
+      // clean, deterministic fail once the pointer has genuinely advanced to rung 3.
+      { toolCalls: [{ id: 't9', name: 'write_file', input: { path: 'climb-3.yml', content: buildRungYml(3, plans[0].kind, plans[0].params, { expectPass: false }) } }] },
+      { toolCalls: [{ id: 't10', name: 'bru', input: { args: 'run climb-3.yml --env local --sandbox developer' } }] },
     ]);
 
     const outDir = await mkdtemp(path.join(os.tmpdir(), 'quaere-run-'));
@@ -299,7 +293,7 @@ test(
         attempt: 1,
         outDir,
         driver,
-        maxTurns: 10,
+        maxTurns: 14,
         publicPort: PUBLIC_PORT,
         adminPort: ADMIN_PORT,
         skillBytes: SKILL_BYTES,
@@ -321,12 +315,12 @@ test(
       assert.equal(resultOnDisk.rung, 2);
 
       const transcriptLines = (await readFile(path.join(runDir, 'transcript.jsonl'), 'utf8')).trim().split('\n');
-      assert.equal(transcriptLines.length, 6);
+      assert.equal(transcriptLines.length, 12);
       const transcript = transcriptLines.map((line) => JSON.parse(line));
       assert.equal(transcript[0].toolCalls[0].name, 'grep');
       assert.equal(transcript[1].toolCalls[0].name, 'read_file');
 
-      const collected = await readFile(path.join(runDir, 'collection', 'climb.yml'), 'utf8');
+      const collected = await readFile(path.join(runDir, 'collection', 'climb-0.yml'), 'utf8');
       assert.match(collected, /submit passed/);
 
       // The skill the agent actually read from disk is the small sloppy one this run asked for
