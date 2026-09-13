@@ -94,7 +94,10 @@ function enumChain(seed, key, label, trueValue, domain) {
   const others = domain.map(String).filter((v) => v !== String(trueValue));
   const count = int(r, 2, 4);
   const decoyValues = Array.from({ length: count }, () => pick(r, others));
-  return { key, label, trueValue: String(trueValue), decoyValues };
+  // `domain`: the full enum, string-cast, kept so Addendum J rule 7's extra "retracted" decoy
+  // (see drawFreshValue below) can draw a value this chain never rendered elsewhere, rather than
+  // reusing one of decoyValues and complicating that value's occurrence accounting.
+  return { key, label, trueValue: String(trueValue), decoyValues, domain: domain.map(String) };
 }
 
 function rangeChain(seed, key, label, trueValue, lo, hi) {
@@ -111,7 +114,8 @@ function rangeChain(seed, key, label, trueValue, lo, hi) {
       out.push(v);
     }
   }
-  return { key, label, trueValue: String(trueValue), decoyValues: out.map(String) };
+  // `lo`/`hi`: same purpose as `domain` above, for a range chain's much larger space.
+  return { key, label, trueValue: String(trueValue), decoyValues: out.map(String), lo, hi };
 }
 
 function buildRuleChains(world) {
@@ -170,6 +174,113 @@ function markersFor(type, r, count) {
 
 function markerLabel(type, marker) {
   return type === 'version' ? `(${marker})` : `(dated ${marker})`;
+}
+
+// --- Addendum J rule 7: per-section precedence rotation + one retracted, newer-dated decoy ----
+//
+// Everywhere else in this document, ONE global precedence convention (picked above, in
+// buildPrecedence) resolves every rule chain -- that is what the existing invariants below check
+// and what a careful reader learns to rely on. Addendum J asks for a second kind of pressure on
+// top of that: one section that states, of ITSELF, a DIFFERENT convention ("in this section the
+// highest version wins" when the document's own global rule is date-based, or the date-based
+// mirror of that sentence when the global rule is version-based), plus one extra decoy for a
+// real rule -- carrying a date marker that reads as newer than every genuine truth marker in the
+// whole document -- immediately followed by an explicit retraction two lines later. The decoy is
+// never authoritative under EITHER convention: the local rule here is versioned/dated the other
+// way, and the retraction says so outright regardless. This is still never an unmarked
+// contradiction (every claim here is dated, and the wrong one is flagged wrong in the text
+// itself) and the document is still a strict superset of the clean skill's facts -- this block
+// adds one extra, clearly-resolved wrinkle, it does not remove or reword anything else.
+//
+// Extra decoy VALUES are drawn fresh (never reusing one of the chain's own recorded decoy
+// values), so this block's token never collides with -- and so never needs folding into -- the
+// existing per-chain occurrence accounting the "contradiction scan" test performs; it gets its
+// own, separate test instead.
+function drawFreshValue(seed, chain) {
+  if (chain.domain) {
+    const used = new Set([chain.trueValue, ...chain.decoyValues]);
+    const fresh = chain.domain.filter((v) => !used.has(v));
+    const r = rng(sub(seed, `sloppy.sectionPrecedence.value.${chain.key}`));
+    if (fresh.length > 0) return pick(r, fresh);
+    return pick(r, chain.domain.filter((v) => v !== chain.trueValue)); // binary domain: reuse tolerated
+  }
+  const used = new Set([chain.trueValue, ...chain.decoyValues]);
+  const r = rng(sub(seed, `sloppy.sectionPrecedence.value.${chain.key}`));
+  let guard = 0;
+  while (guard < 500) {
+    guard += 1;
+    const v = String(int(r, chain.lo, chain.hi));
+    if (!used.has(v)) return v;
+  }
+  return chain.decoyValues[0];
+}
+
+// Builds the whole special block's text and every offset a test needs, but does NOT append it --
+// the caller places it like any other item so its position in the document is seeded the same
+// way everything else's is.
+function buildSectionPrecedenceBlock(world, globalPrecedence, chains) {
+  const seed = world.seed;
+  // A binary-domain chain (opacityCompound, zOrder, naming, ...) has no value left over once its
+  // truth and 2-4 decoys are drawn, so drawFreshValue would have to reuse one -- which is exactly
+  // the unmarked-collision case the contradiction scan exists to catch. Restrict the pick to
+  // chains that provably have a spare value (every range chain does; an enum chain does whenever
+  // its domain outsizes what it already used).
+  const usable = chains.filter((c) => {
+    if (!c.domain) return true;
+    return c.domain.length > new Set([c.trueValue, ...c.decoyValues]).size;
+  });
+  const chain = pick(rng(sub(seed, 'sloppy.sectionPrecedence.chain')), usable.length > 0 ? usable : chains);
+  const localType = globalPrecedence.type === 'date' ? 'version' : 'date';
+  const localText =
+    localType === 'version'
+      ? "In this section, the entry carrying the highest v-number wins, no matter what the rest of this document says about dates."
+      : "In this section, the entry carrying the newest date wins, no matter what the rest of this document says about version numbers.";
+
+  // "Newer-dated": strictly after the newest date-marker YEAR that appears anywhere else in the
+  // document. When the global convention is itself date-based, that is the max truth-marker year
+  // across every chain (each chain's own newest marker is its truth's, by construction --
+  // markersFor() only ever ascends). When the global convention is version-based, nothing else in
+  // the document carries a date at all, so any ordinary near-future year already reads as newer.
+  let baseYear;
+  if (globalPrecedence.type === 'date') {
+    baseYear = 0;
+    for (const c of chains) {
+      const rMark = rng(sub(seed, `sloppy.markers.${c.key}`));
+      const markers = markersFor('date', rMark, c.decoyValues.length + 1);
+      const truthYear = Number(markers[markers.length - 1].slice(0, 4));
+      if (truthYear > baseYear) baseYear = truthYear;
+    }
+  } else {
+    baseYear = 2026;
+  }
+  const rYear = rng(sub(seed, 'sloppy.sectionPrecedence.year'));
+  const year = baseYear + 1 + int(rYear, 0, 2);
+  const retractedMarker = `${year}-${pad2(int(rYear, 1, 12))}-${pad2(int(rYear, 1, 28))}`;
+
+  const value = drawFreshValue(seed, chain);
+  const token = `${chain.key}=${escapeForBacktick(value)}`;
+  const claimLine = `(dated ${retractedMarker}) ${chain.label} is \`${token}\`. Just turned up going through an old export, flagging it here.`;
+  const bufferLine = 'No other context was attached to this note at the time it was found.';
+  const retractionLine = 'RETRACTED -- ignore the line two above; it was a copy-paste error caught in review and never reflected a real value.';
+
+  return { chain, localType, localText, retractedMarker, value, token, claimLine, bufferLine, retractionLine };
+}
+
+// Renders one buildSectionPrecedenceBlock() spec as its own `### ` block (same shape as every
+// other buried block) and records every offset a test needs. "Two lines later": claimLine and
+// retractionLine sit two document lines apart (bufferLine is the one line between them), which is
+// what lets a test assert the exact spacing Addendum J calls for rather than just "somewhere below".
+function renderSectionPrecedenceEntry(state, headingsPick, spec) {
+  const heading = pick(headingsPick, HEADINGS);
+  const lines = [`### ${heading}`, '', spec.localText, '', spec.claimLine, spec.bufferLine, spec.retractionLine, ''];
+  const block = lines.join('\n');
+  const { start } = appendChunk(state, block);
+  const localTextOffset = start + block.indexOf(spec.localText);
+  const claimLineOffset = start + block.indexOf(spec.claimLine);
+  const retractionLineOffset = start + block.indexOf(spec.retractionLine);
+  const needle = '`' + spec.token + '`';
+  const valueOffset = start + block.indexOf(needle) + 1 + spec.chain.key.length + 1; // past `, key, '='
+  return { heading, localTextOffset, claimLineOffset, retractionLineOffset, valueOffset };
 }
 
 // --- filler generators -------------------------------------------------------------------
@@ -479,13 +590,20 @@ function build(world, targetBytes) {
   const cleanSecs = cleanSections(world);
   const sectionItems = cleanSecs.map((s) => ({ type: 'section', heading: s.heading, body: s.body }));
 
-  const order = shuffle(rLayout, [...flatItems, ...sectionItems]);
+  // Addendum J rule 7: the one rotated-precedence, retracted-decoy block, mixed into the same
+  // shuffle so its position varies per seed exactly like everything else -- the only fixed
+  // guarantee (checked below, same as every other buried fact) is that it lands past the 10% mark.
+  const sectionPrecedenceSpec = buildSectionPrecedenceBlock(world, precedence, chains);
+  const sectionPrecedenceItems = [{ type: 'sectionPrecedence', spec: sectionPrecedenceSpec }];
+
+  const order = shuffle(rLayout, [...flatItems, ...sectionItems, ...sectionPrecedenceItems]);
 
   const byChain = new Map(chains.map((c) => [c.key, { key: c.key, label: c.label, truth: null, decoys: [] }]));
   const bySection = new Map(cleanSecs.map((s) => [s.heading, { heading: s.heading, offset: null, length: null }]));
 
   const introTextForDuplicate = title.split('\n')[2] || 'This is not the published reference.';
   let dupCounter = 0;
+  let sectionPrecedenceRendered = null;
 
   for (const item of order) {
     // A little filler before each item keeps items from clumping and adds required variety;
@@ -504,6 +622,8 @@ function build(world, targetBytes) {
       const rec = byChain.get(item.chainKey);
       if (item.isTruth) rec.truth = rendered;
       else rec.decoys.push(rendered);
+    } else if (item.type === 'sectionPrecedence') {
+      sectionPrecedenceRendered = renderSectionPrecedenceEntry(state, rHeadings, item.spec);
     } else {
       const rendered = renderSectionBlock(state, rHeadings, rSectionNote, item);
       const rec = bySection.get(item.heading);
@@ -556,6 +676,22 @@ function build(world, targetBytes) {
     },
     rules,
     sections,
+    // Addendum J rule 7: see buildSectionPrecedenceBlock / renderSectionPrecedenceEntry above.
+    // `localTextOffset`/`retracted.*Offset` are all string indices into `doc`, same convention
+    // as everything else here.
+    sectionPrecedence: {
+      chainKey: sectionPrecedenceSpec.chain.key,
+      localType: sectionPrecedenceSpec.localType,
+      localText: sectionPrecedenceSpec.localText,
+      localTextOffset: sectionPrecedenceRendered.localTextOffset,
+      retracted: {
+        marker: sectionPrecedenceSpec.retractedMarker,
+        value: sectionPrecedenceSpec.value,
+        offset: sectionPrecedenceRendered.valueOffset,
+        claimOffset: sectionPrecedenceRendered.claimLineOffset,
+        retractionOffset: sectionPrecedenceRendered.retractionLineOffset,
+      },
+    },
   };
 
   return { doc, truth };
@@ -594,6 +730,12 @@ export function toSkill(world, opts = {}) {
 // the clean skill, in clean-document order, each with the exact index range of that section's
 // body as embedded verbatim somewhere in the sloppy document -- `doc.slice(offset, offset +
 // length) === body`, and `body` is also exactly what skill.js's own `sections(world)` returns.
+// `sectionPrecedence` (Addendum J rule 7) is the one rotated-local-convention block:
+// `{chainKey, localType, localText, localTextOffset, retracted: {marker, value, offset,
+// claimOffset, retractionOffset}}` -- `chainKey` names which of `rules` it restates, `localType`
+// is always the OPPOSITE of `precedence.type`, and `retracted` is the newer-dated decoy that is
+// explicitly retracted two document lines below its own claim (`retractionOffset`'s line is
+// exactly `claimOffset`'s line + 2).
 export function truthTable(world, opts = {}) {
   const targetBytes = opts.targetBytes ?? DEFAULT_TARGET_BYTES;
   return memoBuild(world, targetBytes).truth;

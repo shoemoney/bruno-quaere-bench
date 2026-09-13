@@ -32,16 +32,19 @@ test('world has the exact top-level shape from the architecture doc', () => {
   const keys = Object.keys(w).sort();
   assert.deepEqual(keys, [
     'auth', 'deprecated', 'hmac', 'ids', 'loras', 'naming',
-    'namingExceptions', 'pagination', 'rate', 'rules', 'seed',
+    'namingExceptions', 'pagination', 'rate', 'rules', 'rungMutations', 'seed',
     'traps', 'vocab', 'version',
   ].sort());
 });
 
 test('world.version is pinned', () => {
   // Rebaselined 0.3.0 -> 0.4.0 by Addendum I's percent-resize fix (runCompute now grid-rounds the
-  // same way every other convert target does, plus grammar.js's ambiguous-percent redraw) -- see
-  // world.js's VERSION comment.
-  assert.equal(makeWorld(1).version, '0.4.0');
+  // same way every other convert target does, plus grammar.js's ambiguous-percent redraw), then
+  // 0.4.0 -> 0.5.0 by Addendum J, which changed the ladder grammar wholesale (cross-rung
+  // references, derived parameters, announced per-rung mutations, state-machine/HMAC/ETag chains,
+  // audio and video math, multi-rule ordering, a much longer step envelope) -- see world.js's
+  // VERSION comment.
+  assert.equal(makeWorld(1).version, '0.5.0');
 });
 
 test('vocab has the four required nouns as non-empty strings', () => {

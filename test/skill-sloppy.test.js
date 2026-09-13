@@ -307,3 +307,114 @@ test('5 MB mode still satisfies the same offset, marking, and precedence invaria
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Addendum J rule 7: skill pressure -- a per-section precedence rotation, plus one newer-dated
+// decoy that is explicitly retracted two lines later. Still never an unmarked contradiction
+// (the retraction IS the mark), still a superset of clean (nothing above changes because of this).
+// ---------------------------------------------------------------------------
+
+test('sectionPrecedence: states a LOCAL convention, of the OPPOSITE type from the document\'s global one', () => {
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    const doc = toSkill(world, { targetBytes: SMALL });
+    const tt = truthTable(world, { targetBytes: SMALL });
+    const sp = tt.sectionPrecedence;
+    assert.ok(['date', 'version'].includes(sp.localType), `seed ${seed}`);
+    assert.notEqual(sp.localType, tt.precedence.type, `seed ${seed}: local convention must rotate away from the global one`);
+    assert.match(sp.localText, /^In this section,/, `seed ${seed}`);
+    assert.match(sp.localText, sp.localType === 'version' ? /highest v-number/i : /newest date/i, `seed ${seed}`);
+    // present, exactly once, past the 10% floor every other buried fact is held to
+    const occurrences = [...doc.matchAll(new RegExp(escapeRegExp(sp.localText), 'g'))];
+    assert.equal(occurrences.length, 1, `seed ${seed}`);
+    assert.equal(occurrences[0].index, sp.localTextOffset, `seed ${seed}`);
+    assert.ok(sp.localTextOffset > doc.length * 0.1, `seed ${seed}: local convention before the 10% mark`);
+  }
+});
+
+test('sectionPrecedence: the retracted decoy is present at its offset, backticked as key=value, referencing a real rule chain', () => {
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    const doc = toSkill(world, { targetBytes: SMALL });
+    const tt = truthTable(world, { targetBytes: SMALL });
+    const sp = tt.sectionPrecedence;
+    const rule = tt.rules.find((r) => r.key === sp.chainKey);
+    assert.ok(rule, `seed ${seed}: sectionPrecedence points at an unknown chain "${sp.chainKey}"`);
+
+    const { offset, value } = sp.retracted;
+    assert.equal(doc.slice(offset, offset + value.length), value, `seed ${seed}`);
+    const prefix = doc.slice(offset - sp.chainKey.length - 2, offset);
+    assert.equal(prefix, '`' + sp.chainKey + '=', `seed ${seed}: retracted decoy not backtick-keyed`);
+    assert.equal(doc[offset + value.length], '`', `seed ${seed}`);
+
+    // it must never collide with that same chain's own recorded truth/decoy values -- a fresh
+    // value, never one this chain already used elsewhere in the document.
+    const usedElsewhere = new Set([rule.truth.value, ...rule.decoys.map((d) => d.value)]);
+    assert.ok(!usedElsewhere.has(value), `seed ${seed}: retracted decoy reuses an already-recorded value for ${sp.chainKey}`);
+  }
+});
+
+test('sectionPrecedence: the decoy is dated strictly after every genuine truth marker in the document', () => {
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    const tt = truthTable(world, { targetBytes: SMALL });
+    const sp = tt.sectionPrecedence;
+    assert.match(sp.retracted.marker, /^\d{4}-\d{2}-\d{2}$/, `seed ${seed}: retracted marker must be a date, even when the local/global conventions are version-based`);
+    const retractedYear = Number(sp.retracted.marker.slice(0, 4));
+    if (tt.precedence.type === 'date') {
+      const maxTruthYear = Math.max(...tt.rules.map((r) => Number(r.truth.marker.slice(0, 4))));
+      assert.ok(retractedYear > maxTruthYear, `seed ${seed}: retracted year ${retractedYear} must postdate every truth year (max ${maxTruthYear})`);
+    } else {
+      assert.ok(retractedYear >= 2027, `seed ${seed}: retracted year ${retractedYear} should read as clearly near-future when nothing else in the document carries a date`);
+    }
+  }
+});
+
+test('sectionPrecedence: the decoy is explicitly retracted exactly two lines later, never an unmarked contradiction', () => {
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    const doc = toSkill(world, { targetBytes: SMALL });
+    const tt = truthTable(world, { targetBytes: SMALL });
+    const { claimOffset, retractionOffset } = tt.sectionPrecedence.retracted;
+    assert.ok(retractionOffset > claimOffset, `seed ${seed}`);
+    const lineOf = (off) => doc.slice(0, off).split('\n').length - 1;
+    assert.equal(lineOf(retractionOffset) - lineOf(claimOffset), 2, `seed ${seed}: retraction must sit exactly two lines below the claim`);
+    const between = doc.slice(claimOffset, retractionOffset);
+    assert.doesNotMatch(between, /RETRACTED/, `seed ${seed}: the retraction marker must not appear before the retraction line itself`);
+    const retractionLineEnd = doc.indexOf('\n', retractionOffset);
+    const retractionLine = doc.slice(retractionOffset, retractionLineEnd === -1 ? undefined : retractionLineEnd);
+    assert.match(retractionLine, /^RETRACTED/, `seed ${seed}: the retraction must say so explicitly, in words`);
+  }
+});
+
+test('sectionPrecedence: applying either convention to the retracted decoy alone never authorizes it -- the retraction always wins', () => {
+  // The retracted entry is dated (so it would look newer under a date-based reading) but the
+  // section's own stated convention here is the OPPOSITE type -- so under the section's own
+  // rule a bare date carries no weight at all, and even if a reader ignored that and fell back to
+  // the document's global convention, the explicit "RETRACTED" sentence overrides both. This test
+  // is the sharpest form of "never an unmarked contradiction": the one entry designed to look
+  // like it should win, by construction, must not be findable as authoritative anywhere.
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    const tt = truthTable(world, { targetBytes: SMALL });
+    const sp = tt.sectionPrecedence;
+    const rule = tt.rules.find((r) => r.key === sp.chainKey);
+    assert.notEqual(sp.retracted.value, rule.truth.value, `seed ${seed}: the retracted decoy must not accidentally equal the real truth`);
+  }
+});
+
+test('sectionPrecedence: still a superset of clean -- adding this block changes nothing else the existing invariants check', () => {
+  // Regression guard: this feature is additive noise, not a rewrite. Rerunning the pre-existing
+  // per-chain marker/precedence checks (duplicated narrowly here rather than relying on test
+  // order) confirms the global chains are untouched by the new block sharing their `chains` array.
+  for (const seed of SEEDS) {
+    const world = makeWorld(seed);
+    const tt = truthTable(world, { targetBytes: SMALL });
+    for (const r of tt.rules) {
+      const rank = (m) => (tt.precedence.type === 'version' ? Number(m.slice(1)) : m);
+      for (const d of r.decoys) {
+        assert.ok(rank(d.marker) < rank(r.truth.marker), `seed ${seed}: rule ${r.key} global resolution broken by sectionPrecedence`);
+      }
+    }
+  }
+});

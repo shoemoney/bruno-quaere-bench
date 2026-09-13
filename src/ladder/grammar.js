@@ -21,7 +21,7 @@
 // Every step's args may contain `{ $ref: key, field? }` placeholders, resolved against the
 // running env (of descriptors/values) via resolveRefs before the op executes.
 
-import { rng, sub, pick, int } from '../seed.js';
+import { rng, sub, pick, int, chance } from '../seed.js';
 import { create, convert, combine, diff, applyLora, pxFromUnit, snap6, roundToGrid } from '../media.js';
 import { createResourceStore, seedInitialData, listWorkspaces, listProjects, listAssetsForProject } from '../api/resources.js';
 
@@ -55,73 +55,73 @@ import { createResourceStore, seedInitialData, listWorkspaces, listProjects, lis
 export const BANDS = [
   {
     tier: 0, min: 0, max: 9,
-    steps: [1, 1], params: [13, 18], lookups: [0, 1], quant: [0, 1],
+    steps: [1, 2], params: [13, 18], lookups: [0, 1], quant: [0, 1],
     kinds: ['image', 'audio'],
-    features: {},
+    features: { save: 5 },
     behaviors: ['auth', 'create'],
   },
   {
     tier: 1, min: 10, max: 19,
-    steps: [3, 4], params: [18, 23], lookups: [1, 3], quant: [1, 3],
+    steps: [3, 5], params: [18, 23], lookups: [1, 3], quant: [1, 3],
     kinds: ['image', 'image', 'audio'],
     features: { percentRound: 5, liveTrap: 5 },
     behaviors: ['convert', 'idempotency', 'loraLookup'],
   },
   {
     tier: 2, min: 20, max: 29,
-    steps: [4, 5], params: [23, 28], lookups: [2, 4], quant: [2, 2],
+    steps: [3, 5], params: [23, 28], lookups: [2, 4], quant: [2, 2],
     kinds: ['image'],
-    features: { liveTrap: 0, secondLora: 5 },
-    behaviors: ['combine', 'loraLookup', 'roundingOrder2', 'liveTrap'],
+    features: { liveTrap: 0, crossRef: 0 },
+    behaviors: ['combine', 'loraLookup', 'roundingOrder2', 'liveTrap', 'crossRef'],
   },
   {
     tier: 3, min: 30, max: 39,
-    steps: [5, 6], params: [28, 33], lookups: [2, 4], quant: [3, 3],
+    steps: [6, 9], params: [28, 33], lookups: [2, 4], quant: [3, 3],
     kinds: ['image'],
-    features: { liveTrap: 0, loraLookup: 5 },
-    behaviors: ['diff', 'etag', 'roundingOrder2', 'liveTrap'],
+    features: { liveTrap: 0, derived: 0, loraLookup: 5 },
+    behaviors: ['diff', 'etag', 'roundingOrder2', 'liveTrap', 'derivedParam'],
   },
   {
     tier: 4, min: 40, max: 49,
-    steps: [5, 6], params: [30, 36], lookups: [3, 5], quant: [1, 1],
+    steps: [6, 9], params: [30, 36], lookups: [3, 5], quant: [1, 1],
     kinds: ['image'],
-    features: { liveTrap: 0, secondLora: 5 },
-    behaviors: ['paginationBatch', 'rateLimit', 'liveTrap'],
+    features: { liveTrap: 0, derived: 0, secondLora: 5 },
+    behaviors: ['paginationBatch', 'rateLimit', 'liveTrap', 'derivedParam', 'rungMutation'],
   },
   {
     tier: 5, min: 50, max: 59,
-    steps: [6, 7], params: [33, 38], lookups: [3, 4], quant: [3, 4],
+    steps: [10, 14], params: [33, 38], lookups: [3, 4], quant: [3, 4],
     kinds: ['image'],
-    features: { save: 5 },
-    behaviors: ['asyncRender', 'stateMachine', 'roundingOrder2'],
+    features: { derived: 0, stateChain: 0, audioMath: 0, save: 5 },
+    behaviors: ['asyncRender', 'stateMachine', 'roundingOrder2', 'audioDiff', 'etagConditional', 'recover409'],
   },
   {
     tier: 6, min: 60, max: 69,
-    steps: [8, 8], params: [36, 41], lookups: [4, 4], quant: [4, 4],
+    steps: [10, 14], params: [36, 41], lookups: [4, 4], quant: [4, 4],
     kinds: ['image'],
-    features: { save: 0 },
-    behaviors: ['tokenExpiry', 'hmacPublish', 'roundingOrder2'],
+    features: { derived: 0, stateChain: 0, videoMath: 0, crossRef: 0, save: 0 },
+    behaviors: ['tokenExpiry', 'hmacPublish', 'roundingOrder2', 'videoSequence', 'etagConditional', 'recover409'],
   },
   {
     tier: 7, min: 70, max: 79,
-    steps: [8, 8], params: [38, 44], lookups: [5, 5], quant: [2, 2],
+    steps: [15, 20], params: [38, 44], lookups: [5, 5], quant: [2, 2],
     kinds: ['image'],
-    features: { liveTrap: 0, secondLora: 0, secondGrow: 0 },
-    behaviors: ['contentNegotiation', 'softDelete', 'liveTrap'],
+    features: { liveTrap: 0, derived: 0, ordering: 0, secondLora: 0, secondGrow: 0 },
+    behaviors: ['contentNegotiation', 'softDelete', 'liveTrap', 'multiRuleOrder', 'derivedParam'],
   },
   {
     tier: 8, min: 80, max: 89,
-    steps: [9, 9], params: [41, 47], lookups: [6, 6], quant: [2, 2],
+    steps: [15, 20], params: [41, 47], lookups: [6, 6], quant: [2, 2],
     kinds: ['image'],
-    features: { liveTrap: 0, secondLora: 0, secondGrow: 0, thirdLora: 0 },
-    behaviors: ['liveTrap'],
+    features: { liveTrap: 0, derived: 0, ordering: 0, secondLora: 0, secondGrow: 0, thirdLora: 0 },
+    behaviors: ['liveTrap', 'multiRuleOrder', 'derivedParam'],
   },
   {
     tier: 9, min: 90, max: 99,
-    steps: [12, 12], params: [44, 53], lookups: [4, 4], quant: [5, 5],
+    steps: [20, 30], params: [44, 53], lookups: [4, 4], quant: [5, 5],
     kinds: ['image'],
-    features: { liveTrap: 0 },
-    behaviors: ['everything', 'roundingOrder3', 'liveTrap'],
+    features: { liveTrap: 0, derived: 0, ordering: 0, crossRef: 0 },
+    behaviors: ['everything', 'roundingOrder3', 'liveTrap', 'multiRuleOrder', 'derivedParam'],
   },
 ];
 
@@ -142,6 +142,46 @@ function seedSnapshot(world) {
   const store = createResourceStore();
   seedInitialData(world, store, 0);
   return store;
+}
+
+// ---------------------------------------------------------------------------
+// Addendum J rule 1: cross-rung references
+//
+// A rung from 20 up may name a property of an artifact the agent turned in EARLIER and never
+// repeat its value. The answer key resolves that by recomputing the earlier rung's own submitted
+// descriptor, which is a pure function of (world, m) -- so the key never needs a server, a
+// transcript, or the agent's disk, and the agent's only way through is to have kept its own work.
+//
+// Memoised because a single climb resolves the same handful of early rungs over and over (and
+// because composePlan for rung m is itself not cheap). The memo is keyed by seed and bounded:
+// same seed always means the same World, and a test sweeping fifty seeds must not accumulate
+// fifty full ladders of descriptors.
+// ---------------------------------------------------------------------------
+
+const SUBMITTED_MEMO = new Map();
+const SUBMITTED_MEMO_SEEDS = 4;
+
+export function submittedDescriptorFor(world, n) {
+  let byRung = SUBMITTED_MEMO.get(world.seed);
+  if (byRung === undefined) {
+    if (SUBMITTED_MEMO.size >= SUBMITTED_MEMO_SEEDS) SUBMITTED_MEMO.delete(SUBMITTED_MEMO.keys().next().value);
+    byRung = new Map();
+    SUBMITTED_MEMO.set(world.seed, byRung);
+  }
+  if (byRung.has(n)) return byRung.get(n);
+  const { plan, submitKey } = composePlan(world, n);
+  const desc = runPlanLocally(world, plan).get(submitKey);
+  byRung.set(n, desc);
+  return desc;
+}
+
+// recallValue(world, m, field) -> the one property of rung m's submitted piece a later rung
+// points at. 'dims' is its canvas size, 'ground' its background colour.
+export function recallValue(world, m, field) {
+  const desc = submittedDescriptorFor(world, m);
+  if (field === 'dims') return { width: desc.width, height: desc.height };
+  if (field === 'ground') return desc.background.color;
+  throw new Error(`unknown recall field: ${field}`);
 }
 
 function pickProject(store, r) {
@@ -383,21 +423,57 @@ export function runCompute(world, fn, args) {
       height: Math.max(1, roundToGrid(rawH, roundTo, roundMode)),
     };
   }
+  // Addendum J rule 2: the derived-parameter family. Each of these turns something the API had
+  // to be ASKED for -- the shapes left over by a difference, the tones left over by a difference
+  // between two sounds, the frame count of a stitched clip, a live (soft-delete-excluding) count
+  // off a paginated listing -- into the number a later step needs. The task text states the
+  // recipe (`base` and `step`), never the answer.
+  if (fn === 'countShapes') return args.of.shapes.length;
+  if (fn === 'countNotes') return args.of.notes.length;
+  // House rule: frames = round(length in seconds x the house frame rate), and the frame rate
+  // comes off the clip itself (which carries the house default when nobody said otherwise).
+  if (fn === 'videoFrames') return Math.round((args.of.durationMs / 1000) * args.of.fps);
+  if (fn === 'passthrough') return args.of;
+  if (fn === 'percentFromCount') {
+    return args.base + args.step * args.count;
+  }
   throw new Error(`unknown compute fn: ${fn}`);
 }
+
+// COUNT_FN: derived-source name -> the compute fn that reads that source's number off whatever
+// the plan step it points at produced. Shared by the composer (which resolves the count at
+// compose time so the percent guard can see it) and by both interpreters.
+export const COUNT_FN = {
+  shapes: 'countShapes',
+  notes: 'countNotes',
+  frames: 'videoFrames',
+  library: 'passthrough',
+};
 
 // resolveRefs(value, env): deep-walk, replacing {$ref:key, field?} leaves with env.get(key)
 // (or that value's .field). env maps resultKey -> whatever runPlanLocally / the HTTP
 // interpreter stored there (a descriptor, a descriptor[], or a plain compute value).
-export function resolveRefs(value, env) {
-  if (Array.isArray(value)) return value.map((v) => resolveRefs(v, env));
+// `assetIds` (optional) is the HTTP interpreter's resultKey -> server asset id map. A
+// `{$assetRef: key}` leaf resolves to that id when it is supplied, and to a stable local
+// placeholder otherwise. Video clips are the only place this is needed: a clip names an asset by
+// id, an id the answer key cannot know because the key never talks to a server. Nothing whose
+// BYTES are compared ever carries one -- a video descriptor is only ever read for its durationMs
+// and fps (Addendum J rules 5 and 8), never submitted -- so the placeholder and the real id are
+// interchangeable by construction.
+export function resolveRefs(value, env, assetIds) {
+  if (Array.isArray(value)) return value.map((v) => resolveRefs(v, env, assetIds));
   if (value !== null && typeof value === 'object') {
     if ('$ref' in value) {
       const base = env.get(value.$ref);
       return value.field !== undefined ? base[value.field] : base;
     }
+    if ('$assetRef' in value) {
+      if (assetIds === undefined) return `local-asset-${value.$assetRef}`;
+      const id = assetIds.get(value.$assetRef);
+      return Array.isArray(id) ? id[0] : id;
+    }
     const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = resolveRefs(v, env);
+    for (const [k, v] of Object.entries(value)) out[k] = resolveRefs(v, env, assetIds);
     return out;
   }
   return value;
@@ -446,6 +522,23 @@ function execStep(world, store, env, step) {
     value = create(world, args.kind, args.params);
   } else if (step.op === 'publish') {
     value = env.get(args.renderKey);
+  } else if (step.op === 'recall') {
+    // Addendum J rule 1. The answer key resolves a cross-rung reference by recomputing that
+    // earlier rung's own submitted descriptor -- the same value the agent is expected to have
+    // kept on disk. Nothing about the reference (or the agent) is consulted; this is a pure
+    // function of (world, fromRung).
+    value = recallValue(world, args.fromRung, args.field);
+  } else if (step.op === 'listCount') {
+    // Addendum J rule 2: a paginated count with soft-deleted rows excluded, scoped to the copies
+    // THIS rung made. Over HTTP that means clearing the last few out, walking every page of the
+    // listing and counting which of this rung's copies survive; here, with no server in the room,
+    // it is exactly how many were made less how many were cleared.
+    value = args.subsetSize - args.deleteCount;
+  } else if (step.op === 'etag') {
+    // Addendum J rule 4: an ETag-conditional update in the same rung. Metadata only -- the
+    // descriptor (and so the hash) is untouched, which is exactly why it can sit in a plan whose
+    // key is computed without a server.
+    value = env.get(args.from);
   } else {
     throw new Error(`unknown op: ${step.op}`);
   }
@@ -531,13 +624,29 @@ function pageSizeFor(band) {
 //                                          scaleX/scaleY are carried for the geometry floor only
 //                                          and never reach the task text.
 //   { kind:'save', format }                convert to a file flavor, size untouched
+// A chain step that resizes by a PERCENT of whatever it is handed, whether that percent is
+// stated outright ('shrink'/'grow') or has to be worked out from data the API returns
+// ('derivedShrink'/'derivedGrow', Addendum J rule 2). Everything downstream -- the scale-event
+// list, the ambiguity solver, the geometry floor -- treats the two identically, because by the
+// time a plan runs they ARE identical; the only difference is whether the number was in the task
+// text or had to be earned.
+const PERCENT_KINDS = new Set(['shrink', 'grow', 'derivedShrink', 'derivedGrow']);
+
+function isPercentStep(s) {
+  return PERCENT_KINDS.has(s.kind);
+}
+
+function isDerivedStep(s) {
+  return s.kind === 'derivedShrink' || s.kind === 'derivedGrow';
+}
+
 function chainScaleEvents(world, chain) {
   const events = [];
   for (const s of chain) {
     if (s.kind === 'lora') {
       const lora = findLora(world, s.name);
       if (lora.op === 'scale') events.push({ kind: 'loraScale', amount: lora.amount });
-    } else if (s.kind === 'shrink' || s.kind === 'grow') {
+    } else if (isPercentStep(s)) {
       events.push({ kind: 'convert', scaleX: s.percent / 100, scaleY: s.percent / 100 });
     } else if (s.kind === 'resize') {
       events.push({ kind: 'convert', scaleX: s.scaleX, scaleY: s.scaleY });
@@ -560,6 +669,19 @@ function chainSteps(chain, fromKey, prefix) {
       steps.push({ op: 'convert', resultKey: key, args: { from: cur, opts: { format: s.format } } });
     } else if (s.kind === 'resize') {
       const opts = { width: s.width, height: s.height };
+      if (s.format !== undefined) opts.format = s.format;
+      steps.push({ op: 'convert', resultKey: key, args: { from: cur, opts } });
+    } else if (isDerivedStep(s)) {
+      // Four steps, and every one of them is real work the agent cannot skip: ask the house for
+      // the thing the count comes off, turn it into a count, turn the count into the percent the
+      // task's recipe describes, then resize by it and let the house re-round on the grid.
+      const countKey = `${key}cnt`;
+      const pctKey = `${key}pct`;
+      const dimsKey = `${key}dims`;
+      steps.push({ op: 'compute', resultKey: countKey, args: { fn: COUNT_FN[s.source], of: { $ref: s.sourceKey } } });
+      steps.push({ op: 'compute', resultKey: pctKey, args: { fn: 'percentFromCount', base: s.base, step: s.perUnit, count: { $ref: countKey } } });
+      steps.push({ op: 'compute', resultKey: dimsKey, args: { fn: 'percentOfDims', of: { $ref: cur }, percent: { $ref: pctKey } } });
+      const opts = { width: { $ref: dimsKey, field: 'width' }, height: { $ref: dimsKey, field: 'height' } };
       if (s.format !== undefined) opts.format = s.format;
       steps.push({ op: 'convert', resultKey: key, args: { from: cur, opts } });
     } else {
@@ -652,10 +774,10 @@ function solveChainPercents(world, chain, i, width, height) {
     const h = roundToGrid(step.height, roundTo, roundMode);
     return solveChainPercents(world, chain, i + 1, w, h);
   }
-  if (step.kind !== 'shrink' && step.kind !== 'grow') {
+  if (!isPercentStep(step)) {
     return solveChainPercents(world, chain, i + 1, width, height);
   }
-  const [lo, hi] = step.kind === 'shrink' ? SHRINK_PERCENT : GROW_PERCENT;
+  const [lo, hi] = (step.kind === 'shrink' || step.kind === 'derivedShrink') ? SHRINK_PERCENT : GROW_PERCENT;
   const original = step.percent;
   const candidates = [0];
   for (let delta = 1; delta <= MAX_PERCENT_NUDGE; delta += 1) candidates.push(delta, -delta);
@@ -684,15 +806,50 @@ function solveChainPercents(world, chain, i, width, height) {
 // money on a hot path. Only pay for it when prefixPlan actually contains a batch step and the
 // caller has not already built one of its own (batchTier has -- pass it through and this call
 // reseeds nothing a second time).
+// Only a 'batch' step reads the seeded library, and seedSnapshot() re-creates AND re-hashes every
+// seeded asset, which is real money on a hot path -- so only pay for it when a plan prefix
+// actually contains one.
+function needsStore(plan) {
+  return plan.some((s) => s.op === 'batch');
+}
+
+// resolveDerivedCounts / rebaseDerivedSteps: Addendum J rule 2's half of the ambiguity guard.
+//
+// A derived step is drawn with a concrete `percent` like any other percent step, so the geometry
+// floor and the canvas search (drawSafeImageCanvas) see exactly the same scale chain they always
+// did, and the Addendum I solver nudges it exactly the same way. What makes it DERIVED is that
+// the task text never prints that percent: it prints a recipe, `base` take `perUnit` off for
+// every one of some thing the API has to be asked for. So the count is resolved here (the prefix
+// plan has just been run, so the source value exists), and once the solver has settled on a final
+// unambiguous percent, `base` is back-solved from it. The recipe in the text is therefore always
+// the recipe that reproduces the key, and the agent still has to earn the count.
+//
+// `perUnit` is always negative (see derivedStep below), so `base = percent - perUnit * count` is
+// always larger than `percent` and never goes negative on a reader.
+function resolveDerivedCounts(world, env, chain) {
+  for (const s of chain) {
+    if (!isDerivedStep(s)) continue;
+    s.count = runCompute(world, COUNT_FN[s.source], { of: env.get(s.sourceKey) });
+  }
+}
+
+function rebaseDerivedSteps(chain) {
+  for (const s of chain) {
+    if (isDerivedStep(s)) s.base = s.percent - s.perUnit * s.count;
+  }
+}
+
 function fixChainPercents(world, prefixPlan, chain, fromKey, store) {
   if (!chain || chain.length === 0) return;
   const env = new Map();
-  const resolvedStore = store !== undefined ? store : (prefixPlan.some((s) => s.op === 'batch') ? seedSnapshot(world) : null);
+  const resolvedStore = store !== undefined ? store : (needsStore(prefixPlan) ? seedSnapshot(world) : null);
   for (const step of prefixPlan) execStep(world, resolvedStore, env, step);
+  resolveDerivedCounts(world, env, chain);
   const { width, height } = env.get(fromKey);
   if (!solveChainPercents(world, chain, 0, width, height)) {
     throw new Error(`fixChainPercents: no consistent set of percents for chain from "${fromKey}" starting at ${width}x${height}: ${JSON.stringify(chain)}`);
   }
+  rebaseDerivedSteps(chain);
 }
 
 // resolveImageDim(world, value, unit): the exact width or height media.js's create() would
@@ -767,10 +924,134 @@ function drawSafeImageCanvas(world, r, chain, canvasOpts) {
 }
 
 // ---------------------------------------------------------------------------
+// Addendum J rule 1 helpers: choosing what an earlier rung is referenced BY
+// ---------------------------------------------------------------------------
+
+// Which earlier rung a cross-reference points at. Below 50 it points into 10-19 (the first band
+// with real artifacts); from 50 up it points into 20-40, as Addendum J rule 1 specifies. Both
+// windows are strictly below the referring rung and neither can chain deeper than one more hop,
+// so resolving a reference terminates in bounded work no matter how high the ladder goes.
+function recallWindow(n) {
+  return n < 50 ? [10, 19] : [20, 40];
+}
+
+// pickRecall(world, n, r) -> {fromRung, desc} | null. Walks forward from a seeded start through
+// the window until it finds a rung whose submitted piece is a picture with a solid ground, since
+// those are the only two properties a later rung can point at. Deterministic, and the walk itself
+// costs nothing after the first rung of a climb (submittedDescriptorFor memoises).
+function pickRecall(world, n, r) {
+  const [lo, hi] = recallWindow(n);
+  const span = hi - lo + 1;
+  const start = int(r, lo, hi);
+  for (let k = 0; k < span; k += 1) {
+    const m = lo + (((start - lo) + k) % span);
+    const desc = submittedDescriptorFor(world, m);
+    if (desc.kind === 'image' && desc.background.color !== undefined) return { fromRung: m, desc };
+  }
+  return null;
+}
+
+// crossRefFor(world, chain, canvas, recall): decide WHICH property of the recalled piece this
+// rung borrows, and hand back the canvas to draw on.
+//
+// 'dims' is the stronger form -- the whole canvas size comes from the earlier artifact and the
+// text prints no size at all -- but it is only available when this rung's percent chain can be
+// solved unambiguously at exactly those dimensions (Addendum I rule 2 still binds; a cross-rung
+// reference is never an excuse for an ambiguous key). A recalled size is always already on the
+// house grid (every descriptor in the system leaves create/convert grid-rounded), so re-rounding
+// it is a no-op and what the solver is handed is what the agent will get.
+//
+// When it cannot be solved there, the reference falls back to 'ground': the earlier piece's
+// background colour, which touches no geometry at all and so is always available. The fallback is
+// a pure function of the seed, so it is as deterministic as the primary path.
+function crossRefFor(world, chain, canvas, recall) {
+  const trial = chain.map((s) => ({ ...s }));
+  if (solveChainPercents(world, trial, 0, recall.desc.width, recall.desc.height)) {
+    return {
+      crossRef: { field: 'dims', fromRung: recall.fromRung },
+      canvas: { unit: undefined, pxWidth: recall.desc.width, pxHeight: recall.desc.height },
+    };
+  }
+  return {
+    crossRef: { field: 'ground', fromRung: recall.fromRung, color: recall.desc.background.color },
+    canvas,
+  };
+}
+
+const RECALL_KEY = 'rc';
+
+// applyCrossRef(params, crossRef): swap the borrowed leaves in `params` for $refs at the recall
+// step, so the plan resolves them from the recalled descriptor at run time and the task text can
+// leave them unsaid. resolveRefs puts back exactly the numbers/colour makeImageParams drew with,
+// so the resulting descriptor is byte-identical either way -- the difference is entirely in what
+// the agent is told.
+function applyCrossRef(params, crossRef) {
+  if (!crossRef) return params;
+  if (crossRef.field === 'dims') {
+    return { ...params, width: { $ref: RECALL_KEY, field: 'width' }, height: { $ref: RECALL_KEY, field: 'height' } };
+  }
+  return { ...params, background: { color: { $ref: RECALL_KEY } } };
+}
+
+function recallStep(crossRef) {
+  return { op: 'recall', resultKey: RECALL_KEY, args: { fromRung: crossRef.fromRung, field: crossRef.field } };
+}
+
+// ---------------------------------------------------------------------------
+// Addendum J rule 2 helper: a derived percent step
+// ---------------------------------------------------------------------------
+
+// `perUnit` is always negative, so the `base` back-solved after the ambiguity solver settles is
+// always larger than the percent itself and the recipe printed in the task text reads as "start
+// at B and take P off for every one of them" rather than a negative starting point.
+const PER_UNIT = [-3, -1];
+
+function derivedStep(r, kind, source, sourceKey, format) {
+  const range = kind === 'derivedShrink' ? SHRINK_PERCENT : GROW_PERCENT;
+  const step = { kind, source, sourceKey, percent: int(r, ...range), perUnit: int(r, ...PER_UNIT) };
+  if (format !== undefined) step.format = format;
+  return step;
+}
+
+// ---------------------------------------------------------------------------
+// Addendum J rules 5 and 8 helpers: sounds that can be differenced, clips that can be stitched
+// ---------------------------------------------------------------------------
+
+// A pair of sounds where the second's tones are a strict, non-empty subset of the first's, drawn
+// in the first's own order. media.js's diff is a set difference over canonical primitive
+// identity, so the leftover is exactly the tones present in A and absent from B -- never empty,
+// never all of A, which is what makes the leftover's tone count a number worth deriving from.
+function makeAudioDiffPair(r, noteCount) {
+  const a = makeAudioParams(r, { noteCount: Math.max(3, noteCount) });
+  const keep = [];
+  const drop = [];
+  a.notes.forEach((note, i) => {
+    // always drop the first and keep the last, so neither side can come out empty
+    if (i === 0 || (i < a.notes.length - 1 && chance(r, 0.5))) drop.push(note);
+    else keep.push(note);
+  });
+  const b = { durationMs: a.durationMs, notes: keep.map((note) => ({ ...note })) };
+  return { a, b };
+}
+
+// A short clip over one already-created picture. Durations stay small on purpose: the frame count
+// (length in seconds x the house frame rate) is what a later step derives its percent from, and a
+// two-digit number reads as a recipe rather than as noise.
+// The frame rate is deliberately NOT stated: create() falls back to world.rules.defaultFps, so
+// the frame count a later step derives can only be worked out by someone who went and found the
+// house frame rate in the skill. That is the lookup half of rule 2 riding on the arithmetic half.
+function makeVideoParams(world, r, { assetKey, width, height }) {
+  const durMs = int(r, 200, 900);
+  const clip = { assetId: { $assetRef: assetKey }, startMs: 0, durMs, opacity: 1 };
+  if (world.rules.zOrder === 'explicit') clip.z = 0;
+  return { width, height, durationMs: durMs, clips: [clip] };
+}
+
+// ---------------------------------------------------------------------------
 // per-tier composers
 // ---------------------------------------------------------------------------
 
-function tier0(world, r, band) {
+function tier0(world, r, band, n) {
   const kind = pick(r, band.kinds);
   let params;
   if (kind === 'image') {
@@ -779,8 +1060,17 @@ function tier0(world, r, band) {
   } else {
     params = makeAudioParams(r, { noteCount: noteCountFor(band, r) });
   }
-  const plan = [{ op: 'create', resultKey: 'final', args: { kind, params } }];
-  return { plan, submitKey: 'final', narrative: { tier: 0, kind, params } };
+  const plan = [{ op: 'create', resultKey: 'a', args: { kind, params } }];
+  let saveFormat;
+  if (featureAt(band, n, 'save')) {
+    saveFormat = kind === 'image' ? pick(r, ['svg', 'png']) : pick(r, ['wav', 'qa8']);
+    plan.push({ op: 'convert', resultKey: 'final', args: { from: 'a', opts: { format: saveFormat } } });
+  }
+  return {
+    plan,
+    submitKey: plan[plan.length - 1].resultKey,
+    narrative: { tier: 0, kind, params, saveFormat },
+  };
 }
 
 function tier1(world, r, band, n) {
@@ -805,8 +1095,12 @@ function tier1(world, r, band, n) {
   if (featureAt(band, n, 'percentRound')) {
     // Rungs 15-19: the target size is a percent of a size the agent has to read off the live
     // descriptor, so the house's grid rounding lands twice -- once on the created canvas, once
-    // on the resize -- instead of once.
-    chain = [{ kind: 'lora', name: lora.name }, { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT), format }];
+    // on the resize -- instead of once, and the piece is saved in a named flavor afterwards.
+    chain = [
+      { kind: 'lora', name: lora.name },
+      { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
+      { kind: 'save', format },
+    ];
     canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(chainScaleEvents(world, chain), 120), useUnit: true });
   } else {
     canvas = drawImageCanvas(r, { minPx: 120, maxPx: 320, useUnit: true });
@@ -842,29 +1136,40 @@ function tier2(world, r, band, n) {
     { kind: 'lora', name: pick(r, world.loras).name },
     { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT), format },
   ];
-  if (featureAt(band, n, 'secondLora')) chain.push({ kind: 'lora', name: pick(r, world.loras).name });
   const events = chainScaleEvents(world, chain);
-  const canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 140), useUnit: true });
-  const params = makeImageParams(world, r, {
+  let canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 140), useUnit: true });
+  // Addendum J rule 1: from rung 20 on, one leaf of this canvas is not in the task text at all --
+  // it is a property of something the agent turned in earlier and is expected to still have.
+  let crossRef = null;
+  const recall = featureAt(band, n, 'crossRef') ? pickRecall(world, n, r) : null;
+  if (recall) ({ crossRef, canvas } = crossRefFor(world, chain, canvas, recall));
+  let params = makeImageParams(world, r, {
     shapeCount: shapeCountFor(band, r),
     pxWidth: canvas.pxWidth,
     pxHeight: canvas.pxHeight,
     unit: canvas.unit,
     ...shapeFloors(events),
   });
+  params = applyCrossRef(params, crossRef);
+  const prefixPlan = crossRef ? [recallStep(crossRef)] : [];
   const createStep = { op: 'create', resultKey: 'a', args: { kind: 'image', params } };
-  fixChainPercents(world, [createStep], chain, 'a');
+  prefixPlan.push(createStep);
+  fixChainPercents(world, prefixPlan, chain, 'a');
   const { steps, lastKey } = chainSteps(chain, 'a', 'c');
-  const plan = [createStep, ...steps];
-  return { plan, submitKey: lastKey, narrative: { tier: 2, params, chain, liveTrap: featureAt(band, n, 'liveTrap') } };
+  return {
+    plan: [...prefixPlan, ...steps],
+    submitKey: lastKey,
+    narrative: { tier: 2, params, chain, crossRef, liveTrap: featureAt(band, n, 'liveTrap') },
+  };
 }
 
 function tier3(world, r, band, n) {
   const format = pick(r, ['svg', 'png']);
   // Only the FIRST picture's shapes survive a diff (it is a set difference of the primitive
   // lists), so only the first one carries the chain's scale events; the second is drawn at the
-  // unscaled floor.
-  const chain = [{ kind: 'shrink', percent: int(r, ...SHRINK_PERCENT), format }];
+  // unscaled floor. Addendum J rule 2: the leftover's OWN shape count is the number the resize
+  // percent is built from, so the diff has to actually be performed and looked at.
+  const chain = [derivedStep(r, 'derivedShrink', 'shapes', 'd', format)];
   if (featureAt(band, n, 'loraLookup')) chain.push({ kind: 'lora', name: pick(r, world.loras).name });
   const events = chainScaleEvents(world, chain);
   const shapeCount = shapeCountFor(band, r);
@@ -890,15 +1195,14 @@ function tier3(world, r, band, n) {
   ];
   fixChainPercents(world, prefixPlan, chain, 'd');
   const { steps, lastKey } = chainSteps(chain, 'd', 'c');
-  const plan = [...prefixPlan, ...steps];
   return {
-    plan,
+    plan: [...prefixPlan, ...steps],
     submitKey: lastKey,
     narrative: { tier: 3, kind: 'image', paramsA, paramsB, chain, liveTrap: featureAt(band, n, 'liveTrap') },
   };
 }
 
-function batchTier(world, r, band, n, { withSideChecks }) {
+function batchTier(world, r, band, n, { withSideChecks, ordering }) {
   const store = seedSnapshot(world);
   const { workspaceId, projectId } = pickProject(store, r);
   // The batch's items come from the seeded library, not from a create() this composer controls
@@ -908,14 +1212,27 @@ function batchTier(world, r, band, n, { withSideChecks }) {
   const applyLoraName = pick(r, pool).name;
   const subsetSize = subsetFor(band, r);
   const pageSize = pageSizeFor(band);
+  const deleteCount = withSideChecks ? int(r, 1, 3) : 0;
   const combineOpts = { mode: 'layer', opacityStep: Number((0.85 + r() * 0.1).toFixed(2)) };
-  const chain = [
-    { kind: 'lora', name: pick(r, pool).name },
-    { kind: 'grow', percent: int(r, ...GROW_PERCENT) },
-  ];
+  const format = pick(r, ['svg', 'png']);
+
+  // Addendum J rule 6 (tiers 7-9): three or more house rules applied in a stated order where the
+  // order changes the answer -- a style lookup, a grid-rounded resize, another style lookup, and
+  // a further resize, each reading its input off the live descriptor the one before it produced.
+  const chain = [{ kind: 'lora', name: pick(r, pool).name }];
+  if (ordering) {
+    chain.push(derivedStep(r, 'derivedGrow', 'library', 'live'));
+    chain.push({ kind: 'lora', name: pick(r, pool).name });
+    chain.push({ kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) });
+    chain.push({ kind: 'grow', percent: int(r, ...GROW_PERCENT) });
+  } else {
+    chain.push(derivedStep(r, 'derivedGrow', 'shapes', 'combined'));
+  }
   if (featureAt(band, n, 'secondLora')) chain.push({ kind: 'lora', name: pick(r, pool).name });
   if (featureAt(band, n, 'secondGrow')) chain.push({ kind: 'grow', percent: int(r, ...GROW_PERCENT) });
   if (featureAt(band, n, 'thirdLora')) chain.push({ kind: 'lora', name: pick(r, pool).name });
+  if (ordering) chain.push({ kind: 'save', format });
+
   const prefixPlan = [
     {
       op: 'batch',
@@ -926,16 +1243,32 @@ function batchTier(world, r, band, n, { withSideChecks }) {
         subsetSize,
         pageSize,
         apply: { op: 'lora', loraName: applyLoraName },
-        sideChecks: withSideChecks ? { csv: true, softDelete: true } : undefined,
+        sideChecks: withSideChecks ? { csv: true } : undefined,
       },
     },
     { op: 'combine', resultKey: 'combined', args: { from: ['batched'], opts: combineOpts } },
   ];
+  if (ordering) {
+    // Addendum J rule 2, in its most literal form: clear a few of this rung's own copies out and
+    // then take a paginated count with the soft-deleted rows excluded. Nothing in the text says
+    // what that count comes to.
+    //
+    // It counts THIS RUNG'S copies, never the library behind them, and it clears out copies
+    // rather than originals. That is not squeamishness: the answer key is computed with no server
+    // in the room, from a fresh snapshot of the seeded library, so any number that depends on
+    // what EARLIER rungs deleted is unknowable to it. Scoped this way the count is a pure
+    // function of this rung alone and holds however many rungs have run before it, in whatever
+    // order, against whatever project.
+    prefixPlan.push({
+      op: 'listCount',
+      resultKey: 'live',
+      args: { workspaceId, projectId, pageSize, subsetKey: 'batched', subsetSize, deleteCount },
+    });
+  }
   fixChainPercents(world, prefixPlan, chain, 'combined', store);
   const { steps, lastKey } = chainSteps(chain, 'combined', 'c');
-  const plan = [...prefixPlan, ...steps];
   return {
-    plan,
+    plan: [...prefixPlan, ...steps],
     submitKey: lastKey,
     narrative: {
       workspaceId,
@@ -948,6 +1281,8 @@ function batchTier(world, r, band, n, { withSideChecks }) {
       combineOpts,
       subsetSize,
       pageSize,
+      deleteCount,
+      ordering,
       chain,
       liveTrap: featureAt(band, n, 'liveTrap'),
     },
@@ -955,104 +1290,212 @@ function batchTier(world, r, band, n, { withSideChecks }) {
 }
 
 function tier4(world, r, band, n) {
-  const { plan, submitKey, narrative } = batchTier(world, r, band, n, { withSideChecks: false });
+  const { plan, submitKey, narrative } = batchTier(world, r, band, n, { withSideChecks: false, ordering: false });
   return { plan, submitKey, narrative: { tier: 4, ...narrative } };
 }
 
-function renderTier(world, r, band, n, { withPublish }) {
+// renderTier: Addendum J rule 4. Compose, an asynchronous render polled to done, an
+// ETag-conditional metadata update, a deliberate 409 recovery, and (at tier 6) an HMAC-signed
+// release, all in one rung, with the rounding ladder hung off the far end of it.
+function renderTier(world, r, band, n, { withPublish, chain, prePlan = [], postPlan = [], crossRef = null }) {
   const store = seedSnapshot(world);
   const workspace = pick(r, listWorkspaces(store));
   const workspaceId = workspace.id;
-  const format = pick(r, ['svg', 'png']);
-  // Round 2's render bands were a single call whose whole difficulty was the state machine. The
-  // chain keeps the state machine and hangs the rounding ladder off the far end of it.
-  const chain = [
-    { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
-    { kind: 'lora', name: pick(r, world.loras).name },
-    { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
-  ];
-  if (featureAt(band, n, 'save')) chain.push({ kind: 'save', format });
   const events = chainScaleEvents(world, chain);
-  const canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 160), useUnit: true });
-  const params = makeImageParams(world, r, {
+  let canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 160), useUnit: true });
+  let resolvedCrossRef = null;
+  if (crossRef) ({ crossRef: resolvedCrossRef, canvas } = crossRefFor(world, chain, canvas, crossRef));
+  let params = makeImageParams(world, r, {
     shapeCount: shapeCountFor(band, r),
     pxWidth: canvas.pxWidth,
     pxHeight: canvas.pxHeight,
     unit: canvas.unit,
     ...shapeFloors(events),
   });
-  const plan = [{ op: 'render', resultKey: 'rendered', args: { kind: 'image', params, workspaceId } }];
+  params = applyCrossRef(params, resolvedCrossRef);
+  const plan = [...prePlan];
+  if (resolvedCrossRef) plan.push(recallStep(resolvedCrossRef));
+  plan.push({ op: 'render', resultKey: 'rendered', args: { kind: 'image', params, workspaceId, recover409: true } });
   if (withPublish) plan.push({ op: 'publish', resultKey: 'published', args: { renderKey: 'rendered' } });
-  fixChainPercents(world, plan, chain, 'rendered');
-  const { steps, lastKey } = chainSteps(chain, 'rendered', 'c');
+  const tagFrom = withPublish ? 'published' : 'rendered';
+  plan.push({ op: 'etag', resultKey: 'tagged', args: { from: tagFrom, label: `rung-${n}` } });
+  plan.push(...postPlan);
+  fixChainPercents(world, plan, chain, 'tagged', store);
+  const { steps, lastKey } = chainSteps(chain, 'tagged', 'c');
   plan.push(...steps);
   return {
     plan,
     submitKey: lastKey,
-    narrative: { kind: 'image', params, workspaceId, workspaceLabel: workspace.name, withPublish, chain },
+    narrative: {
+      kind: 'image', params, workspaceId, workspaceLabel: workspace.name, withPublish, chain, crossRef: resolvedCrossRef,
+    },
   };
 }
 
+// tier5: the audio tier. Addendum J rule 8's new primitive (a difference taken over two SOUNDS)
+// and rule 5's cross-kind arithmetic (the tone count left over by that difference is what sets
+// the picture's resize), on top of rule 4's full state machine.
 function tier5(world, r, band, n) {
-  const { plan, submitKey, narrative } = renderTier(world, r, band, n, { withPublish: false });
-  return { plan, submitKey, narrative: { tier: 5, ...narrative } };
+  const { a: audioA, b: audioB } = makeAudioDiffPair(r, noteCountFor(band, r));
+  const sampleRate = pick(r, [22050, 44100, 48000]);
+  const audioFormat = pick(r, ['wav', 'qa8']);
+  const format = pick(r, ['svg', 'png']);
+  const chain = [
+    derivedStep(r, 'derivedShrink', 'notes', 'sd'),
+    { kind: 'lora', name: pick(r, world.loras).name },
+    { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
+  ];
+  if (featureAt(band, n, 'save')) chain.push({ kind: 'save', format });
+  const audioPrefix = [
+    { op: 'create', resultKey: 'sa', args: { kind: 'audio', params: audioA } },
+    { op: 'create', resultKey: 'sb', args: { kind: 'audio', params: audioB } },
+    { op: 'diff', resultKey: 'sd', args: { a: 'sa', b: 'sb' } },
+    { op: 'convert', resultKey: 'sc', args: { from: 'sd', opts: { format: audioFormat, sampleRate } } },
+  ];
+  // the sounds come first: the whole rung's resize hangs off their difference
+  const built = renderTier(world, r, band, n, { withPublish: false, chain, prePlan: audioPrefix });
+  return {
+    plan: built.plan,
+    submitKey: built.submitKey,
+    narrative: { tier: 5, ...built.narrative, audioA, audioB, audioFormat, sampleRate },
+  };
 }
 
+// tier6: the video tier. Addendum J rule 8's other new primitive (clips stitched end to end with
+// `sequence`) and rule 5's timeline arithmetic (the stitched clip's frame count sets the resize),
+// on top of rule 4's state machine plus the HMAC-signed release.
 function tier6(world, r, band, n) {
-  const { plan, submitKey, narrative } = renderTier(world, r, band, n, { withPublish: true });
-  return { plan, submitKey, narrative: { tier: 6, ...narrative } };
+  const format = pick(r, ['svg', 'png']);
+  const chain = [
+    derivedStep(r, 'derivedShrink', 'frames', 'vseq'),
+    { kind: 'lora', name: pick(r, world.loras).name },
+  ];
+  if (featureAt(band, n, 'save')) chain.push({ kind: 'save', format });
+  const recall = pickRecall(world, n, r);
+  const clipW = 320;
+  const clipH = 240;
+  const videoA = makeVideoParams(world, r, { assetKey: 'tagged', width: clipW, height: clipH });
+  const videoB = makeVideoParams(world, r, { assetKey: 'tagged', width: clipW, height: clipH });
+  // The clips point at the picture this rung has already walked through the state machine and
+  // signed out, so the video steps sit after the tagging step and before the resize chain that
+  // reads their stitched frame count.
+  const videoPlan = [
+    { op: 'create', resultKey: 'va', args: { kind: 'video', params: videoA } },
+    { op: 'create', resultKey: 'vb', args: { kind: 'video', params: videoB } },
+    { op: 'combine', resultKey: 'vseq', args: { from: ['va', 'vb'], opts: { mode: 'sequence' } } },
+  ];
+  const built = renderTier(world, r, band, n, { withPublish: true, chain, crossRef: recall, postPlan: videoPlan });
+  return {
+    plan: built.plan,
+    submitKey: built.submitKey,
+    narrative: { tier: 6, ...built.narrative, videoA, videoB },
+  };
 }
 
 function tier7(world, r, band, n) {
-  const { plan, submitKey, narrative } = batchTier(world, r, band, n, { withSideChecks: true });
+  const { plan, submitKey, narrative } = batchTier(world, r, band, n, { withSideChecks: true, ordering: true });
   return { plan, submitKey, narrative: { tier: 7, ...narrative } };
 }
 
 function tier8(world, r, band, n) {
-  const { plan, submitKey, narrative } = batchTier(world, r, band, n, { withSideChecks: true });
+  const { plan, submitKey, narrative } = batchTier(world, r, band, n, { withSideChecks: true, ordering: true });
   return { plan, submitKey, narrative: { tier: 8, ...narrative } };
 }
 
+// tier9: everything at once. A haul out of the library whose stacked shape count sets one resize,
+// a fresh picture that borrows a leaf from an artifact twenty rungs back, and a seven-resize
+// ladder with three style lookups wedged into it where every intermediate size is read back off a
+// live descriptor rather than carried forward from arithmetic done in the agent's head.
 function tier9(world, r, band, n) {
-  const format = pick(r, ['svg', 'png']);
+  const store = seedSnapshot(world);
+  const { workspaceId, projectId } = pickProject(store, r);
+  const pool = safeLoraPool(world);
   const scaleLora = world.loras.find((l) => l.op === 'scale');
-  // Three shrinks with two style lookups wedged between them, then one growth and a flavor
-  // change: the "rounding order 3" behaviour, with every intermediate size read back off a live
-  // descriptor rather than carried forward from arithmetic the agent did in its head.
+  const format = pick(r, ['svg', 'png']);
+  const subsetSize = subsetFor(band, r);
+  const pageSize = pageSizeFor(band);
+  const applyLoraName = pick(r, pool).name;
+  const combineOpts = { mode: 'layer', opacityStep: Number((0.85 + r() * 0.1).toFixed(2)) };
   const chain = [
     { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
     { kind: 'lora', name: (scaleLora ?? pick(r, world.loras)).name },
+    { kind: 'grow', percent: int(r, ...GROW_PERCENT) },
+    { kind: 'lora', name: pick(r, world.loras).name },
+    derivedStep(r, 'derivedShrink', 'shapes', 'combined'),
     { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
     { kind: 'lora', name: pick(r, world.loras).name },
+    { kind: 'grow', percent: int(r, ...GROW_PERCENT) },
     { kind: 'shrink', percent: int(r, ...SHRINK_PERCENT) },
     { kind: 'grow', percent: int(r, ...GROW_PERCENT) },
     { kind: 'save', format },
   ];
   const events = chainScaleEvents(world, chain);
-  const canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 200), useUnit: true });
-  const params = makeImageParams(world, r, {
+  let canvas = drawSafeImageCanvas(world, r, chain, { ...canvasPxRange(events, 200), useUnit: true });
+  let crossRef = null;
+  const recall = pickRecall(world, n, r);
+  if (recall) ({ crossRef, canvas } = crossRefFor(world, chain, canvas, recall));
+  let params = makeImageParams(world, r, {
     shapeCount: shapeCountFor(band, r),
     pxWidth: canvas.pxWidth,
     pxHeight: canvas.pxHeight,
     unit: canvas.unit,
     ...shapeFloors(events),
   });
-  const createStep = { op: 'create', resultKey: 'a', args: { kind: 'image', params } };
-  fixChainPercents(world, [createStep], chain, 'a');
+  params = applyCrossRef(params, crossRef);
+  const prefixPlan = [];
+  if (crossRef) prefixPlan.push(recallStep(crossRef));
+  prefixPlan.push({
+    op: 'batch',
+    resultKey: 'batched',
+    args: {
+      workspaceId,
+      projectId,
+      subsetSize,
+      pageSize,
+      apply: { op: 'lora', loraName: applyLoraName },
+      sideChecks: { csv: true },
+    },
+  });
+  prefixPlan.push({ op: 'combine', resultKey: 'combined', args: { from: ['batched'], opts: combineOpts } });
+  prefixPlan.push({
+    op: 'listCount',
+    resultKey: 'live',
+    args: { workspaceId, projectId, pageSize, subsetKey: 'batched', subsetSize, deleteCount: 1 },
+  });
+  prefixPlan.push({ op: 'create', resultKey: 'a', args: { kind: 'image', params } });
+  fixChainPercents(world, prefixPlan, chain, 'a', store);
   const { steps, lastKey } = chainSteps(chain, 'a', 'c');
-  const plan = [createStep, ...steps];
-  return { plan, submitKey: lastKey, narrative: { tier: 9, params, chain, liveTrap: featureAt(band, n, 'liveTrap') } };
+  return {
+    plan: [...prefixPlan, ...steps],
+    submitKey: lastKey,
+    narrative: {
+      tier: 9,
+      params,
+      chain,
+      crossRef,
+      workspaceLabel: store.workspaces.get(workspaceId).name,
+      projectLabel: store.projects.get(projectId).name,
+      applyLoraName,
+      combineOpts,
+      subsetSize,
+      pageSize,
+      deleteCount: 1,
+      liveTrap: featureAt(band, n, 'liveTrap'),
+    },
+  };
 }
 
 const TIER_COMPOSERS = [tier0, tier1, tier2, tier3, tier4, tier5, tier6, tier7, tier8, tier9];
 
-// composePlan(world, n) -> { plan, submitKey, narrative }. `plan` is exactly what runPlanLocally
-// and the HTTP interpreter both execute. Every tier composer above already nudges its own percent
-// steps away from ambiguity (fixChainPercents, Addendum I rule 2) before returning, so nothing
-// further to guard here.
+// composePlan(world, n) -> { plan, submitKey, narrative, band, mutation }. `plan` is exactly what
+// runPlanLocally and the HTTP interpreter both execute. Every tier composer above already nudges
+// its own percent steps away from ambiguity (fixChainPercents, Addendum I rule 2) before
+// returning, so nothing further to guard here. `mutation` is Addendum J rule 3's announced
+// change for this rung, read straight off the World (never drawn here) so the API, the answer key
+// and the task text cannot disagree about what is about to move under the agent's feet.
 export function composePlan(world, n) {
   const band = bandFor(n);
   const r = rng(sub(world.seed, `rung:${n}`));
   const result = TIER_COMPOSERS[band.tier](world, r, band, n);
-  return { ...result, band };
+  return { ...result, band, mutation: (world.rungMutations && world.rungMutations[n]) || null };
 }

@@ -14,21 +14,30 @@ import { superviseProcess, killTree, gracefulKillTree, DEFAULT_DRAIN_MS } from '
 // `submissions` is either a static array or a () => array (so a test can make the list grow
 // mid-run); `advance` is an optional () => body override for POST /admin/rungs/advance (default
 // {current: 0}). `advanceCalls` is a live counter the test reads after the fact.
-function startFakeAdmin({ submissions = [], advance } = {}) {
+// `submissionsDelayMs`/`advanceDelayMs` (both default 0) make the admin deliberately slow, which
+// is how the overlap regression test below forces the poll check and the exit check to interleave
+// on demand instead of waiting for a loaded CI machine to do it by chance.
+function startFakeAdmin({ submissions = [], advance, submissionsDelayMs = 0, advanceDelayMs = 0 } = {}) {
   const state = { advanceCalls: 0 };
   const submissionsFn = typeof submissions === 'function' ? submissions : () => submissions;
+  const after = (ms, fn) => (ms > 0 ? setTimeout(fn, ms) : fn());
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://admin.internal');
     if (req.method === 'GET' && url.pathname === '/admin/submissions') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ data: submissionsFn() }));
+      const body = JSON.stringify({ data: submissionsFn() });
+      after(submissionsDelayMs, () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(body);
+      });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/admin/rungs/advance') {
       state.advanceCalls += 1;
       const body = advance ? advance() : { current: 0 };
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(body));
+      after(advanceDelayMs, () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(body));
+      });
       return;
     }
     res.writeHead(404, { 'content-type': 'application/json' });
@@ -124,11 +133,54 @@ test('superviseProcess: with no baseline, the same 60 submissions ARE all reacte
 });
 
 // ---------------------------------------------------------------------------
+// Addendum G #1, third face: a check must never be settled out from under itself.
+// ---------------------------------------------------------------------------
+
+test('superviseProcess: a fall in the tail of an in-flight check is still caught when the process exits mid-check', async () => {
+  // The regression this guards: the poll timer's check and the exit handler's check used to be
+  // able to run CONCURRENTLY. The timer's check would consume the whole submissions list and start
+  // advancing through it one await at a time; the exit handler's check would then find nothing new
+  // (already consumed), settle the promise immediately, and the `if (settled) return` guard inside
+  // the timer's still-running loop would abandon every submission it had not yet reached. A fall
+  // sitting in that abandoned tail was never seen -- killedFor stayed null, and run-cli.js reads a
+  // null killedFor on a clean exit as "resume", so a run that had actually FALLEN kept climbing.
+  //
+  // Measured against the pre-fix code with exactly these delays: 15 of 60 submissions reacted to,
+  // and the fail at rung 50 missed entirely (killedFor: null).
+  const submissions = Array.from({ length: 60 }, (_, i) => ({ rung: i, pass: i !== 50, fidelity: 1 }));
+  const admin = await startFakeAdmin({ submissions, submissionsDelayMs: 60, advanceDelayMs: 5 });
+  try {
+    const outcome = await superviseProcess({
+      cmd: process.execPath,
+      // Exits while a poll check is still in flight -- the whole point of the fixture.
+      args: ['-e', 'setTimeout(() => process.exit(0), 120)'],
+      env: process.env,
+      adminBase: admin.baseUrl,
+      topRung: 99,
+      wallMsLeft: 10_000,
+      pollMs: 50,
+    });
+    assert.equal(outcome.killedFor, 'fail', 'the fall at rung 50 must be caught, not abandoned with the tail');
+    assert.equal(admin.advanceCalls, 50, 'rungs 0-49 advanced, then the loop stops at the fall -- no truncation');
+  } finally {
+    await admin.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Addendum G #2: "Drain usage before the kill."
 // ---------------------------------------------------------------------------
 
 test('superviseProcess: a fall SIGTERMs first and drains -- the process gets to print its result before exiting', async () => {
-  const admin = await startFakeAdmin({ submissions: [{ rung: 0, pass: false, fidelity: 0.4 }] });
+  // The fall is withheld until the child says it is ready. Without that gate this test is a race
+  // against node's own startup: the poll fires at 40ms, and on a loaded machine `node -e` has not
+  // yet executed the script by then, so SIGTERM arrives BEFORE the handler below is installed, the
+  // default action kills the child outright, and the drain being tested never happens. Readiness
+  // goes to stderr so stdout stays purely the result JSON the assertions parse.
+  let childReady = false;
+  const admin = await startFakeAdmin({
+    submissions: () => (childReady ? [{ rung: 0, pass: false, fidelity: 0.4 }] : []),
+  });
   // Traps SIGTERM, waits briefly (simulating a CLI wrapping up and printing its
   // --output-format json result), THEN exits cleanly -- if supervise.js still sent a bare SIGKILL
   // the moment the fail showed up, this process would die mid-timer and never print anything.
@@ -140,6 +192,7 @@ test('superviseProcess: a fall SIGTERMs first and drains -- the process gets to 
       }, 150);
     });
     setInterval(() => {}, 1000);
+    console.error('READY');
   `;
   const startedAt = Date.now();
   try {
@@ -151,6 +204,9 @@ test('superviseProcess: a fall SIGTERMs first and drains -- the process gets to 
       topRung: 99,
       wallMsLeft: 10_000,
       pollMs: 40,
+      onEvent: (e) => {
+        if (e.type === 'stderr' && e.text.includes('READY')) childReady = true;
+      },
       // Default drainMs (20s) is what production uses; asserting elapsed time stays well under it
       // shows the process exiting on its own during the drain, not the drain window itself, is
       // what ended this call.
@@ -173,10 +229,16 @@ test('superviseProcess: a fall SIGTERMs first and drains -- the process gets to 
 });
 
 test('superviseProcess: a fall against a process that ignores SIGTERM is SIGKILLed once drainMs elapses', async () => {
-  const admin = await startFakeAdmin({ submissions: [{ rung: 0, pass: false, fidelity: 0 }] });
+  // Same readiness gate as the drain test above: if SIGTERM lands before this child has installed
+  // its swallowing handler, the child dies of SIGTERM and never reaches the SIGKILL being asserted.
+  let childReady = false;
+  const admin = await startFakeAdmin({
+    submissions: () => (childReady ? [{ rung: 0, pass: false, fidelity: 0 }] : []),
+  });
   const stubbornScript = `
     process.on('SIGTERM', () => {}); // swallow it -- never exits on its own
     setInterval(() => {}, 1000);
+    console.error('READY');
   `;
   try {
     const outcome = await superviseProcess({
@@ -188,6 +250,9 @@ test('superviseProcess: a fall against a process that ignores SIGTERM is SIGKILL
       wallMsLeft: 10_000,
       pollMs: 40,
       drainMs: 200, // short, just for the test -- production default is 20s
+      onEvent: (e) => {
+        if (e.type === 'stderr' && e.text.includes('READY')) childReady = true;
+      },
     });
     assert.equal(outcome.killedFor, 'fail');
     assert.equal(outcome.signal, 'SIGKILL', 'ignoring SIGTERM for longer than drainMs falls back to SIGKILL');

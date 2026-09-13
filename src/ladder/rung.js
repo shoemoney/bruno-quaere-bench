@@ -17,7 +17,14 @@ function firstUnitWord(world, unit) {
   return world.rules.unitWords[UNIT_LABEL[unit]][0];
 }
 
-function describeDims(world, params) {
+// "the piece you turned in at step 12" -- Addendum J rule 1. A cross-rung reference names an
+// earlier rung and the property borrowed from it, and never, ever the value.
+function earlierPiece(fromRung) {
+  return `the piece you turned in at step ${fromRung}`;
+}
+
+function describeDims(world, params, crossRef) {
+  if (crossRef && crossRef.field === 'dims') return `as wide and as tall as ${earlierPiece(crossRef.fromRung)}`;
   const { width, height, unit } = params;
   if (!unit) return `${width} by ${height} pixels`;
   const word = firstUnitWord(world, unit);
@@ -31,9 +38,12 @@ function percentOf(value) {
 }
 
 // Every leaf the artifact's bytes depend on has to be in the task, or no reader could reproduce
-// the expected hash. Only the house's own rules (unit-to-pixel conversion, the rounding grid, the
-// default file flavor and sample rate, what a stacking step compounds to) stay unsaid -- those
-// live in the skill, and looking them up is the point.
+// the expected hash -- EXCEPT a leaf borrowed from an earlier rung (Addendum J rule 1), which is
+// reproducible from the agent's own earlier work, and a number the API has to be asked for
+// (Addendum J rule 2), which is reproducible from the stated recipe. Only the house's own rules
+// (unit-to-pixel conversion, the rounding grid, the default file flavor, sample rate and frame
+// rate, what a stacking step compounds to) stay unsaid -- those live in the skill, and looking
+// them up is the point.
 function describeShape(shape) {
   const paint = `painted ${shape.color} at ${percentOf(shape.opacity)} solid`;
   if (shape.type === 'rect') {
@@ -45,10 +55,14 @@ function describeShape(shape) {
   return `a line running from (${shape.x}, ${shape.y}) to (${shape.x2}, ${shape.y2}), counting from the top-left corner, ${paint}`;
 }
 
-function describeShapes(params) {
-  const ground = params.background.color !== undefined ? `a ${params.background.color} ground` : 'a see-through ground';
+function describeGround(params, crossRef) {
+  if (crossRef && crossRef.field === 'ground') return `the same ground colour as ${earlierPiece(crossRef.fromRung)}`;
+  return params.background.color !== undefined ? `a ${params.background.color} ground` : 'a see-through ground';
+}
+
+function describeShapes(params, crossRef) {
   const list = params.shapes.map((s, i) => `(${i + 1}) ${describeShape(s)}`).join('; ');
-  return `on ${ground}, carrying these, bottom of the pile first: ${list}`;
+  return `on ${describeGround(params, crossRef)}, carrying these, bottom of the pile first: ${list}`;
 }
 
 function describeNote(note) {
@@ -60,8 +74,8 @@ function describeTones(params) {
   return `running ${params.durationMs} ms end to end and carrying these tones in order: ${list}`;
 }
 
-function describeCreate(world, kind, params) {
-  if (kind === 'image') return `a picture ${describeDims(world, params)}, ${describeShapes(params)}`;
+function describeCreate(world, kind, params, crossRef) {
+  if (kind === 'image') return `a picture ${describeDims(world, params, crossRef)}, ${describeShapes(params, crossRef)}`;
   return `a short sound ${describeTones(params)}`;
 }
 
@@ -74,6 +88,10 @@ function labelled(noun, label) {
 function describeKind(kind, kindOption) {
   if (kind === 'image') return kindOption === 'png' ? 'a bitmap file' : 'a vector file';
   return kindOption === 'wav' ? 'plain wave audio' : 'the compact house audio flavor';
+}
+
+function countOfThem(count) {
+  return count === 1 ? 'one' : `${count} of them`;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,14 +109,43 @@ const ROUND_NOTE = 'The house rounds every size to its usual grid; do that after
 // and the only way through is to look at what the live house actually hands back.
 const TRAP_NOTE = "Take nothing here on the written reference's word: at least one thing it says about the calls this needs is wrong about the live house, so check what actually comes back.";
 
+// Addendum J rule 3. The change is announced, never named: an agent that reads every reply gets
+// through it, an agent that hardcoded the shape of the first reply it ever saw does not.
+const MUTATION_NOTE = 'Fair warning: the house has changed something about the way it answers, starting with this piece of work. Nobody will tell you what. Read what actually comes back on every call rather than what you expected to come back.';
+
+// Addendum J rule 6. Three or more house rules land in one chain and they do not commute.
+const ORDER_NOTE = 'Order is the whole game here: a house style and a resize do not commute, and the grid rounding lands again after every single step. Do these one at a time, in exactly the order written, reading each new size back off what the house hands you -- never fold two of them into one call and never carry a size forward in your head.';
+
 const TURN_IN_LAST = 'Turn in the last piece that leaves you with.';
+
+// Addendum J rule 2: the derived-parameter phrases. The task states the recipe; the number it
+// needs is only ever on the other end of a call.
+const DERIVED_SOURCE_PHRASE = {
+  d: 'shape left on that leftover piece',
+  combined: 'shape on the stack you just built',
+  sd: 'tone left over when you took the second sound out of the first',
+  vseq: 'frame in the stitched clip',
+  live: 'copy of yours still standing in that listing once the cleared-out ones are left out',
+};
+
+function describeDerivedPercent(step) {
+  const phrase = DERIVED_SOURCE_PHRASE[step.sourceKey];
+  if (phrase === undefined) throw new Error(`no plain-language phrase for derived source "${step.sourceKey}"`);
+  const off = Math.abs(step.perUnit);
+  return `start at ${step.base} and take ${off} off for every ${phrase}`;
+}
 
 function describeChainStep(step) {
   if (step.kind === 'lora') return `look up the house style called "${step.name}" and give what you have that look`;
   if (step.kind === 'save') return `save what you have as ${describeKind('image', step.format)}`;
   const saved = step.format !== undefined ? `, saved as ${describeKind('image', step.format)}` : '';
   if (step.kind === 'resize') return `resize what you have so it comes out ${step.width} by ${step.height} pixels${saved}`;
-  const verb = step.kind === 'grow' ? 'blow what you have up to' : 'shrink what you have down to';
+  const grows = step.kind === 'grow' || step.kind === 'derivedGrow';
+  if (step.kind === 'derivedShrink' || step.kind === 'derivedGrow') {
+    const verb = grows ? 'blow what you have up' : 'shrink what you have down';
+    return `${verb} to a percentage of its own size you have to work out like this -- ${describeDerivedPercent(step)} -- keeping its shape the same${saved}`;
+  }
+  const verb = grows ? 'blow what you have up to' : 'shrink what you have down to';
   return `${verb} ${step.percent} percent of its own size, keeping its shape the same${saved}`;
 }
 
@@ -113,12 +160,22 @@ function trapNote(narrative) {
   return narrative.liveTrap ? ` ${TRAP_NOTE}` : '';
 }
 
+function orderNote(narrative) {
+  return narrative.ordering ? ` ${ORDER_NOTE}` : '';
+}
+
 // ---------------------------------------------------------------------------
 // per-tier text
 // ---------------------------------------------------------------------------
 
+function saveTail(narrative) {
+  if (narrative.saveFormat === undefined) return ' Turn in exactly that piece.';
+  const flavor = describeKind(narrative.kind, narrative.saveFormat);
+  return ` Then save it as ${flavor}. ${TURN_IN_LAST}`;
+}
+
 function text0(world, narrative) {
-  return `Make ${describeCreate(world, narrative.kind, narrative.params)}. Turn in exactly that piece.`;
+  return `Make ${describeCreate(world, narrative.kind, narrative.params)}.${saveTail(narrative)}`;
 }
 
 const IDEMPOTENCY_NOTE = "Use a fresh repeat-safe request the house won't double-book if you send it twice.";
@@ -131,7 +188,7 @@ function text1(world, narrative) {
 }
 
 function text2(world, narrative) {
-  return `Make ${describeCreate(world, 'image', narrative.params)}.${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
+  return `Make ${describeCreate(world, 'image', narrative.params, narrative.crossRef)}.${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 function text3(world, narrative) {
@@ -156,24 +213,42 @@ function text4(world, narrative) {
   return `${describeHaul(world, narrative)}. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them, then ${describeStack(narrative)}. ${STACK_NOTE}${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
+// Addendum J rule 4, in plain language: lock it in, kick off the finishing run and wait for it to
+// really say finished, put a name on it without trampling anyone else's edit, and expect the
+// house to refuse anything asked out of order.
+const STAGE_NOTE = 'Walk it all the way through the house stages in the house order -- lock it in, kick off the finishing run, and do not call it done until you check back and it actually says finished. If you reach for a stage out of turn the house will refuse you; take the refusal, put the missing stage in, and carry on.';
+const TAG_NOTE = 'Once it is finished, write a word of your own onto it -- and do it in a way that will fail rather than overwrite if anyone touched it between your reading it and your writing.';
+const SIGN_NOTE = 'Then sign and send the release notice the house requires before anything can go out the door.';
+
 function text5(world, narrative) {
-  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params)}. Walk it all the way through the house's usual stages -- lock it in, kick off the finishing run, and don't call it done until you check back and it actually says finished.${describeChain(narrative.chain)} ${TURN_IN_LAST}`;
+  return `Make ${describeCreate(world, 'audio', narrative.audioA)}. Then make a second sound ${describeTones(narrative.audioB)}. Work out every tone the first sound has that the second one does not -- that leftover sound is the one that matters later -- and re-encode it as ${describeKind('audio', narrative.audioFormat)} at ${narrative.sampleRate} samples a second. Then, inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params, narrative.crossRef)}. ${STAGE_NOTE} ${TAG_NOTE}${describeChain(narrative.chain)} ${TURN_IN_LAST}`;
+}
+
+function describeClip(params, index) {
+  return `(${index}) one running ${params.durationMs} ms, ${params.width} by ${params.height} pixels, showing that picture from its very start for the whole of it, at full strength`;
 }
 
 function text6(world, narrative) {
-  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params)}. Walk it through the house's usual stages until the finishing run is done, then sign and send the release notice the house requires before anything can go out the door.${describeChain(narrative.chain)} ${TURN_IN_LAST}`;
+  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(world, 'image', narrative.params, narrative.crossRef)}. ${STAGE_NOTE} ${SIGN_NOTE} ${TAG_NOTE} Then build a pair of short moving takes over that same finished picture: ${describeClip(narrative.videoA, 1)}; ${describeClip(narrative.videoB, 2)}. Don't tell the house how fast to run them -- let it use its own usual speed. Stitch the two end to end, first one first, into a single moving piece.${describeChain(narrative.chain)} ${TURN_IN_LAST}`;
+}
+
+// Addendum J rule 2's most literal form, in plain language. The count is never stated, the
+// listing comes back in pages, and the cleared-out copies are invisible unless you ask for them.
+function describeClearOut(narrative) {
+  const many = countOfThem(narrative.deleteCount);
+  return `clear out the last ${many} of the copies you just made -- confirm they really are gone from the ordinary listing, and that they still turn up when you ask for the cleared-out ones as well -- and then count how many of your copies are still standing in the ordinary listing, remembering it comes back a page at a time`;
 }
 
 function text7(world, narrative) {
-  return `${describeHaul(world, narrative)}. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them. Before you stack anything: pull that same listing as a spreadsheet instead of the usual reply, then clear out the last of the ${narrative.subsetSize} you just worked on -- confirm it really is gone from the ordinary listing, and that it still turns up when you ask for the cleared-out ones as well. Then ${describeStack(narrative)}. ${STACK_NOTE}${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
+  return `${describeHaul(world, narrative)}. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them. Pull that same listing as a spreadsheet instead of the usual reply, then ${describeStack(narrative)}. Then ${describeClearOut(narrative)}. ${STACK_NOTE}${describeChain(narrative.chain)}${orderNote(narrative)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 function text8(world, narrative) {
-  return `${describeHaul(world, narrative)} -- there are more of them to get through this time. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them. Before you stack anything: pull that same listing as a spreadsheet instead of the usual reply, then clear out the last of the ${narrative.subsetSize} you just worked on -- don't take the written reference's word for how the house confirms a clean-up, check what actually comes back, and make sure it is gone from the ordinary listing but still turns up when you ask for the cleared-out ones. Then ${describeStack(narrative)}. ${STACK_NOTE}${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
+  return `${describeHaul(world, narrative)} -- there are more of them to get through this time. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them. Pull that same listing as a spreadsheet instead of the usual reply, then ${describeStack(narrative)}. Then ${describeClearOut(narrative)}; don't take the written reference's word for how the house confirms a clean-up, check what actually comes back. ${STACK_NOTE}${describeChain(narrative.chain)}${orderNote(narrative)} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 function text9(world, narrative) {
-  return `Make ${describeCreate(world, 'image', narrative.params)}.${describeChain(narrative.chain)} ${TURN_IN_LAST}${trapNote(narrative)}`;
+  return `${describeHaul(world, narrative)}. Give the house style called "${narrative.applyLoraName}" to the first ${narrative.subsetSize} of them in the order the house lists them, then ${describeStack(narrative)}. Pull that listing as a spreadsheet too, and ${describeClearOut(narrative)}. ${STACK_NOTE} Keep that stack to one side; you are going to need to know what is on it. Now make ${describeCreate(world, 'image', narrative.params, narrative.crossRef)}.${describeChain(narrative.chain)} ${ORDER_NOTE} ${TURN_IN_LAST}${trapNote(narrative)}`;
 }
 
 const TEXT_BUILDERS = [text0, text1, text2, text3, text4, text5, text6, text7, text8, text9];
@@ -184,12 +259,15 @@ const TEXT_BUILDERS = [text0, text1, text2, text3, text4, text5, text6, text7, t
 
 // makeRung(world, n) -> Rung. Deterministic: same (world, n) always yields the same Rung, byte
 // for byte, since every draw comes from sub(world.seed, 'rung:'+n) inside grammar.js.
+// `mutation` is Addendum J rule 3's announced change (or null); it is read off the World, never
+// drawn here, so the API and the task text cannot disagree about it.
 export function makeRung(world, n) {
-  const { plan, submitKey, narrative, band } = composePlan(world, n);
+  const { plan, submitKey, narrative, band, mutation } = composePlan(world, n);
   const env = runPlanLocally(world, plan);
   const expectedDescriptors = [env.get(submitKey)];
-  const text = TEXT_BUILDERS[band.tier](world, narrative);
-  return { n, text, plan, expectedDescriptors, submitCount: expectedDescriptors.length };
+  const body = TEXT_BUILDERS[band.tier](world, narrative);
+  const text = mutation ? `${body} ${MUTATION_NOTE}` : body;
+  return { n, text, plan, expectedDescriptors, submitCount: expectedDescriptors.length, mutation };
 }
 
 // difficulty(rung) -> number, strictly increasing in rung.n across 0..99 for any world: the band

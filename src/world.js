@@ -2,7 +2,7 @@
 // deprecations, and loras. Every facet draws from its own sub-seed so that
 // adding a new field later never reshuffles the facets that already exist.
 
-import { rng, sub, pick, int, shuffle } from './seed.js';
+import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 
 // Bumped to 0.2.0 by Addendum C round-2 steepening: the difficulty grammar's band parameters
 // changed, so the same seed no longer yields the same ladder as a 0.1.x run did. Results from the
@@ -19,7 +19,54 @@ import { rng, sub, pick, int, shuffle } from './seed.js';
 // uses -- instead of a hidden `Math.round(raw)` the docs never stated, and the generator redraws
 // any rung whose percent step would have been ambiguous between the two readings. 0.3.x hashes
 // for any rung with a percent step are superseded.
-export const VERSION = '0.4.0';
+// Bumped to 0.5.0 by Addendum J: the whole ladder grammar changed shape. Rungs now carry
+// cross-rung references (rule 1), derived parameters the API has to be asked for (rule 2),
+// announced per-rung mutations (rule 3, `rungMutations` below), state-machine + HMAC + ETag
+// chains at 50+ (rule 4), audio/video math at 50+ (rules 5 and 8), multi-rule ordering at 70+
+// (rule 6) and a much longer step envelope (rule 9). Every 0.4.x hash is superseded and no 0.4.x
+// board row is comparable with a 0.5.x one.
+export const VERSION = '0.5.0';
+
+// ---------------------------------------------------------------------------
+// Addendum J rule 3: announced per-rung mutations
+// ---------------------------------------------------------------------------
+
+// The pool the ladder is allowed to announce. It is a strict subset of the Arena mutation list
+// (`MUTATION_NAMES` in src/api/admin.js) on purpose: `rejectAuth` makes a route answer 401
+// forever and `stuckCursor` makes a listing repeat page one forever, so either one, applied for
+// a whole rung to a route that rung needs, makes the rung unpassable by ANY correct client --
+// which is a generator bug, not difficulty. The four here all change what comes back (status
+// code, a dropped field, a renamed field, a retyped field) without making any call impossible, so
+// a client that verifies what it actually got still gets through and one that trusted the written
+// reference's shape does not. That is the whole point of announcing it.
+export const RUNG_MUTATION_POOL = ['statusCode', 'dropField', 'renameField', 'retypeField'];
+
+// Addendum J rule 3: "from rung 40 on".
+export const FIRST_MUTATION_RUNG = 40;
+
+const MUTATION_DENSITY = 0.6;
+
+// makeRungMutations(seed) -> (RungMutation | null)[], indexed BY RUNG NUMBER so
+// `world.rungMutations[n]` is the entry for rung n and nothing has to search. Entry shape is
+// `{ n, mutation }` (mutation being one of RUNG_MUTATION_POOL), or `null` for a rung that
+// announces nothing.
+//
+// API contract (the API workstream owns the other half): when `POST /admin/rungs/advance` moves
+// the current rung to n, the server REPLACES its active mutation set with
+// `world.rungMutations[n] ? [world.rungMutations[n].mutation] : []`, so the announced mutation is
+// live from the first request of rung n and no earlier rung's mutation leaks forward.
+function makeRungMutations(seed) {
+  const r = rng(sub(seed, 'rungMutations'));
+  const out = [];
+  for (let n = 0; n < 100; n += 1) {
+    if (n < FIRST_MUTATION_RUNG) {
+      out.push(null);
+      continue;
+    }
+    out.push(chance(r, MUTATION_DENSITY) ? { n, mutation: pick(r, RUNG_MUTATION_POOL) } : null);
+  }
+  return out;
+}
 
 const WORKSPACE_NOUNS = ['studio', 'fleet', 'lab', 'yard', 'shop', 'depot', 'guild', 'forge', 'atelier', 'bureau'];
 const PROJECT_NOUNS = ['scene', 'vehicle', 'sensor', 'mission', 'reel', 'session', 'build', 'sketch', 'spread', 'rig'];
@@ -218,6 +265,7 @@ export function makeWorld(seed) {
     deprecated: makeDeprecated(seed),
     loras: makeLoras(seed),
     hmac: makeHmac(),
+    rungMutations: makeRungMutations(seed),
   };
 }
 

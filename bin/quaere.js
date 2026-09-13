@@ -103,6 +103,9 @@ async function cmdReference(args) {
     const result = await referenceClimb({
       world,
       baseUrl: `http://127.0.0.1:${ports.publicPort}`,
+      // Addendum J rule 3: the reference advances the admin-side current rung in step with
+      // itself, so each rung's announced mutation is live while that rung is being climbed.
+      adminBaseUrl: `http://127.0.0.1:${ports.adminPort}`,
       apiKey: world.auth.apiKey,
       from,
       to,

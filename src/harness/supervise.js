@@ -44,18 +44,42 @@ export const DEFAULT_DRAIN_MS = 20_000;
 // admin-reported rung.
 const REAL_LADDER_MAX_RUNG = 99;
 
+// Addendum J: "Turn cap. 5000 bru requests per run, reported as stoppedBecause: 'turns'."
+export const DEFAULT_MAX_BRU_TURNS = 5000;
+
 function iso() {
   return new Date().toISOString();
 }
 
-async function adminGetSubmissions(adminBase) {
-  const res = await fetch(`${adminBase}/admin/submissions`);
+// Addendum J admin-port hardening: `adminToken` is optional here (undefined is a harmless header
+// value against a server that doesn't check it yet) purely so supervise.test.js's existing fake
+// admin server -- which predates this and never asserted on the header -- keeps working unchanged.
+// A real climb via run-cli.js always supplies the per-run token.
+function adminHeaders(adminToken) {
+  return adminToken ? { 'x-admin-token': adminToken } : {};
+}
+
+async function adminGetSubmissions(adminBase, adminToken) {
+  const res = await fetch(`${adminBase}/admin/submissions`, { headers: adminHeaders(adminToken) });
   return res.json();
 }
 
-async function adminAdvance(adminBase) {
-  const res = await fetch(`${adminBase}/admin/rungs/advance`, { method: 'POST' });
+async function adminAdvance(adminBase, adminToken) {
+  const res = await fetch(`${adminBase}/admin/rungs/advance`, { method: 'POST', headers: adminHeaders(adminToken) });
   return res.json();
+}
+
+// Addendum J: the same admin-log query run-cli.js uses at the very end to compute the real
+// `turns` field (Addendum G: "Turns are counted at the API, not by the shim"), polled here too so
+// a runaway climb is stopped mid-flight at the cap instead of only being labeled after the fact.
+async function adminGetLog(adminBase, adminToken) {
+  const res = await fetch(`${adminBase}/admin/log`, { headers: adminHeaders(adminToken) });
+  return res.json();
+}
+
+function countBruRequests(logBody) {
+  const entries = Array.isArray(logBody && logBody.data) ? logBody.data : [];
+  return entries.filter((e) => typeof e.ua === 'string' && e.ua.startsWith('bruno-runtime/')).length;
 }
 
 // killTree(child): send `signal` to the whole process group the child leads. `child` must have
@@ -92,14 +116,21 @@ export function gracefulKillTree(child, { drainMs = DEFAULT_DRAIN_MS } = {}) {
   child.once('exit', () => clearTimeout(timer));
 }
 
-// superviseProcess({cmd, args, env, cwd, adminBase, topRung, wallMsLeft, pollMs, drainMs,
-// knownSubmissionsCount, onEvent}) -> Promise<{exitCode, signal, timedOut,
-// killedFor: 'fail'|'top'|'wall'|'overshoot'|'error'|null, submissions, stdout, stderr}>.
+// superviseProcess({cmd, args, env, cwd, adminBase, adminToken, topRung, wallMsLeft, pollMs,
+// drainMs, knownSubmissionsCount, maxBruTurns, onEvent}) -> Promise<{exitCode, signal, timedOut,
+// killedFor: 'fail'|'top'|'wall'|'turns'|'overshoot'|'error'|null, submissions, stdout, stderr}>.
 //
 // `knownSubmissionsCount` (default 0): how many submissions this RUN already had before this
 // spawn (i.e. from earlier spawns/resumes) -- Addendum G. Only submissions past this count are
 // reacted to (advanced past, or checked for fail/top); the returned `submissions` is always the
 // full, current list from the server regardless.
+//
+// `adminToken`: Addendum J -- forwarded as X-Admin-Token on every admin fetch this function makes
+// (optional; a fake admin server that doesn't check it, like supervise.test.js's, is unaffected).
+//
+// `maxBruTurns` (default 5000, Addendum J): once the admin log shows this many `bru`-tagged
+// requests, the process is drained and killed with `killedFor: 'turns'`, same drain-then-kill
+// treatment as a fall or the top.
 //
 // `onEvent(entry)` fires synchronously, once per stdout chunk (`{ts, type:'stdout', text}`), per
 // stderr chunk (`{ts, type:'stderr', text}`), and per newly observed submission (`{ts,
@@ -111,11 +142,13 @@ export function superviseProcess({
   env,
   cwd,
   adminBase,
+  adminToken,
   topRung = 99,
   wallMsLeft = Infinity,
   pollMs = DEFAULT_POLL_MS,
   drainMs = DEFAULT_DRAIN_MS,
   knownSubmissionsCount = 0,
+  maxBruTurns = DEFAULT_MAX_BRU_TURNS,
   onEvent = () => {},
 }) {
   return new Promise((resolve, reject) => {
@@ -163,7 +196,7 @@ export function superviseProcess({
       if (settled) return;
       let body;
       try {
-        body = await adminGetSubmissions(adminBase);
+        body = await adminGetSubmissions(adminBase, adminToken);
       } catch {
         return; // admin unreachable this tick -- next call (timer or exit) tries again
       }
@@ -189,7 +222,7 @@ export function superviseProcess({
           return;
         }
         // eslint-disable-next-line no-await-in-loop
-        const advanced = await adminAdvance(adminBase).catch(() => null);
+        const advanced = await adminAdvance(adminBase, adminToken).catch(() => null);
         if (settled) return;
         // Addendum G: a harness bug over-advancing (see the baseline fix above; this is the
         // backstop for whatever the next version of that bug looks like) is not a fall.
@@ -206,8 +239,57 @@ export function superviseProcess({
       }
     }
 
+    // Addendum J turn cap: polled at the same cadence as submissions, but independent of them --
+    // a climb can burn through 5000 bru requests without ever submitting. Skipped once some other
+    // reason has already decided to kill the process, so a fall/top/overshoot found in the same
+    // tick is never overwritten by the turn cap.
+    async function checkTurnCapOnce() {
+      if (settled || killedFor) return;
+      let body;
+      try {
+        body = await adminGetLog(adminBase, adminToken);
+      } catch {
+        return; // admin unreachable this tick -- next call (timer or exit) tries again
+      }
+      if (settled || killedFor) return;
+      if (countBruRequests(body) >= maxBruTurns) {
+        killedFor = 'turns';
+        onEvent({ ts: iso(), type: 'error', text: `bru request count reached the ${maxBruTurns} turn cap` });
+        gracefulKillTree(child, { drainMs });
+      }
+    }
+
+    // Addendum G, third face of the same bug: admin checks must be SERIALIZED and must all run to
+    // completion. The poll timer and the exit handler both call checkSubmissionsOnce(), and they
+    // used to be able to overlap. When they did, the exit handler's own check (which finds nothing
+    // new, because the timer's in-flight check already consumed the list) would settle() the
+    // promise while the timer's check was still mid-loop advancing -- and the `if (settled) return`
+    // guard inside that loop then abandoned every submission it had not yet reached. A FALL sitting
+    // in that abandoned tail was never seen, so `killedFor` stayed null and run-cli.js read a fall
+    // as a clean exit and resumed the run. Measured on a slow admin: 15 of 60 submissions reacted
+    // to, and a fail at rung 50 missed entirely.
+    //
+    // Every check now goes through this one chain, so a check always runs to completion before the
+    // next one starts, and the exit handler settles only after the whole chain has drained.
+    let pendingChecks = 0;
+    let checkChain = Promise.resolve();
+    function queueCheck(fn) {
+      pendingChecks += 1;
+      checkChain = checkChain
+        .catch(() => {})
+        .then(fn)
+        .catch(() => {})
+        .finally(() => {
+          pendingChecks -= 1;
+        });
+      return checkChain;
+    }
+
     const pollTimer = setInterval(() => {
-      checkSubmissionsOnce();
+      // A slow admin must not let identical polls stack up unboundedly -- if a check is still
+      // queued or running, this tick has nothing to add.
+      if (pendingChecks > 0) return;
+      queueCheck(() => checkSubmissionsOnce().then(() => checkTurnCapOnce()));
     }, pollMs);
     const wallTimer = Number.isFinite(wallMsLeft)
       ? setTimeout(() => {
@@ -233,7 +315,10 @@ export function superviseProcess({
 
     child.on('exit', (code, signal) => {
       if (settled) return;
-      checkSubmissionsOnce().finally(() => {
+      // Queued, not called directly: this waits out any in-flight poll check (see queueCheck) and
+      // only then takes its own last look, so nothing is settled out from under a check that is
+      // still reacting to submissions.
+      queueCheck(() => checkSubmissionsOnce()).finally(() => {
         settle({ exitCode: code, signal, timedOut: killedFor === 'wall', killedFor, submissions, stdout, stderr });
       });
     });

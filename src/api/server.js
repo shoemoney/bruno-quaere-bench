@@ -58,6 +58,10 @@ function createState(world) {
     rungs: { current: 0, answers: new Map(), submissions: [] },
     mutations: { active: new Set(), targets: chooseMutationTargets(world) },
     routePaths: new Map(routes.map((r) => [r.id, resolvePath(world, r.path)])),
+    // Addendum J: unauthenticated-or-wrong-token hits on the admin port (see admin.js). Kept
+    // uncapped for an exhaustive count, same as `log` above; GET /admin/violations caps the
+    // sample list it returns.
+    adminProbes: [],
   };
   seedInitialData(world, state.store, now);
   return state;
@@ -72,6 +76,7 @@ function resetState(state) {
   state.store = createResourceStore();
   seedInitialData(state.world, state.store, Date.now());
   state.rungs = { current: 0, answers: new Map(), submissions: [] };
+  state.adminProbes.length = 0;
 }
 
 function buildPublicRouter(world) {
@@ -723,7 +728,12 @@ async function handleRequest(state, publicRouter, req, res) {
 // createServer
 // ---------------------------------------------------------------------------
 
-export function createServer({ world, publicPort = 0, adminPort = 0 }) {
+// `adminToken` (Addendum J, "Admin port hardening"): when the caller supplies one -- a per-run
+// random secret it holds and never writes into the sandbox -- every admin request must carry it
+// as `X-Admin-Token` or gets a 401, counted in `state.adminProbes` (see admin.js). Omitting it
+// (the default) leaves the admin port exactly as unauthenticated as every caller before this
+// addendum relied on; nothing here changes for a `createServer({world})` call that names no token.
+export function createServer({ world, publicPort = 0, adminPort = 0, adminToken } = {}) {
   const state = createState(world);
   const publicRouter = buildPublicRouter(world);
 
@@ -737,7 +747,7 @@ export function createServer({ world, publicPort = 0, adminPort = 0 }) {
     });
   });
 
-  const adminServer = http.createServer(createAdminHandler(state, { reset: () => resetState(state) }));
+  const adminServer = http.createServer(createAdminHandler(state, { reset: () => resetState(state), adminToken }));
 
   async function start() {
     await new Promise((resolve, reject) => {

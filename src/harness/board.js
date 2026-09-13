@@ -80,11 +80,34 @@ function dnrLine(entry) {
   return `- **${label}**: did not run${entry.reason ? ` -- ${entry.reason}` : ''}`;
 }
 
-const TABLE_HEADER = '| Model | Driver | Seed | Rung | Turns | Fidelity | Trap | Novel | Billed | Violations | Resumes | Stop |';
-const TABLE_RULE = '|---|---|---|---|---|---|---|---|---|---|---|---|';
+// Addendum J: Probes is appended AFTER Stop, not slotted next to Violations -- both
+// test/board.test.js and test/harness-transcript.test.js assert an exact
+// `| Model | ... | Violations | Resumes | Stop |` substring, and appending keeps that substring
+// intact (the regex isn't end-anchored) instead of forcing every caller to touch those columns.
+const TABLE_HEADER =
+  '| Model | Driver | Seed | Rung | Turns | Fidelity | Trap | Novel | Billed | Violations | Resumes | Stop | Probes |';
+const TABLE_RULE = '|---|---|---|---|---|---|---|---|---|---|---|---|---|';
 
 function rowLine(row) {
-  return `| ${row.model} | ${row.driver} | ${row.seed} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.violations.toFixed(1)} | ${row.resumes.toFixed(1)} | ${row.stop} |`;
+  return `| ${row.model} | ${row.driver} | ${row.seed} | ${row.rung} | ${row.turns} | ${pct(row.fidelity)} | ${pct(row.trap)} | ${Math.round(row.novel)} | ${Math.round(row.billed)} | ${row.violations.toFixed(1)} | ${row.resumes.toFixed(1)} | ${row.stop} | ${row.probes.toFixed(1)} |`;
+}
+
+// Addendum J: bru's OWN --sandbox developer scripts (a `.bru` `script:post-request` or similar
+// that reaches for `require('http')`, `fetch`, or any other socket API instead of another `bru`
+// invocation) send a non-bru User-Agent just like a stray curl would, and count as a violation
+// here -- same signal, same column, not a false positive to special-case. A row's Violations
+// count alone doesn't say which; the samples below are what let a human tell them apart.
+function violationSampleLines(row) {
+  const samples = (row.representative && row.representative.violationSamples) || [];
+  const lines = [`- **${row.model}** (${row.driver}, seed ${row.seed}): ${row.violations.toFixed(1)} violation(s)`];
+  if (samples.length === 0) {
+    lines.push('  - no samples recorded (result.json predates violationSamples, or the API instance never returned any)');
+    return lines;
+  }
+  for (const s of samples.slice(0, 20)) {
+    lines.push(`  - ${s.method || '?'} ${s.path || '?'} (User-Agent: ${s.ua || 'unknown'})`);
+  }
+  return lines;
 }
 
 // One row per (model, driver, seed) already (score.js), sorted for a stable, readable board:
@@ -102,6 +125,20 @@ function renderVersionSection(rows) {
   lines.push('', '#### Expected vs produced at the fall rung', '');
   for (const row of sortRows(rows)) {
     lines.push(`- **${row.model}** (${row.driver}, seed ${row.seed}): ${fellNote(row.representative)}`);
+  }
+  // Addendum J: "shows violation samples for any row with violations > 0" -- only rendered when
+  // at least one row in this version has a nonzero count, so a clean round adds nothing here.
+  const violatingRows = sortRows(rows).filter((row) => row.violations > 0);
+  if (violatingRows.length > 0) {
+    lines.push(
+      '',
+      '#### Violation samples',
+      '',
+      "Note: bru's own --sandbox developer scripts that call `require('http')` or similar produce " +
+        'non-bru User-Agents too, and count here exactly like a stray curl or fetch would.',
+      '',
+    );
+    for (const row of violatingRows) lines.push(...violationSampleLines(row));
   }
   return lines;
 }

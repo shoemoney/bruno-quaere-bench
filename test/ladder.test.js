@@ -72,6 +72,8 @@ test('makeRung produces a well-shaped Rung for every band', () => {
       assert.ok(Array.isArray(rung.expectedDescriptors));
       assert.equal(rung.expectedDescriptors.length, rung.submitCount);
       for (const desc of rung.expectedDescriptors) {
+        // a video is never SUBMITTED -- its hash would depend on asset ids the key cannot know
+        // (see resolveRefs's $assetRef note) -- so a rung only ever turns in a picture or a sound
         assert.ok(desc.kind === 'image' || desc.kind === 'audio');
       }
     }
@@ -94,9 +96,15 @@ test('rung text never leaks an API field name', () => {
 // live in the skill -- but every per-rung parameter must be stated.
 // ---------------------------------------------------------------------------
 
-function statedNumbers(params, out) {
-  out.push(String(params.width), String(params.height));
-  if (params.background && params.background.color !== undefined) out.push(params.background.color);
+function statedNumbers(params, out, crossRef) {
+  // Addendum J rule 1: a leaf borrowed from an earlier rung is a $ref in the plan and is
+  // deliberately absent from the text. It is still reproducible -- from the agent's own earlier
+  // work -- so it is exempt here, and test/ladder-0-5.test.js asserts the opposite direction
+  // (that the borrowed value never leaks into the text after all).
+  const borrowedDims = crossRef !== null && crossRef !== undefined && crossRef.field === 'dims';
+  const borrowedGround = crossRef !== null && crossRef !== undefined && crossRef.field === 'ground';
+  if (!borrowedDims) out.push(String(params.width), String(params.height));
+  if (!borrowedGround && params.background && params.background.color !== undefined) out.push(params.background.color);
   for (const s of params.shapes ?? []) {
     out.push(String(s.x), String(s.y), s.color, `${Math.round(s.opacity * 100)} percent`, s.type === 'rect' ? String(s.w) : '');
     if (s.type === 'rect') out.push(String(s.h));
@@ -111,6 +119,16 @@ function statedNumbers(params, out) {
   }
 }
 
+// Which plan steps' params are the ones a cross-rung reference could have been applied to: a
+// borrowed leaf is a {$ref} object rather than a number, so spotting it needs no bookkeeping.
+function crossRefOf(params) {
+  if (params.width !== null && typeof params.width === 'object') return { field: 'dims' };
+  if (params.background && params.background.color !== null && typeof params.background.color === 'object') {
+    return { field: 'ground' };
+  }
+  return null;
+}
+
 test('rung text states every per-rung parameter the expected hash depends on', () => {
   for (const seed of SEEDS) {
     const world = makeWorld(seed);
@@ -118,12 +136,22 @@ test('rung text states every per-rung parameter the expected hash depends on', (
       const rung = makeRung(world, n);
       const wanted = [];
       for (const step of rung.plan) {
-        if (step.op === 'create' || step.op === 'render') statedNumbers(step.args.params, wanted);
+        if (step.op === 'create' || step.op === 'render') {
+          // a video's clips name assets by id, which the text never states and never could
+          if (step.args.kind === 'video') continue;
+          statedNumbers(step.args.params, wanted, crossRefOf(step.args.params));
+        }
         if (step.op === 'combine' && step.args.opts && step.args.opts.opacityStep !== undefined) {
           wanted.push(String(step.args.opts.opacityStep));
         }
         if (step.op === 'lora') wanted.push(step.args.loraName);
-        if (step.op === 'compute' && step.args.percent !== undefined) wanted.push(String(step.args.percent));
+        // Addendum J rule 2: a derived percent is a $ref, and what the text must state is the
+        // RECIPE (base and per-unit), which ladder-0-5.test.js checks directly. Only a literal
+        // stated percent has to appear verbatim here.
+        if (step.op === 'compute' && typeof step.args.percent === 'number') wanted.push(String(step.args.percent));
+        if (step.op === 'compute' && step.args.fn === 'percentFromCount') {
+          wanted.push(String(step.args.base), String(Math.abs(step.args.step)));
+        }
       }
       for (const needle of wanted) {
         if (needle === '' || needle === 'undefined') continue;

@@ -11,7 +11,7 @@ import { renderImage } from '../render/image.js';
 import { renderAudio } from '../render/audio.js';
 import { hashArtifact } from '../canon.js';
 import { makeRung } from './rung.js';
-import { runCompute, resolveRefs } from './grammar.js';
+import { runCompute, resolveRefs, recallValue } from './grammar.js';
 
 // ---------------------------------------------------------------------------
 // answer key
@@ -141,8 +141,11 @@ async function requestJson(ctx, method, path, opts) {
 // op handlers
 // ---------------------------------------------------------------------------
 
+const CREATE_ROUTE = { image: 'images.create', audio: 'audio.create', video: 'video.create' };
+
 async function createAssetHttp(ctx, kind, params, idemKey) {
-  const routeId = kind === 'image' ? 'images.create' : 'audio.create';
+  const routeId = CREATE_ROUTE[kind];
+  if (routeId === undefined) throw new Error(`no create route for kind ${kind}`);
   const { body } = await requestJson(ctx, 'POST', pathFor(ctx.world, routeId), {
     body: params,
     headers: { 'Idempotency-Key': idemKey },
@@ -199,17 +202,11 @@ async function httpBatch(ctx, args) {
       out.push({ id: body.id, descriptor: body.descriptor });
     }
   }
-  if (args.sideChecks) {
+  if (args.sideChecks && args.sideChecks.csv) {
+    // Content negotiation: the same listing, asked for as a spreadsheet instead of the usual
+    // reply. Nothing downstream reads it -- the point is that the call happens and succeeds.
     const base = pathFor(ctx.world, 'projects.assets', { workspace_id: args.workspaceId, project_id: args.projectId });
-    if (args.sideChecks.csv) {
-      await request(ctx, 'GET', `${base}?page_size=100`, { headers: { accept: 'text/csv' } });
-    }
-    if (args.sideChecks.softDelete && items.length > 0) {
-      const victim = items[items.length - 1];
-      await request(ctx, 'DELETE', pathFor(ctx.world, 'assets.delete', { asset_id: victim.id }));
-      await request(ctx, 'GET', `${base}?page_size=100`);
-      await request(ctx, 'GET', `${base}?page_size=100&include_deleted=true`);
-    }
+    await request(ctx, 'GET', `${base}?page_size=100`, { headers: { accept: 'text/csv' } });
   }
   return out;
 }
@@ -223,6 +220,11 @@ async function httpRender(ctx, args, resultKey, projectsMap, idemPrefix) {
     headers: { 'Idempotency-Key': `${idemPrefix}-${resultKey}-project` },
   });
   const projectId = proj.id;
+  if (args.recover409) {
+    // Addendum J rule 4: at least one 409 recovery per rung from 50 up. Reaching for the
+    // finishing run before the project is locked in is refused; take the refusal and carry on.
+    await request(ctx, 'POST', pathFor(ctx.world, 'projects.render', { workspace_id: wsId, project_id: projectId }));
+  }
   const composeBody = { [F(ctx.world, 'asset_ids')]: [asset.id] };
   await requestJson(ctx, 'POST', pathFor(ctx.world, 'projects.compose', { workspace_id: wsId, project_id: projectId }), {
     body: composeBody,
@@ -253,19 +255,52 @@ async function httpPublish(ctx, args, projectsMap) {
   });
 }
 
+// httpListCount(ctx, args, copyIds): Addendum J rule 2's most literal derived parameter. Clear
+// the last few of THIS rung's own copies out, confirm the clear-out took (gone from the ordinary
+// listing, still there when the cleared-out ones are asked for), then walk every page of the
+// listing and count how many of this rung's copies are still standing. Scoped to this rung's own
+// copies so the number is a pure function of this rung and not of whatever ran before it.
+async function httpListCount(ctx, args, copyIds) {
+  const victims = args.deleteCount > 0 ? copyIds.slice(copyIds.length - args.deleteCount) : [];
+  for (const id of victims) {
+    // eslint-disable-next-line no-await-in-loop
+    await request(ctx, 'DELETE', pathFor(ctx.world, 'assets.delete', { asset_id: id }));
+  }
+  const base = pathFor(ctx.world, 'projects.assets', { workspace_id: args.workspaceId, project_id: args.projectId });
+  const live = await httpListAllAssets(ctx, args.workspaceId, args.projectId, args.pageSize);
+  const liveIds = new Set(live.map((a) => a.id));
+  // the confirming half of the obligation: the cleared-out ones come back when asked for
+  await request(ctx, 'GET', `${base}?page_size=100&include_deleted=true`);
+  return copyIds.filter((id) => liveIds.has(id)).length;
+}
+
+// httpEtag(ctx, args, assetId): Addendum J rule 4's conditional update. Read the tag, prove the
+// house refuses a stale one, then write with the fresh one. Metadata only: the descriptor and so
+// the hash are untouched, which is why this can sit in a plan whose key never sees a server.
+async function httpEtag(ctx, args, assetId) {
+  const path = pathFor(ctx.world, 'assets.get', { asset_id: assetId });
+  const { body } = await requestJson(ctx, 'GET', path);
+  const patchPath = pathFor(ctx.world, 'assets.patch', { asset_id: assetId });
+  const patchBody = { [F(ctx.world, 'display_name')]: args.label };
+  await request(ctx, 'PATCH', patchPath, { body: patchBody, headers: { 'if-match': '"stale-etag"' } });
+  await requestJson(ctx, 'PATCH', patchPath, { body: patchBody, headers: { 'if-match': body.etag } });
+}
+
 // execPlanHttp(ctx, plan, n) -> {env, ids}: mirrors grammar.js's runPlanLocally op-for-op, but
 // each op is a real HTTP call. `env` collects descriptors (for compute-step $refs), `ids`
 // collects the asset ids those descriptors live at on the server (what actually gets submitted).
 // `n` (the rung number) is folded into every Idempotency-Key: resultKey names ('a', 'final', ...)
 // repeat across rungs, and the idempotency store is keyed only by (token, route, key), so without
 // `n` the second rung to reuse a name would silently get back the FIRST rung's cached asset.
-async function execPlanHttp(ctx, plan, n) {
+async function execPlanHttp(ctx, plan, n, history) {
   const env = new Map();
   const ids = new Map();
   const projects = new Map();
   const idemPrefix = `idem-${n}`;
   for (const step of plan) {
-    const args = resolveRefs(step.args, env);
+    // `ids` is threaded in so a {$assetRef: key} leaf (video clips, and nothing else) resolves to
+    // the real server id rather than the answer key's local placeholder.
+    const args = resolveRefs(step.args, env, ids);
     if (step.op === 'create') {
       // eslint-disable-next-line no-await-in-loop
       const result = await createAssetHttp(ctx, args.kind, args.params, `${idemPrefix}-${step.resultKey}`);
@@ -326,6 +361,29 @@ async function execPlanHttp(ctx, plan, n) {
       await httpPublish(ctx, args, projects);
       env.set(step.resultKey, env.get(args.renderKey));
       ids.set(step.resultKey, ids.get(args.renderKey));
+    } else if (step.op === 'recall') {
+      // Addendum J rule 1: the reference resolves a cross-rung reference out of its OWN history
+      // of what it turned in, exactly as the agent is expected to resolve it out of its
+      // collection on disk. The local recomputation is the fallback for a partial climb
+      // (`--from 40`) where the earlier rung was never actually run in this process; the two
+      // agree by construction, since both are pure functions of (world, fromRung).
+      const remembered = history && history.get(args.fromRung);
+      const desc = remembered !== undefined ? remembered : null;
+      let value;
+      if (desc !== null) {
+        value = args.field === 'dims' ? { width: desc.width, height: desc.height } : desc.background.color;
+      } else {
+        value = recallValue(ctx.world, args.fromRung, args.field);
+      }
+      env.set(step.resultKey, value);
+    } else if (step.op === 'listCount') {
+      // eslint-disable-next-line no-await-in-loop
+      env.set(step.resultKey, await httpListCount(ctx, args, ids.get(args.subsetKey)));
+    } else if (step.op === 'etag') {
+      // eslint-disable-next-line no-await-in-loop
+      await httpEtag(ctx, args, ids.get(args.from));
+      env.set(step.resultKey, env.get(args.from));
+      ids.set(step.resultKey, ids.get(args.from));
     } else {
       throw new Error(`unknown op: ${step.op}`);
     }
@@ -337,21 +395,52 @@ async function execPlanHttp(ctx, plan, n) {
 // climb
 // ---------------------------------------------------------------------------
 
-// climb({world, baseUrl, apiKey, from, to, log}) -> {passed:[n...], failed:[{n, reason}...]}.
+// climb({world, baseUrl, apiKey, adminBaseUrl, adminToken, from, to, log}) ->
+//   {passed:[n...], failed:[{n, reason}...]}.
+//
 // Executes each rung's plan for real, over HTTP, and submits the resulting asset id(s). Every
 // composer in grammar.js makes its plan's *last* step the one to submit, so that convention (not
 // re-deriving the plan) is all climb needs to know what to hand to /rungs/{n}/submit.
-export async function climb({ world, baseUrl, apiKey, from = 0, to = 99, log }) {
+//
+// Two things it does beyond executing plans:
+//
+//   * It keeps a history of the descriptor it turned in at each rung, so Addendum J rule 1's
+//     cross-rung references resolve out of the climb's own past rather than out of a
+//     recomputation -- the same memory the agent is expected to keep, kept the same way.
+//   * When `adminBaseUrl` is given it advances the admin-side current rung in step with itself,
+//     so Addendum J rule 3's announced mutation for rung n is LIVE for the whole of rung n. A
+//     rung the reference cannot pass with its own announced mutation applied is a generator bug,
+//     and without this the gate would never see one.
+export async function climb({ world, baseUrl, apiKey, adminBaseUrl, adminToken, from = 0, to = 99, log }) {
   const ctx = createClient(world, baseUrl, apiKey);
   const passed = [];
   const failed = [];
+  const history = new Map();
+  let adminCurrent = 0;
+  const advanceTo = async (n) => {
+    if (!adminBaseUrl) return;
+    while (adminCurrent < n) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(`${adminBaseUrl}/admin/rungs/advance`, {
+        method: 'POST',
+        // Addendum J admin hardening: the admin port is gated by a per-run secret whenever the
+        // harness sets one. The reference is inside the harness, so it is allowed to hold it.
+        headers: adminToken ? { 'X-Admin-Token': adminToken } : {},
+      });
+      if (!res.ok) throw new Error(`admin advance -> ${res.status}`);
+      adminCurrent += 1;
+    }
+  };
   for (let n = from; n <= to; n += 1) {
     try {
+      // eslint-disable-next-line no-await-in-loop
+      await advanceTo(n);
       const rung = makeRung(world, n);
       // eslint-disable-next-line no-await-in-loop
-      const { ids } = await execPlanHttp(ctx, rung.plan, n);
+      const { env, ids } = await execPlanHttp(ctx, rung.plan, n, history);
       const lastKey = rung.plan[rung.plan.length - 1].resultKey;
       const submitId = ids.get(lastKey);
+      history.set(n, env.get(lastKey));
       const reqBody = { assets: [submitId] };
       const path = pathFor(world, 'rungs.submit', { n: String(n) });
       // eslint-disable-next-line no-await-in-loop

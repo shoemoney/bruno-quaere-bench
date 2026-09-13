@@ -11,6 +11,17 @@ import { rng, sub, pick } from '../seed.js';
 const BRUNO_RUNTIME_PREFIX = 'bruno-runtime/';
 const MAX_VIOLATION_SAMPLES = 20;
 
+// Addendum J, "Admin port hardening": a native CLI has a shell, and the admin port answers on
+// the loopback address that same shell can always reach. `adminToken`, when the caller (server.js)
+// supplies one, is a per-run random secret held only by the harness process and never written
+// into the sandbox -- every admin request must carry it as `X-Admin-Token` or it is a 401,
+// counted as an `adminProbe` rather than folded into the User-Agent violations above (a probe
+// never got far enough to identify itself as bru or not; it is a distinct signal: something
+// inside the sandbox reached for the admin port at all). Passing no `adminToken` (undefined)
+// leaves the port exactly as unauthenticated as it always was -- every existing caller that
+// starts a server without one keeps working unchanged.
+const ADMIN_TOKEN_HEADER = 'x-admin-token';
+
 export const MUTATION_NAMES = [
   'statusCode',
   'dropField',
@@ -60,6 +71,18 @@ export function chooseMutationTargets(world) {
   };
 }
 
+// mutationForRung(world, n): Addendum J rule 3, "mid-rung mutations", per the API contract
+// documented on `makeRungMutations` in world.js -- `world.rungMutations` is an array indexed BY
+// RUNG NUMBER, each slot either `{n, mutation}` or `null`. Defensive only against a world with no
+// `rungMutations` at all (every fixture in this repo's own tests that builds a world by hand
+// rather than through `makeWorld`), in which case this is a no-op, same as before this addendum.
+export function mutationForRung(world, n) {
+  const list = world && world.rungMutations;
+  if (!Array.isArray(list)) return null;
+  const entry = list[n];
+  return entry ? entry.mutation : null;
+}
+
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -93,14 +116,27 @@ const ADMIN_ROUTES = [
   { method: 'GET', path: '/admin/world', id: 'admin.world' },
 ];
 
-// createAdminHandler(state, {reset}) -> (req, res) => void, an http.Server request listener.
-// `reset()` is supplied by server.js since it also owns the auth store and rate limiter that a
-// reset must clear alongside the resource store and mutation flags admin.js owns here.
-export function createAdminHandler(state, { reset }) {
+// createAdminHandler(state, {reset, adminToken}) -> (req, res) => void, an http.Server request
+// listener. `reset()` is supplied by server.js since it also owns the auth store and rate
+// limiter that a reset must clear alongside the resource store and mutation flags admin.js owns
+// here. `adminToken`, when set, gates every admin route (see ADMIN_TOKEN_HEADER above); a probe
+// is logged to `state.adminProbes` and answered 401 before the route is even matched, so an
+// unauthenticated caller learns nothing about which admin routes exist.
+export function createAdminHandler(state, { reset, adminToken }) {
   const router = createRouter(ADMIN_ROUTES);
 
   return function handleAdmin(req, res) {
     const url = new URL(req.url, 'http://admin.internal');
+
+    if (adminToken) {
+      const provided = req.headers[ADMIN_TOKEN_HEADER];
+      if (provided !== adminToken) {
+        state.adminProbes.push({ method: req.method, path: url.pathname, ua: req.headers['user-agent'] || '' });
+        sendProblem(res, 401, { detail: 'missing or invalid X-Admin-Token' });
+        return;
+      }
+    }
+
     const match = router(req.method, url.pathname);
     if (!match) {
       sendProblem(res, 404, { detail: `no admin route for ${req.method} ${url.pathname}` });
@@ -140,8 +176,22 @@ async function dispatch(id, state, { req, res, reset }) {
 
   if (id === 'admin.violations') {
     const offenders = state.log.filter((entry) => !(entry.ua || '').startsWith(BRUNO_RUNTIME_PREFIX));
-    const samples = offenders.slice(0, MAX_VIOLATION_SAMPLES).map((entry) => ({ ua: entry.ua, path: entry.path }));
-    sendJson(res, 200, { count: offenders.length, samples });
+    const samples = offenders
+      .slice(0, MAX_VIOLATION_SAMPLES)
+      .map((entry) => ({ ua: entry.ua, method: entry.method, path: entry.path }));
+    // Addendum J: `adminProbes` is a distinct signal from a rogue public-port User-Agent above --
+    // a count of requests to the ADMIN port itself that never carried a valid X-Admin-Token. Flat
+    // top-level number (the [harness] workstream's run.js/run-cli.js read
+    // `violationsBody.adminProbes` directly, defaulting to 0 when it's absent so an instance that
+    // predates this addendum still reports cleanly) per "any adminProbe voids the run".
+    // `adminProbeSamples` is the same `{method, path, ua}` shape as `samples` above, for an
+    // operator diagnosing why a run was voided; the harness contract itself only needs the count.
+    sendJson(res, 200, {
+      count: offenders.length,
+      samples,
+      adminProbes: state.adminProbes.length,
+      adminProbeSamples: state.adminProbes.slice(0, MAX_VIOLATION_SAMPLES),
+    });
     return;
   }
 
@@ -157,7 +207,14 @@ async function dispatch(id, state, { req, res, reset }) {
 
   if (id === 'admin.rungs.advance') {
     state.rungs.current += 1;
-    sendJson(res, 200, { current: state.rungs.current });
+    const announced = mutationForRung(state.world, state.rungs.current);
+    const applied = announced && MUTATION_NAMES.includes(announced) ? announced : null;
+    // world.js's own contract for `rungMutations` (see makeRungMutations): the announced
+    // mutation REPLACES the active set outright, live from the first request of the new rung --
+    // never accumulates, so neither an earlier rung's announced mutation nor a manually-set
+    // `POST /admin/mutate` survives past the rung boundary that didn't ask for it.
+    state.mutations.active = new Set(applied ? [applied] : []);
+    sendJson(res, 200, { current: state.rungs.current, mutationApplied: applied });
     return;
   }
 

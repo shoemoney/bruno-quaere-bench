@@ -64,6 +64,11 @@ export function scoreGroup(version, model, driver, seed, runs) {
     // only -- a message-loop run always resumes 0) default to 0 for pre-Addendum-F result.json
     // files rather than propagate NaN through the mean.
     violations: mean(runs.map((r) => r.violations || 0)),
+    // Addendum J: admin-port hits missing/forging X-Admin-Token, defaulting to 0 for any
+    // result.json predating this field. Any run with adminProbes > 0 already had its own
+    // stoppedBecause overwritten to 'voided-admin-probe' by the harness, so `stop` below already
+    // reflects it -- this column is what lets the board show HOW MANY, not just that it happened.
+    probes: mean(runs.map((r) => r.adminProbes || 0)),
     resumes: mean(runs.map((r) => r.resumes || 0)),
     stop: rep.stoppedBecause,
     trims: mean(runs.map((r) => r.trims || 0)),

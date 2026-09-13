@@ -6,6 +6,7 @@
 // an artifact, a spec, a skill, or a rung.
 
 import { mkdir, writeFile, readFile, cp, readdir } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 import { makeWorld, VERSION as LADDER_VERSION } from '../world.js';
@@ -174,6 +175,17 @@ function trimToFraction(messages, contextLimit, fraction) {
     msgs = msgs.slice(1);
     removed += 1;
   }
+  // NOTE: an assistant/tool_calls message can legitimately land at index 0 too (its own paired
+  // tool response is still present right after it) -- that's fine content-wise, but Gemini 400s
+  // with "function call turn comes immediately after a user turn or after a function response
+  // turn" because nothing precedes it (hit at seed 413 turn 247, 0.4.0 calibration: rung 15,
+  // cleared 16 submissions before this). A real climb can run dozens of turns with no interstitial
+  // 'user' message at all (every turn is assistant-tool_call/tool-response once past "Begin"), so
+  // cascading further front-removal hunting for a natural 'user' boundary (tried first, seed 413
+  // rerun turn 160) over-trims catastrophically -- 318 of ~320 messages gone, right back down to
+  // the same bug with no content left to recover from. The caller prepends a synthetic 'user' trim
+  // note as the new message 0 instead, which satisfies Gemini's adjacency rule without touching
+  // which messages survive.
   return { messages: msgs, removed };
 }
 
@@ -339,19 +351,31 @@ async function stepWithRetry(driver, messages, tools, msLeft) {
   throw lastErr;
 }
 
-async function adminPost(adminBase, pathname, body) {
+// Addendum J admin-port hardening: every admin call the harness makes carries the per-run
+// X-Admin-Token generated in climb() below (never written to the sandbox or TASK.md -- it lives
+// only in this process's memory and on the wire to 127.0.0.1). The real enforcement (401 on a
+// missing/wrong token, logging the attempt as an adminProbe) is the [api] workstream's admin.js,
+// not this file's; these two helpers are the harness's half of the contract, sent unconditionally
+// so the day admin.js starts checking it, no caller here has to change.
+async function adminPost(adminBase, pathname, body, adminToken) {
   const res = await fetch(`${adminBase}${pathname}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-admin-token': adminToken },
     body: JSON.stringify(body || {}),
   });
   return res.json();
 }
 
-async function adminGet(adminBase, pathname) {
-  const res = await fetch(`${adminBase}${pathname}`);
+async function adminGet(adminBase, pathname, adminToken) {
+  const res = await fetch(`${adminBase}${pathname}`, { headers: { 'x-admin-token': adminToken } });
   return res.json();
 }
+
+// Addendum J: "Turn cap. 5000 bru requests per run, reported as stoppedBecause: 'turns'." Counted
+// locally from the tool calls this process itself dispatches (call.name === 'bru'), not from the
+// admin log -- for the message-loop driver every bru invocation is a tool call this file already
+// sees, so no extra admin round trip is needed to enforce the cap.
+const DEFAULT_MAX_BRU_CALLS = 5000;
 
 // climb({driverName, model, seed, attempt, budgetTokens, maxTurns, outDir, driver?, publicPort?,
 // adminPort?}) -> RunResult
@@ -390,6 +414,9 @@ export async function climb({
   topRung = 99,
   // Addendum H: see the doc comment above climb().
   providerRetryDelayMs = 30_000,
+  // Addendum J: overridable only so a test can trip the cap in a handful of calls instead of
+  // 5000; a real run never passes this and gets the documented default.
+  maxBruCalls = DEFAULT_MAX_BRU_CALLS,
 } = {}) {
   const world = makeWorld(seed);
   const runDir = path.join(outDir, String(model || driverName), String(seed), String(attempt));
@@ -397,7 +424,11 @@ export async function climb({
   await mkdir(sandboxDir, { recursive: true });
   const sandbox = makeSandbox(sandboxDir);
 
-  const server = createServer({ world, publicPort, adminPort });
+  // Addendum J: a fresh, unguessable secret every climb -- never derived from the seed (which is
+  // public, printed on the board and in the skill/spec) and never persisted anywhere the agent's
+  // sandbox can read (not spec.json, not SKILL.md, not the transcript, not result.json).
+  const adminToken = randomBytes(24).toString('hex');
+  const server = createServer({ world, publicPort, adminPort, adminToken });
   const boundPorts = await server.start();
   const baseUrl = `http://127.0.0.1:${boundPorts.publicPort}`;
   const adminBase = `http://127.0.0.1:${boundPorts.adminPort}`;
@@ -409,7 +440,7 @@ export async function climb({
   let driverError = null;
 
   try {
-    await adminPost(adminBase, '/admin/rungs', answerKey(world));
+    await adminPost(adminBase, '/admin/rungs', answerKey(world), adminToken);
 
     await sandbox.writeFile('spec.json', JSON.stringify(toOpenApi(world), null, 2));
     // Addendum A: sloppy mode buries every rule in megabytes of plausible noise; skill.js
@@ -442,6 +473,10 @@ export async function climb({
     // input_tokens once we have one, else null so the pre-first-call check falls back to chars/4.
     let contextEstimate = null;
     let turns = 0;
+    // Addendum J turn cap: real `bru` tool calls this climb has dispatched, independent of
+    // `turns` (model turns/maxTurns) above -- a single model turn can carry several tool calls,
+    // and only the `bru` ones count toward the 5000 cap.
+    let bruCalls = 0;
     let lastSubmissionCount = 0;
     let noToolStreak = 0;
     // Addendum E (kimi-k3, rung 11): two consecutive turns with no tool call AND stop === 'length'
@@ -465,7 +500,7 @@ export async function climb({
       if (preEstimate >= contextLimit * 0.9) {
         const { messages: trimmed, removed } = trimToFraction(messages, contextLimit, 0.6);
         if (removed > 0) {
-          messages = [...trimmed, { role: 'user', content: trimNote(removed) }];
+          messages = [{ role: 'user', content: trimNote(removed) }, ...trimmed];
           trims += 1;
           transcript.push({ turn: turns, trim: { removed, reason: 'proactive', contextLimit, note: trimNote(removed) } });
           contextEstimate = null;
@@ -516,7 +551,7 @@ export async function climb({
           // say so.
           const { messages: trimmed, removed } = trimToFraction(messages, contextLimit, 0.4);
           if (removed > 0) {
-            messages = [...trimmed, { role: 'user', content: trimNote(removed) }];
+            messages = [{ role: 'user', content: trimNote(removed) }, ...trimmed];
             trims += 1;
             transcript.push({
               turn: turns,
@@ -609,6 +644,7 @@ export async function climb({
 
       const toolResults = [];
       for (const call of toolCalls) {
+        if (call.name === 'bru') bruCalls += 1;
         const toolStartedAt = Date.now();
         // eslint-disable-next-line no-await-in-loop
         const outcome = await runTool(sandbox, call);
@@ -619,7 +655,7 @@ export async function climb({
       transcriptEntry.toolResults = toolResults;
 
       // eslint-disable-next-line no-await-in-loop
-      const subsBody = await adminGet(adminBase, '/admin/submissions');
+      const subsBody = await adminGet(adminBase, '/admin/submissions', adminToken);
       const subs = subsBody.data || [];
       if (subs.length > lastSubmissionCount) {
         for (let i = lastSubmissionCount; i < subs.length; i += 1) {
@@ -631,13 +667,22 @@ export async function climb({
               break turnLoop;
             }
             // eslint-disable-next-line no-await-in-loop
-            await adminPost(adminBase, '/admin/rungs/advance');
+            await adminPost(adminBase, '/admin/rungs/advance', undefined, adminToken);
           } else {
             stoppedBecause = 'fail';
             break turnLoop;
           }
         }
         lastSubmissionCount = subs.length;
+      }
+
+      // Addendum J: "Turn cap. 5000 bru requests per run, reported as stoppedBecause: 'turns'."
+      // Checked AFTER the submissions poll just above so a run that happened to submit on its
+      // very last permitted bru call is still recorded as 'top'/'fail' from that submission; this
+      // only fires when the cap is hit without a decisive submission in the same turn.
+      if (bruCalls >= maxBruCalls) {
+        stoppedBecause = 'turns';
+        break turnLoop;
       }
 
       if (turns >= maxTurns) stoppedBecause = 'budget';
@@ -657,14 +702,37 @@ export async function climb({
     // [api] workstream at `GET /admin/violations`. Read defensively -- adminGet never throws on a
     // non-2xx (it just returns whatever JSON body came back), so an instance that doesn't
     // implement the route yet reports 0 rather than crashing the run.
+    //
+    // Addendum J extends the same response with two harness-consumed fields, both read the same
+    // defensive way and both defaulting to empty/zero until [api]'s admin.js emits them: `samples`
+    // (up to 20 `{ua, method, path}` violation samples, persisted here so a violation is still
+    // readable after the server that saw it is gone) and `adminProbes` (a count of requests to the
+    // ADMIN port itself that skipped or forged X-Admin-Token -- never something this harness's own
+    // calls above can produce, since they always send the real token; only a sandboxed script
+    // reaching for the admin port directly can generate one).
     let violations = 0;
+    let violationSamples = [];
+    let adminProbes = 0;
     try {
-      const violationsBody = await adminGet(adminBase, '/admin/violations');
+      const violationsBody = await adminGet(adminBase, '/admin/violations', adminToken);
       if (typeof violationsBody.count === 'number') violations = violationsBody.count;
       else if (Array.isArray(violationsBody.data)) violations = violationsBody.data.length;
+      if (Array.isArray(violationsBody.samples)) {
+        violationSamples = violationsBody.samples.slice(0, 20).map((s) => ({
+          ua: s && s.ua != null ? s.ua : null,
+          method: s && s.method != null ? s.method : null,
+          path: s && s.path != null ? s.path : null,
+        }));
+      }
+      if (typeof violationsBody.adminProbes === 'number') adminProbes = violationsBody.adminProbes;
     } catch {
       violations = 0;
     }
+
+    // Addendum J: "any adminProbe voids the run" -- overrides whatever stoppedBecause the climb
+    // otherwise earned (even 'top'), because a probe means the sandbox reached for admin-level
+    // control (skip rungs, reset state, read the answer key) rather than solving the ladder.
+    if (adminProbes > 0) stoppedBecause = 'voided-admin-probe';
 
     const result = {
       // Addendum G: the board groups rows by ladder version, so every run records the ladder it
@@ -701,6 +769,8 @@ export async function climb({
       // against outside the CLI drivers (which check the tool's own reported model against what
       // was requested) so it stays false here.
       violations,
+      violationSamples,
+      adminProbes,
       resumes: 0,
       modelMismatch: false,
       usageEstimated: false,

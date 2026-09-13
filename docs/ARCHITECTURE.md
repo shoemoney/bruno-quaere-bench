@@ -711,6 +711,17 @@ climbed by one script. The steepening must add kinds of difficulty a script cann
    Arena list is applied by the harness after step k of the plan (announced in the text as "the
    house may change something under you; verify what comes back"). The correct answer accounts
    for the change; the docsolver models it from the announced rule.
+   **Wire contract (ladder 0.5.0):** `world.rungMutations` is an array indexed by rung number;
+   `world.rungMutations[n]` is `null` or `{ n, mutation }` with `mutation` drawn from
+   `RUNG_MUTATION_POOL` (`statusCode`, `dropField`, `renameField`, `retypeField` -- `rejectAuth`
+   and `stuckCursor` are excluded because either one, live for a whole rung, makes that rung
+   unpassable by any correct client), and when `POST /admin/rungs/advance` moves the current rung
+   to `n` the server REPLACES its active mutation set with that entry's mutation (or clears it),
+   so the change is live from the rung's first request and no earlier rung's mutation leaks
+   forward. `src/ladder/reference.js`'s `climb()` drives that advance in step with itself, so the
+   reference gate proves every rung is passable with its own announced mutation applied. The
+   house rules every 0.5.0 key depends on are enumerated in `docs/RULES-0.5.md`; nothing in a key
+   may turn on a rule absent from that file.
 4. **State-machine and signing chains.** Rungs 50+ require compose, render (202 + polling),
    publish (HMAC with the canonical string from the skill), and ETag-conditional updates in the
    same rung, and at least one 409 recovery.

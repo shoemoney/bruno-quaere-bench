@@ -9,6 +9,7 @@
 // feeds an artifact, a spec, a skill, or a rung (ARCHITECTURE.md's determinism rule).
 
 import { mkdir, writeFile, readFile, cp, chmod } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 import { makeWorld, VERSION as LADDER_VERSION } from '../world.js';
@@ -131,19 +132,30 @@ async function resolveCliAdapter(name) {
 // misc helpers shared with run.js's shape (kept local: run.js's are not exported)
 // ---------------------------------------------------------------------------
 
-async function adminPost(adminBase, pathname, body) {
+// Addendum J admin-port hardening: same contract as run.js's pair -- every admin call carries the
+// per-run X-Admin-Token, sent unconditionally so admin.js's eventual enforcement needs no caller
+// here to change. Never persisted to the sandbox or TASK.md (task-md.js's signature has no room
+// for it, and nothing here passes it in).
+async function adminPost(adminBase, pathname, body, adminToken) {
   const res = await fetch(`${adminBase}${pathname}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-admin-token': adminToken },
     body: JSON.stringify(body || {}),
   });
   return res.json();
 }
 
-async function adminGet(adminBase, pathname) {
-  const res = await fetch(`${adminBase}${pathname}`);
+async function adminGet(adminBase, pathname, adminToken) {
+  const res = await fetch(`${adminBase}${pathname}`, { headers: { 'x-admin-token': adminToken } });
   return res.json();
 }
+
+// Addendum J: "Turn cap. 5000 bru requests per run, reported as stoppedBecause: 'turns'." Unlike
+// run.js (which sees every `bru` tool call directly), a CLI-driven climb only ever observes the
+// admin log, so the cap is enforced by supervise.js's own poll loop (it already fetches
+// /admin/submissions every tick; Addendum G's own note that turns are counted at the API, not the
+// shim, applies here too) and surfaces as `killedFor: 'turns'`.
+const DEFAULT_MAX_BRU_TURNS = 5000;
 
 async function copyCollection(sandboxDir, collectionDir) {
   await mkdir(collectionDir, { recursive: true });
@@ -230,6 +242,9 @@ export async function climb({
   skillBytes = 5_000_000,
   pollMs = 2000,
   topRung = 99,
+  // Addendum J: overridable only so a test can trip the cap in a handful of submissions instead
+  // of 5000; a real run never passes this and gets the documented default.
+  maxBruTurns = DEFAULT_MAX_BRU_TURNS,
 } = {}) {
   const world = makeWorld(seed);
   const label = model || (cliName ? `cli-${cliName}` : 'cli-fake');
@@ -244,7 +259,10 @@ export async function climb({
 
   await installBruShim(sandboxDir);
 
-  const server = createServer({ world, publicPort, adminPort });
+  // Addendum J: a fresh, unguessable secret every climb -- never derived from the seed and never
+  // written anywhere the CLI's own sandbox (or its HOUSE-RULES.md/TASK.md) can read it.
+  const adminToken = randomBytes(24).toString('hex');
+  const server = createServer({ world, publicPort, adminPort, adminToken });
   const boundPorts = await server.start();
   const baseUrl = `http://127.0.0.1:${boundPorts.publicPort}`;
   const adminBase = `http://127.0.0.1:${boundPorts.adminPort}`;
@@ -264,7 +282,7 @@ export async function climb({
   let resumes = 0;
 
   try {
-    await adminPost(adminBase, '/admin/rungs', answerKey(world));
+    await adminPost(adminBase, '/admin/rungs', answerKey(world), adminToken);
 
     await writeFile(path.join(sandboxDir, 'spec.json'), JSON.stringify(toOpenApi(world), null, 2));
     // HOUSE-RULES.md, not SKILL.md: a real CLI's own runtime auto-loads a file it recognizes by
@@ -330,9 +348,11 @@ export async function climb({
         // default to the sandbox, since that's where TASK.md/spec.json/HOUSE-RULES.md live.
         cwd: spawnSpec.cwd || sandboxDir,
         adminBase,
+        adminToken,
         topRung,
         wallMsLeft,
         pollMs,
+        maxBruTurns,
         // Addendum G: the baseline is per RUN, not per spawn -- `allSubmissions` is this climb's
         // own running total across every earlier spawn/resume, so a resume never re-reacts to
         // (re-advances for, or re-fails on) a submission an earlier spawn already handled.
@@ -371,7 +391,10 @@ export async function climb({
         outcome.killedFor === 'fail' ||
         outcome.killedFor === 'top' ||
         outcome.killedFor === 'wall' ||
-        outcome.killedFor === 'overshoot';
+        outcome.killedFor === 'overshoot' ||
+        // Addendum J: the turn cap uses the same drain-then-kill (gracefulKillTree) as fall/top/
+        // wall/overshoot, so it gets the same settle-and-retry usage read as they do.
+        outcome.killedFor === 'turns';
       let usage;
       try {
         usage = await parseUsageSettling(adapter, outcome.stdout, homeDir, supervisedKill);
@@ -424,6 +447,11 @@ export async function climb({
       }
       if (outcome.killedFor === 'wall') {
         stoppedBecause = 'time';
+        break;
+      }
+      // Addendum J: "Turn cap. 5000 bru requests per run, reported as stoppedBecause: 'turns'."
+      if (outcome.killedFor === 'turns') {
+        stoppedBecause = 'turns';
         break;
       }
       if (outcome.killedFor === 'fail' || (lastNew && lastNew.pass === false)) {
@@ -490,14 +518,32 @@ export async function climb({
     await copyCollection(sandboxDir, collectionDir);
     const trap = await computeTrap(world, collectionDir);
 
+    // Addendum J extends /admin/violations with `samples` ({ua, method, path}, up to 20, kept
+    // here so a violation is still readable once the server is gone) and `adminProbes` (unauthorized
+    // hits on the ADMIN port itself -- distinct from `violations`, which is public-API traffic with
+    // a non-bru User-Agent). Read defensively, same as `violations` above: both default to
+    // empty/zero until [api]'s admin.js emits them.
     let violations = 0;
+    let violationSamples = [];
+    let adminProbes = 0;
     try {
-      const violationsBody = await adminGet(adminBase, '/admin/violations');
+      const violationsBody = await adminGet(adminBase, '/admin/violations', adminToken);
       if (typeof violationsBody.count === 'number') violations = violationsBody.count;
       else if (Array.isArray(violationsBody.data)) violations = violationsBody.data.length;
+      if (Array.isArray(violationsBody.samples)) {
+        violationSamples = violationsBody.samples.slice(0, 20).map((s) => ({
+          ua: s && s.ua != null ? s.ua : null,
+          method: s && s.method != null ? s.method : null,
+          path: s && s.path != null ? s.path : null,
+        }));
+      }
+      if (typeof violationsBody.adminProbes === 'number') adminProbes = violationsBody.adminProbes;
     } catch {
       violations = 0;
     }
+
+    // Addendum J: "any adminProbe voids the run" -- overrides whatever stoppedBecause was earned.
+    if (adminProbes > 0) stoppedBecause = 'voided-admin-probe';
 
     // Addendum G: "Turns are counted at the API, not by the shim." codex's native round-three run
     // reported 0 turns because its shell didn't inherit the shim's PATH -- the shim never saw a
@@ -511,7 +557,7 @@ export async function climb({
 
     let turns = 0;
     try {
-      const logBody = await adminGet(adminBase, '/admin/log');
+      const logBody = await adminGet(adminBase, '/admin/log', adminToken);
       const entries = Array.isArray(logBody.data) ? logBody.data : [];
       turns = entries.filter((e) => typeof e.ua === 'string' && e.ua.startsWith('bruno-runtime/')).length;
     } catch {
@@ -547,6 +593,8 @@ export async function climb({
       stoppedBecause,
       driverError: null,
       violations,
+      violationSamples,
+      adminProbes,
       resumes,
       modelMismatch,
       usageEstimated,
