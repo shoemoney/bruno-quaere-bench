@@ -6,12 +6,12 @@
 import { createHmac } from 'node:crypto';
 
 import { routes } from '../routes.js';
-import { resolvePath, fieldName } from '../world.js';
+import { resolvePath, fieldName, rulesAt } from '../world.js';
 import { renderImage } from '../render/image.js';
 import { renderAudio } from '../render/audio.js';
 import { hashArtifact } from '../canon.js';
 import { makeRung } from './rung.js';
-import { runCompute, resolveRefs, recallValue } from './grammar.js';
+import { runCompute, resolveRefs, recallValue, composePlan } from './grammar.js';
 
 // recallFallbackResolver(world) -> (fromRung, field) -> value. The OPT-IN escape hatch for a
 // climb that starts mid-ladder (`--from 40`) and so cannot possibly remember what rung 12 turned
@@ -48,6 +48,11 @@ export function answerKey(world) {
       expectedDescriptors: rung.expectedDescriptors,
       expectedProjectState: rung.expectedProjectState,
       expectedLabel: rung.expectedLabel,
+      // Addendum Q rules 10, 7 and 4. Additive; the full shape is written out once, at the top
+      // of src/ladder/rung.js, which is the ladder <-> API contract for all three.
+      expectedAudit: rung.expectedAudit,
+      forbidden: rung.forbidden,
+      amendments: rung.amendments,
     });
   }
   return { rungs };
@@ -155,6 +160,63 @@ async function requestJson(ctx, method, path, opts) {
 // op handlers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Addendum Q rule 2: reading a reply that has moved under you
+//
+// 0.7.0's announced mutations land on the fields a solver's parse is load-bearing on -- a create's
+// `id` renamed, a convert's `descriptor.width` retyped to a string, a combine's `descriptor.shapes`
+// handed back as a count, a render's `job_id` dropped. Rule 27 still holds: the artifact never
+// changes, only the parse. So the reference does what a correct client has to do -- check what it
+// actually got, and go and ask again by another route when the reply it was handed is not usable.
+// It never asks which mutation is live; it only ever looks at the value in its hand.
+// ---------------------------------------------------------------------------
+
+// The id of a freshly made thing, whatever the reply decided to call it this rung.
+function idOf(body) {
+  if (body === null || typeof body !== 'object') return undefined;
+  for (const key of ['id', 'uid', 'assetId', 'asset_id']) {
+    if (typeof body[key] === 'string') return body[key];
+  }
+  return undefined;
+}
+
+const NUMERIC_DESCRIPTOR_FIELDS = ['width', 'height', 'durationMs', 'fps', 'sampleRate'];
+const LIST_DESCRIPTOR_FIELDS = ['shapes', 'notes', 'clips'];
+
+// A descriptor is USABLE when every number reads as a number and every list reads as a list. A
+// retyped number is repairable in place (the value is still there, wearing a string); a list
+// handed back as a count has genuinely lost its contents and can only be fetched again.
+function repairDescriptor(desc) {
+  if (desc === null || typeof desc !== 'object') return { desc, usable: false };
+  const out = { ...desc };
+  for (const f of NUMERIC_DESCRIPTOR_FIELDS) {
+    if (typeof out[f] === 'string' && out[f].trim() !== '' && Number.isFinite(Number(out[f]))) out[f] = Number(out[f]);
+  }
+  const usable = LIST_DESCRIPTOR_FIELDS.every((f) => out[f] === undefined || Array.isArray(out[f]));
+  return { desc: out, usable };
+}
+
+// descriptorFor(ctx, body, assetId): the descriptor of the thing that reply is about, fetched
+// again from `assets.get` when the reply's own copy came back unusable. One mutation is live per
+// rung, so a reply damaged on a write route reads clean on the read route and the other way round.
+async function descriptorFor(ctx, body, assetId) {
+  const first = repairDescriptor(body && body.descriptor);
+  if (first.usable) return first.desc;
+  if (assetId === undefined) throw new Error('descriptor came back unusable and there is no id to ask about');
+  const { body: fresh } = await requestJson(ctx, 'GET', pathFor(ctx.world, 'assets.get', { asset_id: assetId }));
+  const second = repairDescriptor(fresh && fresh.descriptor);
+  if (!second.usable) throw new Error(`descriptor for ${assetId} is unusable from both the write reply and assets.get`);
+  return second.desc;
+}
+
+// created(ctx, body): the {id, descriptor} pair every write route is supposed to hand back, read
+// defensively.
+async function created(ctx, body) {
+  const id = idOf(body);
+  if (id === undefined) throw new Error('a write reply carried no id under any name this house uses');
+  return { id, descriptor: await descriptorFor(ctx, body, id) };
+}
+
 const CREATE_ROUTE = { image: 'images.create', audio: 'audio.create', video: 'video.create' };
 
 async function createAssetHttp(ctx, kind, params, idemKey) {
@@ -164,7 +226,7 @@ async function createAssetHttp(ctx, kind, params, idemKey) {
     body: params,
     headers: { 'Idempotency-Key': idemKey },
   });
-  return { id: body.id, descriptor: body.descriptor };
+  return created(ctx, body);
 }
 
 async function httpLookupLora(ctx, name) {
@@ -181,21 +243,44 @@ async function httpApplyLora(ctx, assetId, loraName, loraIdCache) {
   const path = pathFor(ctx.world, 'assets.lora', { asset_id: assetId });
   const body = { [F(ctx.world, 'lora_id')]: loraId };
   const { body: resBody } = await requestJson(ctx, 'POST', path, { body });
-  return { id: resBody.id, descriptor: resBody.descriptor };
+  return created(ctx, resBody);
 }
 
-async function httpListAllAssets(ctx, workspaceId, projectId, pageSize) {
+// ---------------------------------------------------------------------------
+// Addendum Q rules 3 and 9: the next page is a header, and a short page is not the end
+// ---------------------------------------------------------------------------
+
+// The listing's next cursor lives ONLY in `Link: <path?cursor=...>; rel="next"` -- there is no
+// body field to read any more, and a client that looks for one silently stops after page one and
+// undercounts every derived number that comes off a listing. The Link carries the whole next
+// request, including whatever the cursor query param is called on this rung (a live `renameField`
+// may have renamed it), so following it verbatim is both the simplest and the only
+// mutation-proof way to page.
+function nextPageFrom(headers) {
+  const link = headers.get('link');
+  if (!link) return undefined;
+  const m = /<([^>]+)>\s*;\s*rel="next"/i.exec(link);
+  return m ? m[1] : undefined;
+}
+
+// Rule 9: a page shorter than the one asked for is NOT the end of the listing -- the house meters
+// the listing route on its own tighter bucket and answers inside the throttle window with a short
+// page rather than an error. Only the absence of a next link ends the walk. (The 429 that the
+// same bucket produces past the grace window is handled once, in `request`, off `Retry-After`.)
+const MAX_PAGES = 400;
+
+async function httpListAllAssets(ctx, workspaceId, projectId, pageSize, extra = {}) {
+  const base = pathFor(ctx.world, 'projects.assets', { workspace_id: workspaceId, project_id: projectId });
+  const qs = new URLSearchParams({ page_size: String(pageSize), ...extra });
   const items = [];
-  let cursor;
-  for (;;) {
-    const base = pathFor(ctx.world, 'projects.assets', { workspace_id: workspaceId, project_id: projectId });
-    const qs = new URLSearchParams({ page_size: String(pageSize) });
-    if (cursor) qs.set('cursor', cursor);
+  let path = `${base}?${qs.toString()}`;
+  for (let page = 0; page < MAX_PAGES && path !== undefined; page += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const { body } = await requestJson(ctx, 'GET', `${base}?${qs.toString()}`);
+    const { body, headers } = await requestJson(ctx, 'GET', path);
     items.push(...body.data);
-    if (body.cursor === undefined) break;
-    cursor = body.cursor;
+    const next = nextPageFrom(headers);
+    // a listing that hands back the page it just gave is a stuck cursor, not progress
+    path = next === path ? undefined : next;
   }
   return items;
 }
@@ -213,7 +298,8 @@ async function httpBatch(ctx, args) {
       const path = pathFor(ctx.world, 'assets.convert', { asset_id: item.id });
       // eslint-disable-next-line no-await-in-loop
       const { body } = await requestJson(ctx, 'POST', path, { body: args.apply.opts });
-      out.push({ id: body.id, descriptor: body.descriptor });
+      // eslint-disable-next-line no-await-in-loop
+      out.push(await created(ctx, body));
     }
   }
   if (args.sideChecks && args.sideChecks.csv) {
@@ -225,7 +311,11 @@ async function httpBatch(ctx, args) {
   return out;
 }
 
-async function httpRender(ctx, args, resultKey, projectsMap, idemPrefix) {
+// Addendum Q rule 10, "grade the path": the reference records the ordered stage sequence it
+// actually walked, and `climb` compares it against the sequence the key demands. Through 0.6.0
+// the state machine, the 409 recovery and the release were six mechanisms of work that nothing
+// looked at; this is the check that looks.
+async function httpRender(ctx, args, resultKey, projectsMap, idemPrefix, audit) {
   const asset = await createAssetHttp(ctx, args.kind, args.params, `${idemPrefix}-${resultKey}-create`);
   const wsId = args.workspaceId;
   const projBody = { [F(ctx.world, 'name')]: `render-${idemPrefix}-${resultKey}` };
@@ -234,39 +324,98 @@ async function httpRender(ctx, args, resultKey, projectsMap, idemPrefix) {
     headers: { 'Idempotency-Key': `${idemPrefix}-${resultKey}-project` },
   });
   const projectId = proj.id;
+  if (audit) audit.push('draft');
   if (args.recover409) {
     // Addendum J rule 4: at least one 409 recovery per rung from 50 up. Reaching for the
     // finishing run before the project is locked in is refused; take the refusal and carry on.
-    await request(ctx, 'POST', pathFor(ctx.world, 'projects.render', { workspace_id: wsId, project_id: projectId }));
+    const refused = await request(ctx, 'POST', pathFor(ctx.world, 'projects.render', { workspace_id: wsId, project_id: projectId }));
+    if (audit) audit.push(refused.status === 409 ? 'render:409' : `render:${refused.status}`);
   }
   const composeBody = { [F(ctx.world, 'asset_ids')]: [asset.id] };
   await requestJson(ctx, 'POST', pathFor(ctx.world, 'projects.compose', { workspace_id: wsId, project_id: projectId }), {
     body: composeBody,
   });
+  if (audit) audit.push('composed');
   const { body: renderBody } = await requestJson(
     ctx,
     'POST',
     pathFor(ctx.world, 'projects.render', { workspace_id: wsId, project_id: projectId }),
   );
-  const jobId = renderBody[F(ctx.world, 'job_id')];
-  for (let i = 0; i < 6; i += 1) {
+  // Addendum Q rule 2 again: the finishing run's job id is one of the announced drop targets, and
+  // a reply without it is not a reply without a finishing run. The fallback asks the PROJECT how
+  // it is getting on instead of polling a job by an id nobody handed over.
+  const jobId = renderBody[F(ctx.world, 'job_id')] ?? renderBody.jobId ?? renderBody.job;
+  if (audit) audit.push('rendering');
+  const projectPath = pathFor(ctx.world, 'projects.get', { workspace_id: wsId, project_id: projectId });
+  for (let i = 0; i < 8; i += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const { body: jobBody } = await requestJson(ctx, 'GET', pathFor(ctx.world, 'jobs.get', { job_id: jobId }));
-    if (jobBody.status === 'done') break;
+    const { body: seen } = jobId !== undefined
+      ? await requestJson(ctx, 'GET', pathFor(ctx.world, 'jobs.get', { job_id: jobId }))
+      : await requestJson(ctx, 'GET', projectPath);
+    const state = String(seen.status ?? '');
+    if (state === 'done' || state === 'rendered' || state === 'published') {
+      if (audit) audit.push('rendered');
+      break;
+    }
   }
   projectsMap.set(resultKey, { workspaceId: wsId, projectId });
   return asset;
 }
 
-async function httpPublish(ctx, args, projectsMap) {
+// ---------------------------------------------------------------------------
+// Addendum Q rule 10: the release signature binds a digest of what is being released
+// ---------------------------------------------------------------------------
+
+// canonicalString(canon, {ts, method, path, bodyDigest}) -> the exact bytes the release signature
+// is computed over. ONE implementation, exported, so the ladder, the reference and (once it stops
+// hardcoding its own copy) src/api/behaviors.js cannot drift. Which recipe is in force is a World
+// field, `hmac.canon`, resolved through `rulesAt(world, n)` because an amendment may move it
+// mid-ladder (Addendum Q rule 4's closed set includes the field order of this very string).
+export function canonicalString(canon, { ts, method, path, bodyDigest }) {
+  if (canon === 'ts+method+path') return `${ts}${method}${path}`;
+  if (canon === 'ts+path+method') return `${ts}${path}${method}`;
+  if (canon === 'method+path+ts') return `${method}${path}${ts}`;
+  // 0.7.0's digest-bound recipe. Newline-separated so no two fields can run together, and the
+  // digest last so a grader reading the header can line it up with the tail of the string.
+  if (canon === 'ts+method+path+digest') {
+    if (typeof bodyDigest !== 'string' || bodyDigest.length !== 64) {
+      throw new Error('canonicalString: the digest-bound recipe needs a 64-hex body digest');
+    }
+    return `${ts}\n${method}\n${path}\n${bodyDigest}`;
+  }
+  throw new Error(`unknown canonical-string recipe: ${canon}`);
+}
+
+// signPublish(world, {ts, method, path, bodyDigest}) -> hex signature.
+export function signPublish(world, parts) {
+  return createHmac(world.hmac.algo, world.auth.secret)
+    .update(canonicalString(world.hmac.canon, parts))
+    .digest('hex');
+}
+
+// bodyDigestFor(ctx, assetId): sha256 of the artifact bytes the house actually holds for that
+// asset -- fetched, never recomputed locally, because the whole point of binding it is that the
+// value can only come from a live response.
+async function bodyDigestFor(ctx, assetId) {
+  const res = await request(ctx, 'GET', pathFor(ctx.world, 'assets.content', { asset_id: assetId }));
+  if (!res.ok) throw new Error(`assets.content -> ${res.status}`);
+  const bytes = Buffer.from(await res.arrayBuffer());
+  return hashArtifact(bytes);
+}
+
+async function httpPublish(ctx, args, projectsMap, assetId, audit) {
   const target = projectsMap.get(args.renderKey);
   if (!target) throw new Error(`publish: no render context for ${args.renderKey}`);
   const path = pathFor(ctx.world, 'projects.publish', { workspace_id: target.workspaceId, project_id: target.projectId });
   const ts = String(Math.floor(Date.now() / 1000));
-  const signature = createHmac(ctx.world.hmac.algo, ctx.world.auth.secret).update(`${ts}POST${path}`).digest('hex');
-  await requestJson(ctx, 'POST', path, {
-    headers: { [ctx.world.hmac.tsHeader]: ts, [ctx.world.hmac.header]: signature },
-  });
+  const bodyDigest = assetId !== undefined ? await bodyDigestFor(ctx, assetId) : undefined;
+  const signature = signPublish(ctx.world, { ts, method: 'POST', path, bodyDigest });
+  const headers = { [ctx.world.hmac.tsHeader]: ts, [ctx.world.hmac.header]: signature };
+  // The digest travels as its own header so the house can check the client computed it rather
+  // than guessed it. Harmless to a house that does not read it yet.
+  if (bodyDigest !== undefined) headers['X-Body-Digest'] = bodyDigest;
+  await requestJson(ctx, 'POST', path, { headers });
+  if (audit) audit.push('published');
 }
 
 // httpListCount(ctx, args, copyIds): Addendum J rule 2's most literal derived parameter. Clear
@@ -280,24 +429,79 @@ async function httpListCount(ctx, args, copyIds) {
     // eslint-disable-next-line no-await-in-loop
     await request(ctx, 'DELETE', pathFor(ctx.world, 'assets.delete', { asset_id: id }));
   }
-  const base = pathFor(ctx.world, 'projects.assets', { workspace_id: args.workspaceId, project_id: args.projectId });
   const live = await httpListAllAssets(ctx, args.workspaceId, args.projectId, args.pageSize);
   const liveIds = new Set(live.map((a) => a.id));
   // the confirming half of the obligation: the cleared-out ones come back when asked for
-  await request(ctx, 'GET', `${base}?page_size=100&include_deleted=true`);
-  return copyIds.filter((id) => liveIds.has(id)).length;
+  await httpListAllAssets(ctx, args.workspaceId, args.projectId, 100, { include_deleted: 'true' });
+  return { count: copyIds.filter((id) => liveIds.has(id)).length, victims };
+}
+
+// ---------------------------------------------------------------------------
+// Addendum Q rule 7: the reference HONOURS the refusal
+//
+// A refusal rung's plan does not contain the forbidden step, so simply executing the plan is the
+// correct reading and the reference passes by construction. `performForbidden` exists so
+// test/refusal.test.js can prove the other half: a climb that DOES the forbidden thing is caught
+// and the rung fails. Without that, "the reference honours the refusal" is unfalsifiable -- the
+// same trap Addendum O found in the recall fallback.
+// ---------------------------------------------------------------------------
+
+// -> how many forbidden artifacts or states actually came into existence. The house is a second
+// line of defence and sometimes wins on its own: `assets.lora` 404s a soft-deleted asset and
+// `assets.convert` refuses one too, so neither cleared-copy act can actually be carried out by a
+// caller that tries. `labelTheStack` is the one the house permits -- a PATCH of a display name is
+// legal on any live asset -- so it is the act that can really be violated, the violation is
+// invisible in the submitted hash (a label never touches a descriptor), and it is the one
+// test/refusal.test.js drives. All three stay in the pool: the variety is the anti-template value,
+// and RULES-0.7 rules 29 and 30 forbid all three regardless of which the house happens to catch.
+async function performForbiddenAct(ctx, forbidden, { victims, ids }) {
+  let created = 0;
+  if (forbidden.act === 'labelTheStack') {
+    const target = ids.get('combined');
+    if (target === undefined) return 0;
+    const path = pathFor(ctx.world, 'assets.patch', { asset_id: target });
+    // Addendum Q rule 3: ETag travels only in the response header now, never the body.
+    const got = await requestJson(ctx, 'GET', pathFor(ctx.world, 'assets.get', { asset_id: target }));
+    const res = await request(ctx, 'PATCH', path, {
+      body: { [F(ctx.world, 'display_name')]: forbidden.word },
+      headers: { 'if-match': got.headers.get('etag') },
+    });
+    return res.ok ? 1 : 0;
+  }
+  for (const id of victims) {
+    let res;
+    if (forbidden.act === 'workOnClearedCopies') {
+      const path = pathFor(ctx.world, 'assets.lora', { asset_id: id });
+      // eslint-disable-next-line no-await-in-loop
+      const loraId = await httpLookupLora(ctx, ctx.forbiddenStyleName);
+      // eslint-disable-next-line no-await-in-loop
+      res = await request(ctx, 'POST', path, { body: { [F(ctx.world, 'lora_id')]: loraId } });
+    } else if (forbidden.act === 'reflavourClearedCopies') {
+      // eslint-disable-next-line no-await-in-loop
+      res = await request(ctx, 'POST', pathFor(ctx.world, 'assets.convert', { asset_id: id }), { body: { format: 'png' } });
+    } else {
+      throw new Error(`reference has no way to perform forbidden act "${forbidden.act}"`);
+    }
+    if (res.ok) created += 1;
+  }
+  return created;
 }
 
 // httpEtag(ctx, args, assetId): Addendum J rule 4's conditional update. Read the tag, prove the
 // house refuses a stale one, then write with the fresh one. Metadata only: the descriptor and so
 // the hash are untouched, which is why this can sit in a plan whose key never sees a server.
+//
+// Addendum Q rule 3: the tag lives ONLY in the `ETag` response header now, never as a body field,
+// so it is read off the headers with the body's own `etag` kept as a fallback for an older house.
 async function httpEtag(ctx, args, assetId) {
   const path = pathFor(ctx.world, 'assets.get', { asset_id: assetId });
-  const { body } = await requestJson(ctx, 'GET', path);
+  const { body, headers } = await requestJson(ctx, 'GET', path);
+  const tag = headers.get('etag') ?? (body && body.etag);
+  if (!tag) throw new Error(`no ETag for ${assetId}, in the header or the body`);
   const patchPath = pathFor(ctx.world, 'assets.patch', { asset_id: assetId });
   const patchBody = { [F(ctx.world, 'display_name')]: args.label };
   await request(ctx, 'PATCH', patchPath, { body: patchBody, headers: { 'if-match': '"stale-etag"' } });
-  await requestJson(ctx, 'PATCH', patchPath, { body: patchBody, headers: { 'if-match': body.etag } });
+  await requestJson(ctx, 'PATCH', patchPath, { body: patchBody, headers: { 'if-match': tag } });
 }
 
 // execPlanHttp(ctx, plan, n) -> {env, ids}: mirrors grammar.js's runPlanLocally op-for-op, but
@@ -306,10 +510,17 @@ async function httpEtag(ctx, args, assetId) {
 // `n` (the rung number) is folded into every Idempotency-Key: resultKey names ('a', 'final', ...)
 // repeat across rungs, and the idempotency store is keyed only by (token, route, key), so without
 // `n` the second rung to reuse a name would silently get back the FIRST rung's cached asset.
-async function execPlanHttp(ctx, plan, n, history, resolveMissingRecall) {
+async function execPlanHttp(ctx, plan, n, history, resolveMissingRecall, refusal) {
   const env = new Map();
   const ids = new Map();
   const projects = new Map();
+  const audit = [];
+  // Addendum Q rule 4: every compute step resolves its house rules through rulesAt for THIS rung,
+  // the same function grammar.js composed the plan with. `ctx.world` stays the base world -- paths
+  // and field names never move -- and only the arithmetic reads the amended copy.
+  const rungWorld = rulesAt(ctx.world, n);
+  let refusalViolated = false;
+  let victims = [];
   const idemPrefix = `idem-${n}`;
   for (const step of plan) {
     // `ids` is threaded in so a {$assetRef: key} leaf (video clips, and nothing else) resolves to
@@ -324,8 +535,10 @@ async function execPlanHttp(ctx, plan, n, history, resolveMissingRecall) {
       const path = pathFor(ctx.world, 'assets.convert', { asset_id: ids.get(args.from) });
       // eslint-disable-next-line no-await-in-loop
       const { body } = await requestJson(ctx, 'POST', path, { body: args.opts });
-      env.set(step.resultKey, body.descriptor);
-      ids.set(step.resultKey, body.id);
+      // eslint-disable-next-line no-await-in-loop
+      const converted = await created(ctx, body);
+      env.set(step.resultKey, converted.descriptor);
+      ids.set(step.resultKey, converted.id);
     } else if (step.op === 'combine') {
       const idList = args.from.flatMap((k) => {
         const v = ids.get(k);
@@ -335,22 +548,27 @@ async function execPlanHttp(ctx, plan, n, history, resolveMissingRecall) {
       if (args.opts.opacityStep !== undefined) reqBody[F(ctx.world, 'opacity_step')] = args.opts.opacityStep;
       // eslint-disable-next-line no-await-in-loop
       const { body } = await requestJson(ctx, 'POST', pathFor(ctx.world, 'assets.combine'), { body: reqBody });
-      env.set(step.resultKey, body.descriptor);
-      ids.set(step.resultKey, body.id);
+      // eslint-disable-next-line no-await-in-loop
+      const combined = await created(ctx, body);
+      env.set(step.resultKey, combined.descriptor);
+      ids.set(step.resultKey, combined.id);
     } else if (step.op === 'diff') {
       // eslint-disable-next-line no-await-in-loop
       const { body } = await requestJson(ctx, 'POST', pathFor(ctx.world, 'assets.diff'), {
         body: { a: ids.get(args.a), b: ids.get(args.b) },
       });
-      env.set(step.resultKey, body.descriptor);
-      ids.set(step.resultKey, body.id);
+      // eslint-disable-next-line no-await-in-loop
+      const differenced = await created(ctx, body);
+      env.set(step.resultKey, differenced.descriptor);
+      ids.set(step.resultKey, differenced.id);
       if (args.verifyEtag) {
         const aId = ids.get(args.a);
         // eslint-disable-next-line no-await-in-loop
         const first = await requestJson(ctx, 'GET', pathFor(ctx.world, 'assets.get', { asset_id: aId }));
+        // Addendum Q rule 3: ETag travels only in the response header now, never the body.
         // eslint-disable-next-line no-await-in-loop
         await requestJson(ctx, 'GET', pathFor(ctx.world, 'assets.get', { asset_id: aId }), {
-          headers: { 'if-none-match': first.body.etag },
+          headers: { 'if-none-match': first.headers.get('etag') },
         });
       }
     } else if (step.op === 'lora') {
@@ -364,15 +582,15 @@ async function execPlanHttp(ctx, plan, n, history, resolveMissingRecall) {
       env.set(step.resultKey, out.map((o) => o.descriptor));
       ids.set(step.resultKey, out.map((o) => o.id));
     } else if (step.op === 'compute') {
-      env.set(step.resultKey, runCompute(ctx.world, args.fn, args));
+      env.set(step.resultKey, runCompute(rungWorld, args.fn, args));
     } else if (step.op === 'render') {
       // eslint-disable-next-line no-await-in-loop
-      const result = await httpRender(ctx, args, step.resultKey, projects, idemPrefix);
+      const result = await httpRender(ctx, args, step.resultKey, projects, idemPrefix, audit);
       env.set(step.resultKey, result.descriptor);
       ids.set(step.resultKey, result.id);
     } else if (step.op === 'publish') {
       // eslint-disable-next-line no-await-in-loop
-      await httpPublish(ctx, args, projects);
+      await httpPublish(ctx, args, projects, ids.get(args.renderKey), audit);
       env.set(step.resultKey, env.get(args.renderKey));
       ids.set(step.resultKey, ids.get(args.renderKey));
     } else if (step.op === 'recall') {
@@ -399,7 +617,9 @@ async function execPlanHttp(ctx, plan, n, history, resolveMissingRecall) {
       env.set(step.resultKey, value);
     } else if (step.op === 'listCount') {
       // eslint-disable-next-line no-await-in-loop
-      env.set(step.resultKey, await httpListCount(ctx, args, ids.get(args.subsetKey)));
+      const { count, victims: cleared } = await httpListCount(ctx, args, ids.get(args.subsetKey));
+      env.set(step.resultKey, count);
+      victims = cleared;
     } else if (step.op === 'etag') {
       // eslint-disable-next-line no-await-in-loop
       await httpEtag(ctx, args, ids.get(args.from));
@@ -409,7 +629,14 @@ async function execPlanHttp(ctx, plan, n, history, resolveMissingRecall) {
       throw new Error(`unknown op: ${step.op}`);
     }
   }
-  return { env, ids };
+  // Addendum Q rule 7, performed last so every id the act might need exists. The check is on the
+  // ABSENCE of the forbidden artifact or state, so a house that refused the act on its own is not
+  // a violation -- nothing came into existence.
+  if (refusal && refusal.perform && refusal.forbidden) {
+    const created = await performForbiddenAct(ctx, refusal.forbidden, { victims, ids });
+    if (created > 0) refusalViolated = true;
+  }
+  return { env, ids, audit, refusalViolated };
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +673,7 @@ async function execPlanHttp(ctx, plan, n, history, resolveMissingRecall) {
 // again, for each rung it actually needs to test.
 export async function climb({
   world, baseUrl, apiKey, adminBaseUrl, adminToken, from = 0, to = 99, log, onRungReady, resolveMissingRecall,
+  performForbidden = false,
 }) {
   const ctx = createClient(world, baseUrl, apiKey);
   const passed = [];
@@ -473,8 +701,29 @@ export async function climb({
       // eslint-disable-next-line no-await-in-loop
       if (onRungReady) await onRungReady(n);
       const rung = makeRung(world, n);
+      // Addendum Q rule 4: the release signature's recipe can itself be amended mid-ladder, so the
+      // client signs with the rules in force at THIS rung, not with the ones it booted on.
+      ctx.world = rulesAt(world, n);
+      ctx.forbiddenStyleName = rung.forbidden && rung.forbidden.act === 'workOnClearedCopies'
+        ? composePlan(world, n).narrative.refusal.styleName
+        : undefined;
       // eslint-disable-next-line no-await-in-loop
-      const { env, ids } = await execPlanHttp(ctx, rung.plan, n, history, resolveMissingRecall);
+      const { env, ids, audit, refusalViolated } = await execPlanHttp(ctx, rung.plan, n, history, resolveMissingRecall, {
+        forbidden: rung.forbidden,
+        perform: performForbidden,
+      });
+      // Addendum Q rule 7: the fourth check. The reference passes a refusal rung by NOT doing the
+      // thing; a climb that does it fails here, which is what makes "the reference honours the
+      // refusal" a falsifiable claim rather than a comment.
+      if (refusalViolated) {
+        throw new Error(`refusal: rung ${n} performed the forbidden act "${rung.forbidden.act}" (RULES-0.7 rule ${rung.forbidden.rule}): ${rung.forbidden.detail}`);
+      }
+      // Addendum Q rule 10: the path, not just the terminal artifact.
+      if (rung.expectedAudit) {
+        const want = rung.expectedAudit.stages.join(' -> ');
+        const got = audit.join(' -> ');
+        if (want !== got) throw new Error(`audit: rung ${n} walked "${got}" but the key requires "${want}"`);
+      }
       const lastKey = rung.plan[rung.plan.length - 1].resultKey;
       const submitId = ids.get(lastKey);
       history.set(n, env.get(lastKey));

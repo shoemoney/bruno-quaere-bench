@@ -22,6 +22,7 @@
 // running env (of descriptors/values) via resolveRefs before the op executes.
 
 import { rng, sub, pick, int, chance } from '../seed.js';
+import { rulesAt } from '../world.js';
 import { create, convert, combine, diff, applyLora, pxFromUnit, snap6, roundToGrid } from '../media.js';
 import { createResourceStore, seedInitialData, listWorkspaces, listProjects, listAssetsForProject } from '../api/resources.js';
 
@@ -164,16 +165,25 @@ function seedSnapshot(world) {
 const SUBMITTED_MEMO = new Map();
 const SUBMITTED_MEMO_SEEDS = 4;
 
+// The memo key is the seed PLUS the amendment signature: two worlds of the same seed, one with
+// Addendum Q rule 4's amendments live and one without, produce different submitted descriptors
+// from the same rung, and a seed-only key would hand one of them the other's answer.
+function memoKeyFor(world) {
+  const a = world.amendments;
+  if (!a || a.length === 0) return world.seed;
+  return `${world.seed}:${a.map((x) => `${x.atRung}${x.rule}${x.to}`).join(',')}`;
+}
+
 export function submittedDescriptorFor(world, n) {
-  let byRung = SUBMITTED_MEMO.get(world.seed);
+  let byRung = SUBMITTED_MEMO.get(memoKeyFor(world));
   if (byRung === undefined) {
     if (SUBMITTED_MEMO.size >= SUBMITTED_MEMO_SEEDS) SUBMITTED_MEMO.delete(SUBMITTED_MEMO.keys().next().value);
     byRung = new Map();
-    SUBMITTED_MEMO.set(world.seed, byRung);
+    SUBMITTED_MEMO.set(memoKeyFor(world), byRung);
   }
   if (byRung.has(n)) return byRung.get(n);
   const { plan, submitKey } = composePlan(world, n);
-  const desc = runPlanLocally(world, plan).get(submitKey);
+  const desc = runPlanLocally(rulesAt(world, n), plan).get(submitKey);
   byRung.set(n, desc);
   return desc;
 }
@@ -187,12 +197,34 @@ export function recallValue(world, m, field) {
   throw new Error(`unknown recall field: ${field}`);
 }
 
-function pickProject(store, r) {
+// Addendum Q rule 11: kill the O(n^2) listing tax.
+//
+// Through 0.6.0 every batch rung drew its project uniformly at random, so over a 100-rung climb
+// the same handful of projects were hauled again and again -- and each haul LEAVES its copies
+// behind, so by rung 90 the listing a rung has to walk page by page is mostly the debris of
+// rungs 40 through 89. Astra's seed-701 forensics put 78 percent of its turns and 67 percent of
+// its wall in rungs 70-99, paging a reel its own earlier rungs kept growing. That is length, not
+// difficulty, and it is turns that could buy rules 6 and 8 instead.
+//
+// The generator's half of the fix is to deal the rungs round the projects rather than sampling
+// with replacement: the draw off `r` still decides WHERE in the rotation this rung starts (so the
+// choice stays seeded), and the rung number then rotates it, so consecutive batch rungs land on
+// different projects and no single reel accumulates more than about (batch rungs / projects)
+// hauls' worth of copies. The API's half is the documented scope filter named in RULES-0.7
+// rule 32, which lets the derived count be taken without walking anybody else's rows.
+function pickProject(world, store, r, n = 0) {
   const pairs = [];
   for (const ws of listWorkspaces(store)) {
     for (const p of listProjects(store, ws.id)) pairs.push({ workspaceId: ws.id, projectId: p.id });
   }
-  return pick(r, pairs);
+  // The per-rung draw is still taken so the RNG stream every later draw in this composer depends
+  // on is unchanged, but it no longer decides the project: a per-WORLD offset does, rotated by the
+  // rung number. Drawing per rung is sampling with replacement, and with only a handful of
+  // projects in the seeded library that put roughly one haul in four straight back onto the reel
+  // the previous haul had just grown. A strict rotation cannot do that at all.
+  void int(r, 0, pairs.length - 1);
+  const offset = int(rng(sub(world.seed, 'haulRotation')), 0, pairs.length - 1);
+  return pairs[(offset + n) % pairs.length];
 }
 
 // ---------------------------------------------------------------------------
@@ -747,6 +779,59 @@ function shapeFloors(events) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Addendum Q rule 7: negative-space grading
+//
+// About one rung in four from 70 up asks, in ordinary reasonable-sounding language, for something
+// a numbered house rule forbids. The house rule wins: the act must not be performed, and a fourth
+// check asserts the forbidden artifact or state is ABSENT. It is the first check that is invisible
+// in the submitted hash, and it is the one an agent that reads the task and skips the rules cannot
+// pass by being good at arithmetic.
+//
+// Both acts here are forbidden by the same numbered rule (RULES-0.7 rule 30: a cleared-out piece
+// has left the house's working set -- nothing is applied to it, and it never comes back into a
+// chain), so the conflict resolves to exactly one reading and the docsolver can say which.
+//
+// The plan NEVER contains the forbidden step. That is the whole design: the answer key is what a
+// correct reader produces, and a correct reader refuses.
+// ---------------------------------------------------------------------------
+
+export const REFUSAL_ACTS = {
+  labelTheStack: {
+    rule: 29,
+    detail: 'no asset this rung touched may carry the word the text asked for -- a word goes only onto the piece a turn-in step asks for it on, and these rungs ask for none',
+  },
+  workOnClearedCopies: {
+    rule: 30,
+    detail: 'no copy this rung cleared out may carry a style applied after the clear-out, and no asset may exist that was made from one',
+  },
+  reflavourClearedCopies: {
+    rule: 30,
+    detail: 'no copy this rung cleared out may be re-saved in another flavour after the clear-out, and no asset may exist that was made from one',
+  },
+};
+
+const REFUSAL_ACT_NAMES = Object.keys(REFUSAL_ACTS);
+
+// Addendum Q rule 7: "70-99, about 1 in 4".
+const FIRST_REFUSAL_RUNG = 70;
+const REFUSAL_DENSITY = 0.25;
+
+// refusalFor(world, n): drawn from its OWN sub-seed, so adding negative-space grading to the
+// ladder does not shift a single geometry draw a 0.6.x seed already made. Only a rung that
+// actually clears copies out can carry one -- the forbidden act has to have something to be
+// forbidden ABOUT.
+function refusalFor(world, n, hasClearOut) {
+  if (n < FIRST_REFUSAL_RUNG || !hasClearOut) return null;
+  const r = rng(sub(world.seed, `refusal:${n}`));
+  if (!chance(r, REFUSAL_DENSITY)) return null;
+  const act = pick(r, REFUSAL_ACT_NAMES);
+  const refusal = { act };
+  if (act === 'workOnClearedCopies') refusal.styleName = pick(r, safeLoraPool(world)).name;
+  if (act === 'labelTheStack') refusal.word = labelFor(world, n);
+  return refusal;
+}
+
 const SHRINK_PERCENT = [55, 85];
 const GROW_PERCENT = [120, 180];
 
@@ -1239,7 +1324,7 @@ function tier3(world, r, band, n) {
 
 function batchTier(world, r, band, n, { withSideChecks, ordering }) {
   const store = seedSnapshot(world);
-  const { workspaceId, projectId } = pickProject(store, r);
+  const { workspaceId, projectId } = pickProject(world, store, r, n);
   // The batch's items come from the seeded library, not from a create() this composer controls
   // the geometry of -- so every style it applies comes from safeLoraPool, and every resize in the
   // chain only ever grows. Neither can drop a shape through the 8px floor.
@@ -1320,6 +1405,9 @@ function batchTier(world, r, band, n, { withSideChecks, ordering }) {
       ordering,
       chain,
       liveTrap: featureAt(band, n, 'liveTrap'),
+      // Addendum Q rule 7: only a rung that actually clears copies out can be asked to do
+      // something forbidden to them.
+      refusal: refusalFor(world, n, withSideChecks),
     },
   };
 }
@@ -1480,7 +1568,7 @@ function tier8(world, r, band, n) {
 // live descriptor rather than carried forward from arithmetic done in the agent's head.
 function tier9(world, r, band, n) {
   const store = seedSnapshot(world);
-  const { workspaceId, projectId } = pickProject(store, r);
+  const { workspaceId, projectId } = pickProject(world, store, r, n);
   const pool = safeLoraPool(world);
   const scaleLora = world.loras.find((l) => l.op === 'scale');
   const format = pick(r, ['svg', 'png']);
@@ -1553,6 +1641,7 @@ function tier9(world, r, band, n) {
       pageSize,
       deleteCount: 1,
       liveTrap: featureAt(band, n, 'liveTrap'),
+      refusal: refusalFor(world, n, true),
     },
   };
 }
@@ -1641,8 +1730,37 @@ function shrinkForCaps(plan) {
 // returning. `mutation` is Addendum J rule 3's announced change for this rung, read straight off
 // the World (never drawn here) so the API, the answer key and the task text cannot disagree about
 // what is about to move under the agent's feet.
-export function composePlan(world, n) {
+// composePlan is pure in (world, n) and is called several times over for the same rung -- by
+// makeRung, by submittedDescriptorFor, by the reference, by half a dozen tests, and (since
+// Addendum Q rule 1) four times over by the phrasing sweep. Composing a tier-7-to-9 plan means
+// seeding AND hashing the whole library snapshot, which is the single most expensive thing in the
+// generator, so memoise on the world object's identity. Plans are never mutated after they are
+// returned (only during composition, by shrinkForCaps) -- the same assumption PLAN_RUN_CACHE
+// already rests on.
+const COMPOSE_MEMO = new WeakMap();
+
+export function composePlan(baseWorld, n) {
+  let byRung = COMPOSE_MEMO.get(baseWorld);
+  if (byRung === undefined) {
+    byRung = new Map();
+    COMPOSE_MEMO.set(baseWorld, byRung);
+  }
+  const memo = byRung.get(n);
+  if (memo !== undefined) return memo;
+  const composed = composePlanUncached(baseWorld, n);
+  byRung.set(n, composed);
+  return composed;
+}
+
+function composePlanUncached(baseWorld, n) {
   const band = bandFor(n);
+  // Addendum Q rule 4: a rung is composed against the rules IN FORCE AT THAT RUNG. `rulesAt`
+  // returns the world itself when nothing has been amended yet, so this costs nothing on a world
+  // with no amendments and is the single place the amended grid step, rounding direction,
+  // compounding rule, default frame rate and signing convention enter the generator. The answer
+  // key, the reference and (once the house resolves its own rules the same way -- see
+  // AMENDMENTS_ENFORCED in src/world.js) the API all read the same function.
+  const world = rulesAt(baseWorld, n);
   let result;
   let attempt = 0;
   for (;;) {

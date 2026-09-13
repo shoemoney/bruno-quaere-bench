@@ -31,6 +31,10 @@ test('world has the exact top-level shape from the architecture doc', () => {
   const w = makeWorld(42);
   const keys = Object.keys(w).sort();
   assert.deepEqual(keys, [
+    // `amendments` is Addendum Q rule 4's list of dated mid-ladder rule changes, resolved through
+    // world.js's own `rulesAt(world, n)`. It is always present and is `[]` while
+    // AMENDMENTS_ENFORCED is false (see the long comment in src/world.js).
+    'amendments',
     'auth', 'deprecated', 'hmac', 'ids', 'loras', 'naming',
     'namingExceptions', 'pagination', 'rate', 'rules', 'rungMutations', 'seed',
     'traps', 'vocab', 'version',
@@ -45,8 +49,11 @@ test('world.version is pinned', () => {
   // audio and video math, multi-rule ordering, a much longer step envelope), then 0.5.0 -> 0.5.1
   // by Addendum M's descriptor caps and percentOfDims grid-floor fix, then 0.5.1 -> 0.6.0 by
   // Addendum O (the stitch antecedent stated in text and skill, the house refusing a lora on a
-  // non-image, and the chain graded from rung 50 up) -- see world.js's VERSION comment.
-  assert.equal(makeWorld(1).version, '0.6.0');
+  // non-image, and the chain graded from rung 50 up), then 0.6.0 -> 0.7.0 by Addendum Q (the
+  // clause surface paraphrased four ways, dated mid-ladder amendments, the announced-mutation
+  // density ramp and its new load-bearing target pool, and the tighter listing bucket)
+  // -- see world.js's VERSION comment.
+  assert.equal(makeWorld(1).version, '0.7.0');
 });
 
 test('vocab has the four required nouns as non-empty strings', () => {

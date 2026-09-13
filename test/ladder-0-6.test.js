@@ -15,14 +15,18 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { makeWorld, VERSION } from '../src/world.js';
-import { makeRung } from '../src/ladder/rung.js';
+import { makeRung, saysOneOf, phrasingsFor } from '../src/ladder/rung.js';
 import { composePlan, labelFor } from '../src/ladder/grammar.js';
 import { answerKey } from '../src/ladder/reference.js';
 
 const SEEDS = [1, 2, 3];
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.6.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.7.md', import.meta.url), 'utf8');
 
-const ANTECEDENT = 'That stitched piece is only there to be counted; carry on with the finished picture.';
+// Addendum Q rule 1: the antecedent is one of four phrasings now, so every check below asks
+// whether the text carries ANY phrasing of the `stitch` clause kind rather than one sentence.
+// The obligation is unchanged; only the surface is seeded.
+const ANTECEDENT = phrasingsFor('stitch')[0];
+const saysAntecedent = (text) => saysOneOf(text, 'stitch');
 
 // The chain is graded from rung 50 up, which is where the text starts demanding a state walk.
 const FIRST_GRADED_RUNG = 50;
@@ -43,9 +47,9 @@ function stitches(plan) {
 // version
 // ---------------------------------------------------------------------------
 
-test('the world declares ladder 0.6.0', () => {
-  assert.equal(VERSION, '0.6.0');
-  assert.equal(makeWorld(1).version, '0.6.0');
+test('the world declares ladder 0.7.0', () => {
+  assert.equal(VERSION, '0.7.0');
+  assert.equal(makeWorld(1).version, '0.7.0');
 });
 
 // ---------------------------------------------------------------------------
@@ -59,7 +63,7 @@ test('every rung that stitches states the antecedent of the chain that follows',
     if (!stitches(plan)) return;
     seen += 1;
     assert.ok(
-      makeRung(world, n).text.includes(ANTECEDENT),
+      saysAntecedent(makeRung(world, n).text),
       `seed ${seed} rung ${n} stitches but never says what the chain carries on with`,
     );
   });
@@ -73,7 +77,7 @@ test('a rung that does not stitch does not say the antecedent either', () => {
     const { plan } = composePlan(world, n);
     if (stitches(plan)) return;
     assert.ok(
-      !makeRung(world, n).text.includes(ANTECEDENT),
+      !saysAntecedent(makeRung(world, n).text),
       `seed ${seed} rung ${n} talks about a stitched piece it never stitches`,
     );
   });
@@ -86,10 +90,10 @@ test('makeRung refuses to emit a stitch rung whose text drops the antecedent', (
   const n = 60;
   const { plan } = composePlan(world, n);
   assert.ok(stitches(plan), 'rung 60 is expected to be a stitch rung');
-  assert.ok(makeRung(world, n).text.includes(ANTECEDENT));
+  assert.ok(saysAntecedent(makeRung(world, n).text));
 });
 
-test('RULES-0.6.md states the antecedent as a numbered (skill) rule', () => {
+test('RULES-0.7.md states the antecedent as a numbered (skill) rule', () => {
   assert.match(
     RULES_DOC,
     /28\. \*\*\(skill, new in 0\.6\.0\)\*\* A stitched moving piece is only there to be counted/,
@@ -128,7 +132,7 @@ test('a graded rung states its label word verbatim, and the plan writes that sam
     const rung = makeRung(world, n);
     if (rung.expectedLabel === null) return;
     assert.ok(
-      rung.text.includes(`write the word "${rung.expectedLabel}" onto it`),
+      saysOneOf(rung.text, 'tag', { label: rung.expectedLabel }),
       `seed ${seed} rung ${n} never tells the reader which word to write`,
     );
     const tag = rung.plan.find((s) => s.op === 'etag');
@@ -146,7 +150,7 @@ test('a rung whose key demands published really does walk compose, render, publi
     assert.ok(renderAt >= 0, `seed ${seed} rung ${n} never renders`);
     assert.ok(publishAt > renderAt, `seed ${seed} rung ${n} publishes before it renders`);
     assert.equal(rung.plan[publishAt].args.renderKey, rung.plan[renderAt].resultKey);
-    assert.match(rung.text, /sign and send the release notice/, `seed ${seed} rung ${n} grades a release it never demands`);
+    assert.ok(saysOneOf(rung.text, 'sign'), `seed ${seed} rung ${n} grades a release it never demands`);
   });
 });
 
@@ -161,8 +165,8 @@ test('the label is written on the piece that gets turned in, as the plan\'s last
     assert.equal(last.op, 'etag', `seed ${seed} rung ${n}: the plan ends with ${last.op}, not the conditional write`);
     assert.equal(last.args.label, rung.expectedLabel);
     // and the text puts it after the ordered chain, not before it
-    const chainAt = rung.text.indexOf('Then, in this order:');
-    const writeAt = rung.text.indexOf(`write the word "${rung.expectedLabel}"`);
+    const chainAt = Math.max(...phrasingsFor('chainIntro', { body: '' }).map((p) => rung.text.indexOf(p.slice(0, 12))));
+    const writeAt = Math.max(...phrasingsFor('tag', { label: rung.expectedLabel }).map((p) => rung.text.indexOf(p)));
     assert.ok(writeAt > 0, `seed ${seed} rung ${n} never states the word`);
     if (chainAt >= 0) {
       assert.ok(writeAt > chainAt, `seed ${seed} rung ${n} asks for the word before the chain that replaces the piece`);
@@ -187,7 +191,7 @@ test('the label word is deterministic in (seed, rung) and comes from one place',
   assert.ok(words.size >= 5, `only ${words.size} distinct label words across 20 graded rungs`);
 });
 
-test('RULES-0.6.md states that the label is given, and that the chain is graded', () => {
+test('RULES-0.7.md states that the label is given, and that the chain is graded', () => {
   assert.match(RULES_DOC, /29\. \*\*\(task text, new in 0\.6\.0\)\*\*/, 'rule 29 is not in the rules doc');
   assert.ok(RULES_DOC.includes('write the word "X" onto it'));
   assert.ok(RULES_DOC.includes('nothing is demanded for decoration'));

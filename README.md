@@ -1,368 +1,274 @@
 # 🔬 Bruno QUAERE
 
-**Quantitative Unseen Agentic Endpoint Reasoning Evaluation**  
-*Latin: quaere, "to seek, to ask" — the root of query.*
+**Quantitative Unseen Agentic Endpoint Reasoning Evaluation.**
+*Latin* quaere, *"to seek, to ask"*, the root of *query*. Pronounced roughly "KWY-reh."
 
 <div align="center">
 
-[![Node 22+](https://img.shields.io/badge/Node-22%2B-39b600?logo=node.js)](#-quick-start)
-[![ESM](https://img.shields.io/badge/ESM-100%25-39b600)](#-architecture)
-[![No dependencies](https://img.shields.io/badge/Dependencies-0-39b600)](#-architecture)
-[![Deterministic](https://img.shields.io/badge/Deterministic-✓-39b600)](#-seeding)
-[![Docker](https://img.shields.io/badge/Docker-compose%20ready-2496ED?logo=docker)](#-docker)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#-license)
+[![Node 22+](https://img.shields.io/badge/Node-22%2B-39b600?logo=node.js)](package.json)
+[![Zero deps](https://img.shields.io/badge/runtime%20deps-0-blue)](package.json)
+[![Judge](https://img.shields.io/badge/judge-bru%20run%20%2B%20sha256-orange)](docs/ARCHITECTURE.md)
+[![Ladder](https://img.shields.io/badge/ladder-0.6.0%20measured%20%C2%B7%200.7.0%20verifying-purple)](docs/ARCHITECTURE.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](package.json)
 
 </div>
 
-## 🎯 What it does
+> 🚧 **Status, 2026-09-13.** Ladder **0.6.0** is the first version where every rung is graded
+> as written; its full seven-model round is below. Ladder **0.7.0** is built and in its
+> verification pass; no model has climbed it yet. Every earlier round is kept under its version
+> number and marked superseded. The design promise "no current model past rung 30" did not
+> survive contact with 2026 models and is no longer claimed.
 
-A purpose-built media API whose only job is to be figured out. It creates images, audio, and video from deep JSON specs, converts, combines, and diffs them — **and every artifact is deterministic**: same params, same bytes. Every instance is seeded, so no model can memorize it. Every trap is designed, so the score means something.
+## 🧒 Like you're five
 
-Agents get one tool: the **Bruno CLI**. One skill file that explains how the house does things. One ladder of **a hundred tasks** that get harder until they fall off. The transcript of the climb is the product demo.
+**Why does this exist?** People keep asking which AI is best, and the usual tests are like
+spelling bees: the AI has already seen the words. This is a test where the words are made up
+fresh every time, so the only way to win is to actually read and think. It exists so the answer
+to "which one is best" is true, not memorized.
 
-**QUAERE is the permanent unseen row in the [API Arena](docs/ARENA.md).** Borrowed APIs measure recall. This one measures **reading**.
+**What does it do?** It hands the AI a recipe book that is five hundred pages long, badly
+organized, and completely correct, then asks it to cook a hundred dishes that get harder one
+after another. A machine tastes every plate and says yes or no; no person and no other AI
+ever tastes. Once a dish is wrong, the AI is out, and its score is how far it got.
 
----
+**What does it use?** One kitchen tool only: Bruno, the little program that sends web requests,
+plus a plain notepad to write in. Everything the AI cooks is fake but exact, like a Lego picture
+that is the same bricks every time, so the machine can check it brick for brick. Seven different
+AIs each get their own kitchen with their own fresh recipe book.
 
-## 📚 Table of Contents
+**Why is it hard?** The recipe book has old crossed-out numbers next to the real ones and you
+must notice which is newer. Dish forty needs something you cooked at dish twelve and nobody
+repeats the measurement. Sometimes the oven changes its own settings and you have to notice.
+Sometimes the recipe asks for something the house rules forbid, and the right answer is to say no.
 
-<div align="center">
+**What should you take from the scores?** How far an AI got is how many hard, checkable things
+it did right in a row, with no help and no hints. The gaps between AIs on the same version are
+real, and the transcript shows exactly where and why each one fell. Watching the same AI on the
+next, harder version tells you whether it reasons or just found a trick.
 
-| Core | How | Reference |
-|------|-----|-----------|
-| [🤔 Why Purpose-Built](#-why-purpose-built) | [🏗️ Architecture](#-architecture) | [📖 CLI Reference](#-cli-reference) |
-| [💾 The One Rule](#-the-one-rule) | [🪜 How to Climb](#-how-to-climb) | [🎯 Scoring](#-scoring) |
-| [📊 The Three Axes](#-the-three-axes) | [🧠 The Skill is Rosetta](#-the-skill-is-rosetta) | [🎲 Seeding](#-seeding) |
-| [⚡ Budget & Rules](#-budget--single-agent-rule) | [🐚 The Sandbox](#-sandbox--editor-only) | [📈 Live Results](#-live-results) |
+**What should you not take from them?** One climb is one roll of the dice; the same AI went from
+the top to rung five on two different days. Numbers from different ladder versions cannot be
+compared, and older versions had bugs of ours that cut good climbs short. A perfect score means
+the AI beat this version of the test, not that it is smart in general, and the next version is
+built to take that score away.
 
-</div>
+## 🎯 What it is
 
----
+A seeded, deterministic **media API** (images, audio, video rendered byte-for-byte from JSON)
+plus a **hundred-rung task ladder** written in plain language. An AI agent climbs it using only
+the Bruno CLI (`bru`) and a dumb editor, reading a **5 MB deliberately sloppy house-rules
+document** whose every fact is correct and buried. The judge is `bru run` plus **sha256 hash
+equality** on rendered bytes and, from rung 50 up, the project state and label the task demanded.
+No model ever grades anything.
 
-## 🤔 Why Purpose-Built
+## 📚 Table of contents
 
-| Borrowed API | QUAERE |
-|---|---|
-| 🎯 Unseen until first board, then training data | 📌 Shape is public, instance is seeded per run, never the same twice |
-| 📝 Spec is whatever vendor wrote | ✅ Spec lies on purpose in known places; catching lies is scorable |
-| 🔧 Mutations need a proxy in front | 🎛️ Mutations are native, flipped on admin port (model cannot reach) |
-| 🏗️ One shared sandbox; probing by one model dirties another's state | 🔒 One instance per model per run, own port, own seed |
-| 📅 Vendor can change mid-season | 🔐 Pinned by version and seed; reproducible forever |
+| | | |
+|---|---|---|
+| [🧒 Like you're five](#-like-youre-five) | [📊 Results](#-results) | [🧭 How a climb works](#-how-a-climb-works) | [🚦 Gates](#-gates-before-any-paid-climb) |
+| [🖥️ Lineup and drivers](#️-lineup-and-drivers) | [🚀 Quick start](#-quick-start) | [⌨️ CLI](#️-cli) |
+| [🪜 Ladder history](#-ladder-history) | [🧠 What 0.7.0 changes](#-what-070-changes) | [📁 Layout](#-layout) |
 
----
+## 📊 Results
 
+### Ladder 0.6.0, round four (seeds 700-706, one attempt each, caffeinated, 6 h wall)
 
-## 🏗️ Architecture
+| 🏁 | Model | Driver | Rung | Turns | Novel tokens | Wall | Fell on |
+|---|---|---|---|---|---|---|---|
+| 🥇 | gpt-6-astra | codex CLI | **99, cleared** | 3733 | 0.37M | 66 min | |
+| 🥇 | deepseek-flash | direct API | **99, cleared** | 1740 | 0.93M | 96 min | |
+| 🥉 | qwen3.8-max | qwen CLI | 74 | 1111 | | 135 min | hash at 75, chain checks true |
+| | claude-fable-5.1 | `ai` (Claude Code) | 70 | 1060 | 0.27M | 33 min | its own script's silent error at 71 |
+| | gemini-3.8-flash | Google direct | 59 | 1328 | 0.75M | 61 min | drafted the conditional write, never ran it |
+| | x-ai/grok-4.6 | OpenRouter | 39 | 504 | 0.25M | 38 min | ignored a page-size anomaly at 40 |
+| | kimi-k3 | kimi CLI | 2 | 25 | 0.12M | 9 min | lost a variable handoff, submitted rung 0's hash |
 
-```mermaid
-graph LR
-    Agent["🤖 Agent"]
-    BruCLI["🐚 Bruno CLI<br/>(bru run)"]
-    PublicAPI["🌐 Public API<br/>Port 8080"]
-    AdminAPI["🔧 Admin API<br/>Port 8081"]
-    HashJudge["✅ Hash Judge<br/>(judge via bru run)"]
-    AdminOps["🎛️ Admin Ops<br/>(mutate/reset)"]
-    
-    Agent -->|writes .bru files| BruCLI
-    BruCLI -->|HTTP requests| PublicAPI
-    BruCLI -->|reads responses| PublicAPI
-    PublicAPI -->|returns JSON+hash| BruCLI
-    BruCLI -->|logs every call| Agent
-    Agent -->|asserts status| HashJudge
-    AdminOps -->|only harness uses| AdminAPI
-    AdminAPI -->|mutations/resets| PublicAPI
-```
+Zero rule violations, zero admin probes, zero resumes across all seven. Every fall was a wrong
+hash with both chain checks passing. **One attempt per model is noise** (qwen went 99 on one
+ladder and 5 on the next); the published board will be the median of three once a version holds.
+`board.md` is regenerated from `runs/` by the CLI and the same data is available as JSON.
 
-**The run loop:** agent writes `.bru` request files → `bru run` executes them → API responds with JSON + content hash → agent asserts on status, headers, and hash → advance rung or fall off.
+<details>
+<summary>📜 Superseded rounds (kept, never rescored)</summary>
 
----
-
-## 💾 The One Rule
-
-The sandbox the agent runs in has **exactly one binary that can open a socket: `bru`**. 
-
-No curl. No Python. No node.
-
-- The agent writes `.bru` request files and environment files
-- Runs `bru run`
-- Reads the output
-- Repeats
-
-Every invocation is logged with its arguments and output. **That log is the deliverable.** It is a recording of an agent learning an API through Bruno alone, and every published run is a worked example of the CLI doing real work.
-
----
-
-## 📊 The Three Axes
-
-Every design choice serves one of these:
-
-| Axis | What's Measured | Why It Matters |
-|------|---|---|
-| 🧠 **Advanced Reasoning** | Quant operations (units, color, timeline, compounding) + interpreting a long skill file that overrides spec defaults | Can the model do math, or just autocomplete? |
-| 🔌 **API Calling** | Sixteen HTTP behaviors a competent consumer handles + exact parameter fidelity on deep JSON specs | Does it read the spec, or does it guess? |
-| 🏔️ **Long Session** | A hundred rungs under 3 million token budget with one agent and no subagents | Can it survive a context reset, or does it memorize everything? |
-
-**The judge:** `bru run` + hash equality. No AI ever grades. Media is deterministic so that holds.
-
----
-
-## 🧠 The Skill is Rosetta Stone
-
-Tasks are written in plain language:
-> "Make an image 12 by 22 inches with a transparent background using Jenny's lora."
-
-Nothing in the spec says inches. The skill file says:
-- The house DPI is 300
-- Transparency lives under `canvas.background`
-- Loras are looked up by name at an endpoint that only appears in a `links` block
-- Dimensions round to the nearest multiple of 8
-
-**That is the measurement:** Can the agent read a long, real-shaped skill and apply it, rather than autocomplete from the spec?
-
-The skill is generated from the seed too, so house rules differ per instance, and it deliberately overrides spec defaults in a few places so "did it read the skill" has a checkable answer.
-
----
-
-## 🪜 How to Climb
-
-### The Ladder
-
-A hundred rungs, stop at the first failure. Rungs are **not hand-written** — a difficulty grammar composes each from primitives, and the seed picks the concrete task. No two runs climb the same ladder and the harness always knows the answer because it built the question.
-
-<div align="center">
-
-| Rungs | Steps | Params/Step | Skill Lookups | Quant Ops | Behaviors in Play |
-|---|---|---|---|---|---|
-| 0-9 | 1 | 3-6 | 0-1 | 0-1 | auth, create |
-| 10-19 | 2 | 6-10 | 1-2 | 1-2 | + convert, idempotency |
-| 20-29 | 3 | 8-12 | 2 | 2 | + combine, lora lookup |
-| 30-39 | 3-4 | 10-14 | 2-3 | 2-3 | + diff, etag |
-| 40-49 | 4-5 | 12-16 | 3 | 3 | + pagination batch, rate limit |
-| 50-59 | 5 | 14-18 | 3-4 | 3-4 | + async render, state machine |
-| 60-69 | 5-6 | 16-20 | 4 | 4 | + token expiry mid-chain, HMAC publish |
-| 70-79 | 6-7 | 18-22 | 4-5 | 5 | + content negotiation, soft delete |
-| 80-89 | 7-8 | 20-24 | 5 | 5-6 | + live trap must be caught to pass |
-| 90-99 | 8-10 | 22-28 | 5-6 | 6-7 | everything, three rounding rules in order |
-
-</div>
-
-### Quant Operations (All Deterministic, All Checkable)
-
-- 📏 Unit conversion at a house DPI, with a stated rounding rule
-- 🎨 Color math: hex to HSL, shift by a percentage, back to hex
-- 📐 Aspect ratio locks and letterboxing
-- 🔊 Sample rate × duration = frames; bitrate budgets ("fit under 2 MB")
-- 🎭 Compounding: "each layer 10% more opaque than the one before it"
-- 📊 Percent-of-parent sizing across nested layers
-- ⏱️ Timeline math: offsets, overlaps, and total duration across clips
-
----
-
-## 🎭 Behaviors (16 Total)
-
-<details open>
-<summary><strong>Click to expand the sixteen behaviors a competent API consumer handles</strong></summary>
-
-| # | Behavior | What It Tests | Skill It Maps To |
+| Ladder | Round | What it measured | Why superseded |
 |---|---|---|---|
-| 1️⃣ | Cursor pagination, opaque cursors, last page signaled by missing cursor (not empty array) | Loops that stop correctly | Pagination |
-| 2️⃣ | Bearer token with 60-second TTL and refresh endpoint | Chaining requests, pre-request scripts | Auth lifecycle |
-| 3️⃣ | `Idempotency-Key` on POST: same key returns same resource, no key creates duplicate | Reading a header's contract, not just its name | Idempotency |
-| 4️⃣ | 429 with `Retry-After`, budget resets on the second | Backoff, not retry storms | Rate limits |
-| 5️⃣ | `ETag` with `If-None-Match` 304 on reads and `If-Match` 412 on writes | Conditional requests | Caching and concurrency |
-| 6️⃣ | POST returns 202 and a `Location`, job must be polled to `done` | Async workflows | Long-running operations |
-| 7️⃣ | Some resources reachable only by following `links` in response (absent from spec) | Reading responses, not just the spec | Discovery |
-| 8️⃣ | Same path returns JSON or CSV by `Accept` | Content negotiation | Headers |
-| 9️⃣ | Errors are `application/problem+json` with field-level detail on 422 | Asserting on error shape | Error handling |
-| 🔟 | A spec-listed route 301s to a new path | Following redirects, updating the collection | Deprecation |
-| 1️⃣1️⃣ | Spec says `created_at`, API returns `createdAt` | **Catching a spec lie** | Contract testing |
-| 1️⃣2️⃣ | Spec says 200 on delete, API returns 204 | **Catching a spec lie** | Contract testing |
-| 1️⃣3️⃣ | Draft, compose, render, publish: state machine returns 409 out of order | Multi-step workflows | Sequencing |
-| 1️⃣4️⃣ | `/workspaces/{w}/projects/{p}/assets`: ids only discoverable by listing parent | Nested resources | Hierarchy |
-| 1️⃣5️⃣ | One endpoint requires `X-Timestamp` + HMAC signature over it (using API secret) | Scripting in pre-request | Request signing |
-| 1️⃣6️⃣ | Soft-deleted rows hidden by default, visible with `?include_deleted=true` | Reading query parameter semantics | Filters |
-
-**Note:** Items 11 and 12 are **traps** 🪤. A season has ≥2 live traps and never reveals which.
+| 0.1 | OpenRouter, 7 models | kimi 11, gemini 44, astra 59 (cut by a context bug) | novel-token budget and context trimming did not exist |
+| 0.3.0 | native CLIs | astra 24, grok 23, fable 16, deepseek 15, gemini 9, kimi 5, qwen 5 | an undocumented rounding rule decided 28% of resize rungs |
+| 0.4.0 | native CLIs | **qwen 99**, kimi 94 (wall), fable 71, gemini 69, grok 59, deepseek 57, astra 29 | rungs differed in size, not kind; one script climbed eighty |
+| 0.5.0 | native CLIs | **astra 99**, gemini 59, grok 40, kimi 25; three 59s voided | rung 60's antecedent was unstated; rungs 50+ were graded on scenery |
+| 0.6.0 round three | native CLIs | astra 63, fable 52, gemini 43 in 26 minutes each | the laptop slept; void as a ceiling, valid as a rate |
 
 </details>
 
----
+## 🧭 How a climb works
 
-## 🎯 Scoring
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as Harness 🎛️
+    participant A as Agent 🤖
+    participant B as bru CLI
+    participant API as Seeded media API 🎨
+    participant J as Judge 🔍
+    H->>API: start instance (seed, admin token)
+    H->>A: TASK.md · spec.json · HOUSE-RULES.md (5 MB) · environments/local.yml
+    loop each rung
+        A->>B: bru run rungs/current
+        B->>API: GET /rungs/current
+        A->>B: bru run create · convert · lora · publish …
+        B->>API: requests (User-Agent bruno-runtime/*)
+        A->>B: bru run submit {assets}
+        B->>API: POST /rungs/{n}/submit
+        API->>J: hash + project state + label vs answer key
+        J-->>H: pass → advance · fail → stop
+    end
+    H->>H: result.json · transcript.jsonl · board
+```
 
-| Name | Definition |
-|---|---|
-| **Rung** 🏔️ | Highest rung passed clean, median of three runs. **The score.** |
-| **Turns** 🔄 | `bru run` invocations to reach that rung. **The tiebreak.** |
-| **Fidelity** ✅ | Share of parameters set correctly across every attempt, including failed rungs |
-| **Trap** 🪤 | Share of planted spec lies the collection's tests flagged |
-| **Tokens** 💰 | Spent of the 3 million, and how many rungs per million. Reported. |
-| **Time, Cost** ⏱️ | Wall clock, dollars at list price. Reported, not scored. |
+| Axis | What is measured | Where |
+|---|---|---|
+| 🧠 Advanced reasoning | unit math, rounding order, derived parameters, a skill that overrides the spec | the rung text and the house rules |
+| 🔌 API calling | 16 HTTP behaviors, exact parameter fidelity, planted spec lies | the API and the trap column |
+| ⏳ Long session | one agent, no subagents, 3M novel-token budget, cross-rung recall, context that outlives the window | the ladder's length and the collection on disk |
 
-**Why wall clock is not scored:** Time up the ladder is dominated by provider latency and rate limits, so scoring it ranks infrastructure, not the model. **Turns** measures the same thing honestly: how many calls it took to figure the API out.
+**The one rule:** nothing but `bru` opens a socket. A native CLI has a shell, so the rule is
+enforced by detection: the API logs every User-Agent, anything that is not `bruno-runtime/*` is
+a violation, and `axios/*` from bru's own script sandbox is counted separately. Neither voids a
+run silently; both are published.
 
----
+## 🚦 Gates before any paid climb
 
-## ⚡ Budget & Single-Agent Rule
+| Gate | What it proves | Test |
+|---|---|---|
+| ✅ Reference climb | a scripted solution clears all 100 rungs on seeds 1, 2, 3 and a fresh seed | `test/reference.test.js` |
+| ✅ Clean-room doc-solver | a solver written from the docs alone, never reading the generator, agrees with the key on seeds 1-20 and the round's seed block | `test/docsolver.test.js` |
+| ✅ Sandbox fidelity | the reference climbs using only files found in a prepared sandbox | `test/sandbox-fidelity.test.js` |
+| ✅ Rules in the document | every skill-marked rule in `docs/RULES-*.md` appears in the clean skill and the 5 MB sloppy one | `test/skill-rules-subset.test.js` |
+| ✅ Generation bounds | keys for 300 seeds under 2 s and 2 MB | `test/keygen-bounds.test.js` |
+| ✅ Behaviors | 16 behaviors proven with `bru run` against a live instance | `scripts/run-behaviors.sh` |
+| ✅ Rung-0 smoke | every driver produces `result.json` for rung 0 | `--max-rung 0` |
 
-- 🎬 **3 million tokens per run**, input + output, hard cap. The run ends where the budget does.
-- 🧑 **One agent, one context.** No subagents, no parallel workers, no delegation. The instructions say so and the harness enforces it: one model session, one API key, one instance.
-- 🏔️ **The ladder is longer than any context window.** That is on purpose. Somewhere between rung 30 and rung 60 the agent will have to compact or clear its own context and keep climbing.
+The first two exist because the reference gate is blind to undocumented rules: it shares the
+generator's code. Twice it certified rungs no correct agent could pass (a float artifact, then a
+hidden rounding). The third exists because the doc-solver proves a key is derivable, not that
+the sandbox contains what the docs promise.
 
-**How it survives:** The Bruno-shaped answer is sitting on disk the whole time. The collection the agent writes is its memory of the API: every request it got right, every variable it learned, every test that encodes a house rule. An agent that treats the repo as its notebook climbs through a context reset. An agent that kept everything in its head falls off.
+## 🖥️ Lineup and drivers
 
----
+| Model | Driver | Notes |
+|---|---|---|
+| claude-fable-5-1 | `--driver cli --cli ai` | Claude Code via the `ai` wrapper, fresh `CLAUDE_CONFIG_DIR` |
+| gpt-6-astra | `--driver cli --cli codex` | fresh `CODEX_HOME` with only the auth file |
+| qwen3.8-max | `--driver cli --cli qwen` | fresh `HOME`, env from `~/.qwen/.env` |
+| kimi-code/k3 | `--driver cli --cli kimi` | model id must carry the `kimi-code/` prefix |
+| gemini-3.8-flash | `--driver google` | the Gemini CLI silently serves 3.5-flash for any 3.8 id |
+| deepseek-flash | `--driver deepseek` | the only flash id DeepSeek's API serves |
+| x-ai/grok-4.6 | `--driver openrouter` | while the x.ai key is team-blocked |
 
-## 🎲 Seeding
+Every CLI runs from an isolated home with only its credentials, so no user skills or memories
+climb with it. Each adapter records the model the tool actually served; a mismatch voids the run.
 
-One integer seed per instance controls:
-
-- 🔤 Entity vocabulary (orgs, projects, keys in one world; fleets, vehicles, sensors in another)
-- 🆔 ID formats (UUID, ULID, prefixed like `proj_…`, plain integers)
-- 📛 Field naming convention (snake, camel, and which fields break the convention)
-- 🪤 Which traps are live and where
-- 🚫 Which routes are deprecated
-- 🔐 Cursor encoding
-- 💾 Rate limit budget
-- ⏱️ Token TTL
-
-**The spec is generated from the same seed**, so it matches the instance except where a trap says otherwise. Two instances with the same seed and version are **byte-identical**. That is what makes a result reproducible.
-
----
-
-## 🐚 Sandbox & Editor Only
-
-The agent gets five tools, not just `bru`:
-
-| Tool | Args | Limits | Purpose |
-|---|---|---|---|
-| `bru` | `{args}` | The CLI, the only thing that reaches the network | Make HTTP calls |
-| `write_file` | `{path, content}` | Inside sandbox only | Author request files |
-| `read_file` | `{path, offset, limit}` | Max 200 lines per call | Read skill & responses |
-| `grep` | `{pattern, path}` | Regex, max 100 hits | Search 5 MB skill file |
-| `ls` | `{path}` | Inside sandbox only | List files |
-
-**No shell. No pipes. No `cat`.** Finding the DPI in 5 MB means choosing search terms well, reading the hits, and noticing that three of them are decoys. That is on the reasoning axis.
-
----
-
-
-## 📈 Live Results
-
-### Ladder version 0.3.0 (current)
-
-| Model | Driver | Seed | Rung | Turns | Fidelity | Trap | Novel Tokens | Billed Tokens | Violations | Resumes | Stop |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| **gpt-6-astra** | cli:codex | 311 | 24 | 124 | 99.6% | 50.0% | 122,372 | 5,553,284 | 0 | 0 | fail |
-| **grok-4.6** | xai | 315 | 23 | 181 | 100.0% | 20.0% | 141,620 | 18,439,250 | 0 | 0 | error |
-| **claude-fable-5-1** | cli:ai | 310 | 16 | 91 | 97.1% | 75.0% | 98,986 | 103,472 | 0 | 0 | fail |
-| **deepseek-flash** | deepseek | 316 | 15 | 176 | 97.1% | 100.0% | 145,019 | 17,194,730 | 0 | 0 | fail |
-| **gemini-3.8-flash** | cli:gemini | 313 | 9 | 56 | 99.7% | 83.3% | 76,930 | 215,125 | 0 | 0 | fail |
-| **qwen3.8-max** | cli:qwen | 312 | 5 | 39 | 94.6% | 75.0% | 135,863 | 4,343,756 | 0 | 0 | fail |
-| **k3** | cli:kimi | 314 | 6 | 32 | 95.2% | 100.0% | 103,589 | 4,683,173 | 0 | 0 | fail |
-
-**Fall analysis (Ladder 0.3.0):**
-
-- **gpt-6-astra** (seed 311): fell at rung 25 — **task reasoning failure**. API pipeline executed flawlessly (5×HTTP 201/200, exact dimension math at every stage), but final artifact content diverged from reference (fidelity 88.4%). Model misread house-rules clause in 5MB sloppy skill.
-- **claude-fable-5-1** (seed 310): fell at rung 17 — **task reasoning failure**. Executed technically perfect API flow but generated spec-mismatched content. Likely dated-decoy trap in HOUSE-RULES.md.
-- **deepseek-flash** (seed 316): fell at rung 16 — task reasoning failure on dimension pipeline or unit conversion order.
-- **gemini-3.8-flash** (seed 313): fell at rung 10 — **tooling slip**. Built correct asset (POST 201 returned exact-match hash), but submit reused stale asset id from prior rung instead of fresh id. Model reasoning sound; templating error.
-- **qwen3.8-max** (seed 312): in-progress at forced finalization (3hr wall, 5 rungs cleared).
-- **k3** (seed 314): fell at rung 7 — **tooling slip** (post-fix rerun). After kimi.js model-alias fix: model created fresh asset (201, exact hash), but submit call reused prior rung's id. Execution templating bug.
-- **grok-4.6** (seed 315): stopped (error) after rung 23.
-
----
-
-## 🔬 Calibration Rounds
-
-### Round 1: Ladder 0.3.0 (Native CLI Drivers)
-
-**Timeline**: Six models ran in parallel (2026-09-11, ~14 hours total). One model (k3) required harness fix (kimi.js model-alias prefix).
-
-**Key findings:**
-
-1. **Task reasoning failures dominate the mid tier.** gpt-6-astra and grok-4.6 proved the API/tooling pipeline works end-to-end (rung 24–25 clears), but downstream models (claude-fable, deepseek, gemini) fell on content generation, not plumbing.
-
-2. **Tooling slips are visible and recoverable.** When they happen, the harness logs transcript + assets, making them trivial to diagnose (gemini's asset-id reuse, k3's model-alias prefix).
-
-3. **Ladder floors must separate models.** Current floors:
-   - **Frontier (1-2 models):** rung 24+
-   - **Upper mid:** rung 16–17
-   - **Mid:** rung 9–10
-   - **Lower:** rung 5–7
-   
-   Signal is clear; no model clustered at the same rung.
-
-4. **Harness fixes validated:** kimi.js model-alias resolution; usage-parse error handling; process kill path; runs baseline reset per spawn.
-
-**Post-round-1 steepening applied:**
-
-Rungs 10–20 were weak (gemini fell at 10 with rung 11–17 unexplored by lower models). Increased trap complexity and constraint nesting to force earlier failures and fill the signal gap. Next round expects mid-tier models to clear 12–15 instead of 10–16.
-
----
-
-## 🔬 Calibration: Hard, Picky, and Provably Solvable
-
-### The Target
-
-**No current model passes rung 30.** The ladder is built for the next five years of models, not this year's. If a frontier model clears 30 in the private dry run, the curve is too easy and gets steepened **before** season one publishes, never after.
-
-### Picky Means Picky
-
-A rung passes only on **exact hash equality** for every artifact in the task. No partial credit inside a rung. 
-
-- A rounding rule applied out of order ❌
-- An opacity off by 1% ❌
-- A layer in wrong z-order ❌
-- A field named in wrong case ❌
-- A cursor loop that stopped one page early ❌
-
-All of these are a fall, and the board shows the expected artifact next to what the model produced so the miss is visible.
-
-### Two Guardrails
-
-**Every rung has a reference solution** the harness executes before any model does. A scripted climb, written from the skill and the spec alone, that passes all hundred rungs on every seed. A rung the reference cannot pass is a bug in the generator, not a hard task. **Nothing is published that the reference has not cleared.**
-
-**The bottom thirty rungs must spread the field.** A board where every model sits between 12 and 28 is as useless as one where they all sit at 100. Rungs 0–30 rise steadily enough that:
-- A weak model falls at 8
-- A mid model at 17
-- A frontier model at 26
-- The gaps are legible
-
-Rungs 31–100 are headroom, and the first model to clear 50 is a headline on its own.
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **Node 22+**
-- **Bruno CLI** (the agent's tool)
-- Docker (for serving the API)
-
-### Local Development
+## 🚀 Quick start
 
 ```bash
-# Install dependencies
-npm install
+npm test                                   # ~30 min, all gates
+node bin/quaere.js serve --seed 42         # public + admin ports; admin needs X-Admin-Token
+node bin/quaere.js reference --seed 42     # scripted climb, must print 100/100
+node bin/quaere.js rung --seed 42 --n 60   # a task in plain language (--answer shows the key)
+node bin/quaere.js skill --seed 42 --mode sloppy --bytes 5000000 > HOUSE-RULES.md
 
-# Run tests (includes reference climb on seeds 1, 2, 3)
-npm test
+# one real climb (keys exported per process; caffeinate so the laptop cannot sleep it away)
+caffeinate -i -s node bin/quaere.js run --driver cli --cli codex --model gpt-6-astra \
+  --seed 801 --attempts 1 --skill-mode sloppy --skill-bytes 5000000 --wall-ms 21600000
+node bin/quaere.js board runs/ > board.md
+```
 
-# Serve a local instance on port 8080 (admin on 8081)
-quaere serve --seed 42
+`node --test` exits 0 even when tests fail. Write its output to a file and read the
+`# pass` / `# fail` lines; never trust an exit code.
 
-# Generate spec for seed 42
-quaere spec --seed 42 > spec.json
+## ⌨️ CLI
 
-# Generate skill for seed 42
-quaere skill --seed 42 > SKILL.md
+| Command | Purpose |
+|---|---|
+| `serve --seed N [--port P --admin-port A]` | run one seeded instance |
+| `spec --seed N` | OpenAPI document, with the seed's planted lies |
+| `skill --seed N [--mode clean\|sloppy --bytes B]` | the house rules, clean or 5 MB sloppy |
+| `rung --seed N --n K [--answer]` | one task's text, optionally its answer key |
+| `reference --seed N [--from A --to B]` | the scripted reference climb |
+| `run --driver D [--cli C] --model M --seed N …` | one agent climb; see flags below |
+| `board runs/ [--json out.json]` | the board grouped by ladder version |
 
-# Get a single rung's task (with answer)
-quaere rung --seed 42 --n 5 --answer
+<details>
+<summary>⚙️ <code>run</code> flags</summary>
 
-# Run the reference (scripted agent) against seeds 1, 2, 3
-quaere reference --seed 42
+| Flag | Default | Meaning |
+|---|---|---|
+| `--attempts` | 1 | fresh-context attempts per model |
+| `--budget` | 3000000 | novel-token cap per attempt (output plus new input per turn) |
+| `--skill-mode` / `--skill-bytes` | sloppy / 5000000 | which house-rules document the sandbox gets |
+| `--wall-ms` | | active-time wall; suspended time (sleep) is excluded |
+| `--max-rung` | 99 | stop after this rung passes (smokes use 0) |
+| `--max-turns` | 5000 | `bru` requests before `stoppedBecause: turns` |
+| `--context-limit` | 160000 | message-loop drivers trim before this many tokens |
+| `--max-output-tokens` | 32768 | output budget for reasoning models |
 
-# Run a real model (requires API keys)
+</details>
+
+## 🪜 Ladder history
+
+```mermaid
+flowchart LR
+    A[0.1 🧪<br/>OpenRouter, harness bugs] --> B[0.3 🧮<br/>exact arithmetic]
+    B --> C[0.4 📐<br/>keys follow documented rules<br/>doc-solver gate]
+    C --> D[0.5 🧗<br/>cross-rung memory, derived params,<br/>announced mutations, chains]
+    D --> E[0.6 🧾<br/>stitch antecedent stated,<br/>chain graded, sandbox fidelity]
+    E --> F[0.7 🧠<br/>attacks the replayable solver]
+    style E fill:#2b6,stroke:#333,color:#fff
+    style F fill:#96f,stroke:#333,color:#fff
+```
+
+Every version is a dated addendum in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), which
+records each rule and the bug that changed it. The rules the answer key may depend on live in
+[`docs/RULES-0.6.md`](docs/RULES-0.6.md) (0.7.0 renames it).
+
+## 🧠 What 0.7.0 changes
+
+A forensic read of Astra's clear showed **261 lines of Python, written in 23 tool calls, replayed
+for the last 51 calls with no new code**. It parsed the rung text with literal regexes, read the
+5 MB skill once and cut it to 34 KB by dropping sections by heading name, and never saw a
+mutation because all 33 landed on routes its pipeline never read. 0.7.0 breaks each assumption
+that made replay possible:
+
+| # | Change | Who pays |
+|---|---|---|
+| 1 | clause kinds rendered in four or more seeded phrasings; the rules publish obligations, never surface strings | replayers only |
+| 2 | mutations land on the fields a solver must parse, re-picked per rung | replayers, and anyone who ignores what came back |
+| 3 | ETag, next cursor, Retry-After live in headers only | one-time client fix |
+| 4 | dated rule amendments written into the sandbox's skill file at rungs 30, 55, 78 | everyone, a few turns each |
+| 5 | true rules planted inside the noise-headed sections a heading filter deletes | heading filters only |
+| 6 | regression rungs: rebuild an earlier piece under amended rules | forward-only ledgers |
+| 7 | refusal rungs: the text asks for something a house rule forbids; graded by absence | dispatchers that execute every clause |
+| 8 | byte-budget search over live responses | everyone, a few turns |
+| 9 | short pages under throttle that undercount silently | naive loops |
+| 10 | the path is graded: ordered stage audit, HMAC bound to the artifact's digest | one-line HMAC helpers |
+| 11 | fresh reels per batch rung, so the top third is hard rather than long | nobody; it returns turns |
+
+Two new board columns, **code writes** and **doc reads**, separate templating from reasoning
+better than turns do.
+
+## 📁 Layout
+
+```
+src/ladder/      grammar, rung text, reference climb, clean-room doc-solver
+src/api/         the seeded media API, admin port, behaviors
+src/harness/     drivers (message-loop and native CLI), supervisor, scoring, board
+src/render/      deterministic SVG, PNG, WAV, QVID
+docs/            ARCHITECTURE.md (contract + addenda), RULES-*.md, SPEC.md, ARENA.md
+collections/     the 16-behavior Bruno collection
+runs/            results and transcripts per model, seed, attempt (gitignored)
+```
+
+---
+
+🐶 *Built as the unseen row of the Bruno API Arena. Latin for "ask"; measured in rungs.*

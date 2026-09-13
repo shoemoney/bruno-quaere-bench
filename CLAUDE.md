@@ -9,7 +9,7 @@ climb using only the Bruno CLI (`bru`), judged by sha256 hash equality on render
 from rung 50 up, the project state and label the task demanded. Zero runtime dependencies, Node
 22+, ESM. The contract is `docs/ARCHITECTURE.md`; its dated Addenda A through P are the change
 log of every rule and every bug that changed a rule. Read the newest addenda first. `docs/SPEC.md`
-is the original intent; `docs/RULES-0.6.md` is the plain-language list of every house rule the
+is the original intent; `docs/RULES-0.7.md` is the plain-language list of every house rule the
 answer key may depend on.
 
 ## Commands

@@ -34,7 +34,17 @@ import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 // the agent to write under If-Match, so six mechanisms of work that were invisible to the scorer
 // now count, and tier 5 walks the release it always described; (3) the conditional write's label
 // is a seeded word stated in the task text instead of an ungradeable "a word of your own".
-export const VERSION = '0.6.0';
+// Bumped to 0.7.0 by Addendum Q, which attacks the replayable solver rather than the arithmetic.
+// Four things in this file change with it, and any one of them makes a 0.6.x row incomparable:
+// (1) every clause of a rung's text now renders as one of four seeded paraphrasings of identical
+// meaning (Q1), so the same seed produces different prose than 0.6.0 did; (2) `amendments` (Q4) --
+// dated mid-ladder rule changes at rungs 30, 55 and 78, read through `rulesAt(world, n)`, which is
+// the single function the key, the reference and the house must all agree to call; (3) the
+// announced-mutation density is now a ramp, 0.6 up to 0.9 from rung 70 (Q2), and the target pool
+// this file publishes names the load-bearing fields a solver actually parses rather than the
+// decorative ones 0.6.0 moved; (4) `rate.buckets` (Q9) declares the tighter bucket on the listing
+// that feeds a derived count, and with it the short-page rule.
+export const VERSION = '0.7.0';
 
 // ---------------------------------------------------------------------------
 // Addendum J rule 3: announced per-rung mutations
@@ -53,7 +63,48 @@ export const RUNG_MUTATION_POOL = ['statusCode', 'dropField', 'renameField', 're
 // Addendum J rule 3: "from rung 40 on".
 export const FIRST_MUTATION_RUNG = 40;
 
-const MUTATION_DENSITY = 0.6;
+// Addendum Q rule 2: the density is a ramp, not a shelf. 0.6 from rung 40, rising to 0.9 from
+// rung 70, so the top third of the ladder re-picks a change under the agent nearly every rung and
+// one normalization layer written once at rung 40 is not enough.
+const MUTATION_DENSITY_BASE = 0.6;
+const MUTATION_DENSITY_TOP = 0.9;
+const DENSITY_RAMP_RUNG = 70;
+
+// mutationDensityAt(n): the probability rung n announces a change.
+export function mutationDensityAt(n) {
+  if (n < FIRST_MUTATION_RUNG) return 0;
+  return n < DENSITY_RAMP_RUNG ? MUTATION_DENSITY_BASE : MUTATION_DENSITY_TOP;
+}
+
+// ---------------------------------------------------------------------------
+// Addendum Q rule 2: the TARGET pool, published here and owned by the API workstream
+// ---------------------------------------------------------------------------
+//
+// 0.6.0's mutations all landed on GET routes (`workspaces.get`, `projects.get`, `assets.get`,
+// `jobs.get`). Astra's seed-701 climb announced 33 of them and paid nothing for a single one,
+// because a POST-driven pipeline never reads those bodies. A mutation is only a tax if it lands
+// on a field the solver's own parse is load-bearing on, which means the WRITE routes and the
+// LISTING. This constant is the ladder workstream's statement of which targets the Arena's
+// candidate lists must cover; `src/api/admin.js` owns the implementation (its
+// `*_CANDIDATES` arrays) and `test/ladder-0-7.test.js` pins the list so the two cannot drift
+// apart silently. Rule 27 still binds: the artifact never changes, only the parse.
+export const RUNG_MUTATION_TARGETS = [
+  { mutation: 'renameField', route: 'images.create', field: 'id', to: 'uid' },
+  { mutation: 'retypeField', route: 'assets.convert', field: 'width' },
+  { mutation: 'retypeField', route: 'assets.combine', field: 'shapes' },
+  // A dropped field has to be RECOVERABLE, or the rung that announces it is unpassable by any
+  // correct client and that is a generator bug rather than difficulty (the same reason
+  // `rejectAuth` and `stuckCursor` are not in RUNG_MUTATION_POOL). `projects.render`'s `job_id`
+  // was the obvious target and is exactly the wrong one: the check-back rule 23 requires is a
+  // poll of THAT JOB, there is no jobs listing to find it another way, and the audit's 'rendered'
+  // stage is only recorded when the job itself reports done -- so dropping it makes every rung
+  // 50-69 unpassable. `assets.combine`'s whole `descriptor` is load-bearing in the same way (every
+  // solver reads the stacked size off it to feed the next step) and IS recoverable: ask
+  // `assets.get` for the asset the reply did give you an id for.
+  { mutation: 'dropField', route: 'assets.combine', field: 'descriptor' },
+  { mutation: 'renameField', route: 'projects.assets', field: 'cursor', to: 'next' },
+  { mutation: 'statusCode', route: 'assets.lora', to: 202 },
+];
 
 // makeRungMutations(seed) -> (RungMutation | null)[], indexed BY RUNG NUMBER so
 // `world.rungMutations[n]` is the entry for rung n and nothing has to search. Entry shape is
@@ -72,7 +123,7 @@ function makeRungMutations(seed) {
       out.push(null);
       continue;
     }
-    out.push(chance(r, MUTATION_DENSITY) ? { n, mutation: pick(r, RUNG_MUTATION_POOL) } : null);
+    out.push(chance(r, mutationDensityAt(n)) ? { n, mutation: pick(r, RUNG_MUTATION_POOL) } : null);
   }
   return out;
 }
@@ -208,9 +259,127 @@ function makeAuth(seed) {
   };
 }
 
+// Addendum Q rule 9: a second, tighter bucket on exactly the route whose paginated walk feeds a
+// derived count, so a client that pages flat out 429s partway through the count instead of at
+// some harmless moment. `Retry-After` travels as a real header. The house also, on that same
+// pooled route, sometimes hands back a SHORT page inside the throttle window rather than an
+// error -- which is why the short-page rule (RULES-0.7 rule 31) has to be written down: a page
+// shorter than the one you asked for is not the end of the listing; only the absence of a next
+// cursor is. The API workstream owns enforcing this bucket; the ladder publishes it.
 function makeRate(seed) {
   const r = rng(sub(seed, 'rate'));
-  return { limit: int(r, 20, 60), windowSec: 10 };
+  const limit = int(r, 20, 60);
+  const rListing = rng(sub(seed, 'rate.listing'));
+  return {
+    limit,
+    windowSec: 10,
+    buckets: {
+      // the listing bucket is always strictly tighter than the global one
+      listing: { route: 'projects.assets', limit: Math.max(4, Math.floor(limit / int(rListing, 3, 5))), windowSec: 10 },
+    },
+    shortPage: true,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Addendum Q rule 4: dated mid-ladder amendments
+// ---------------------------------------------------------------------------
+//
+// The house amends one numbered rule at each of three announced rungs. The harness rewrites
+// HOUSE-RULES.md in the sandbox at those rungs and the rung text says so; the amendment is the
+// only mechanism on the ladder that makes the 5 MB document keep costing after rung 0.
+//
+// `rulesAt(world, n)` is the ONE function that resolves "which rules are in force at rung n". The
+// answer key calls it, the reference calls it, the docsolver has to call it, and the house has to
+// call it -- if any of the four resolve the rules another way the ladder is ungradeable. It is
+// exported from this file, not from the ladder, precisely so there is no ladder-only copy.
+export const AMENDMENT_RUNGS = [30, 55, 78];
+
+// The closed set an amendment may draw from, per Addendum Q rule 4. Each entry names the World
+// field it moves and the candidate values it may move to.
+export const AMENDMENT_RULES = {
+  roundTo: { path: ['rules', 'roundTo'], choices: ROUND_TO },
+  roundMode: { path: ['rules', 'roundMode'], choices: ROUND_MODE },
+  opacityCompound: { path: ['rules', 'opacityCompound'], choices: OPACITY_COMPOUND },
+  defaultFps: { path: ['rules', 'defaultFps'], choices: FPS_CHOICES },
+  hmacCanon: { path: ['hmac', 'canon'], choices: ['ts+method+path', 'ts+path+method', 'method+path+ts'] },
+};
+
+// ---------------------------------------------------------------------------
+// AMENDMENTS_ENFORCED: the one switch that says whether the HOUSE applies an amendment.
+//
+// An amendment is only real when the house itself changes behaviour at the announced rung -- the
+// grid step, the rounding direction, the compounding rule, the default frame rate and the signing
+// canonical string are all applied by `src/media.js` and `src/api/behaviors.js`, which read
+// `world.rules` / `world.hmac` once and know nothing about the current rung. Until those two
+// resolve their rules through `rulesAt(world, currentRung)` instead, an amendment could only ever
+// desync the answer key from the live house: the key would round on the amended grid and the
+// server would round on the original one, and every rung from 30 up would fail the reference gate
+// for a reason that has nothing to do with the ladder.
+//
+// So amendments are DRAWN and TESTED here but not PUBLISHED while this is false: `makeWorld`
+// hands back an empty `amendments` array, nothing is written into the sandbox, no rung text
+// announces one, and `rulesAt` is a no-op that still threads through every call site. Flipping
+// this to true is a one-line change once the API workstream lands two things:
+//
+//   1. `src/media.js`'s create/convert/combine/applyLora resolve dpi, grid step, rounding
+//      direction, compounding rule and default fps from `rulesAt(world, n)` for the CURRENT rung
+//      rather than from `world.rules`.
+//   2. `src/api/behaviors.js`'s `verifyHmac` builds its canonical string from
+//      `rulesAt(world, n).hmac.canon` (it currently hardcodes `ts+method+path`, ignoring
+//      `world.hmac.canon` entirely) and the harness rewrites HOUSE-RULES.md at each amendment rung.
+//
+// `drawAmendments(seed)` is exported unconditionally so `test/amendment.test.js` can prove the
+// whole mechanism -- draws, `rulesAt` resolution, and the generator composing against amended
+// rules -- without waiting on the house.
+export const AMENDMENTS_ENFORCED = false;
+
+export function drawAmendments(seed) {
+  const r = rng(sub(seed, 'amendments'));
+  const names = shuffle(r, Object.keys(AMENDMENT_RULES));
+  const base = {
+    rules: makeRules(seed),
+    hmac: makeHmac(),
+  };
+  return AMENDMENT_RUNGS.map((atRung, i) => {
+    const rule = names[i % names.length];
+    const { path, choices } = AMENDMENT_RULES[rule];
+    const from = base[path[0]][path[1]];
+    const others = choices.filter((c) => c !== from);
+    const to = pick(rng(sub(seed, `amendments.${rule}.${atRung}`)), others.length > 0 ? others : choices);
+    base[path[0]] = { ...base[path[0]], [path[1]]: to };
+    return { atRung, rule, path, from, to };
+  });
+}
+
+// rulesAt(world, n) -> a World whose `rules` and `hmac` are the ones in force at rung n. Pure,
+// cheap, and identity-returning when nothing has been amended yet, so calling it on every hot
+// path costs nothing on a world with no amendments.
+const RULES_AT_CACHE = new WeakMap();
+
+export function rulesAt(world, n) {
+  const live = (world.amendments || []).filter((a) => a.atRung <= n);
+  if (live.length === 0) return world;
+  // Memoised on (world, n): a rung's plan is composed, run locally, run again for the caps check
+  // and run a third time by makeRung, and every one of those has to see the SAME object or
+  // grammar.js's plan-run cache (keyed on world identity) misses every time.
+  let byRung = RULES_AT_CACHE.get(world);
+  if (byRung === undefined) {
+    byRung = new Map();
+    RULES_AT_CACHE.set(world, byRung);
+  }
+  const hit = byRung.get(n);
+  if (hit !== undefined) return hit;
+  const next = { ...world, rules: { ...world.rules }, hmac: { ...world.hmac } };
+  for (const a of live) next[a.path[0]][a.path[1]] = a.to;
+  byRung.set(n, next);
+  return next;
+}
+
+// amendmentsAt(world, n): the amendments announced at exactly rung n (what the harness writes into
+// HOUSE-RULES.md when the climb reaches it, and what that rung's text tells the agent to go read).
+export function amendmentsAt(world, n) {
+  return (world.amendments || []).filter((a) => a.atRung === n);
 }
 
 function makePagination(seed) {
@@ -275,6 +444,9 @@ export function makeWorld(seed) {
     loras: makeLoras(seed),
     hmac: makeHmac(),
     rungMutations: makeRungMutations(seed),
+    // Addendum Q rule 4. Empty until the house resolves its own rules through rulesAt() -- see
+    // AMENDMENTS_ENFORCED above for the exact two changes that flip it on.
+    amendments: AMENDMENTS_ENFORCED ? drawAmendments(seed) : [],
   };
 }
 

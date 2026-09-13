@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { makeWorld } from '../src/world.js';
 import { makeRung } from '../src/ladder/rung.js';
 import { answerKey } from '../src/ladder/reference.js';
+import { REFUSAL_ACTS } from '../src/ladder/grammar.js';
 
 const SEED_COUNT = 300;
 // Addendum M's own repro numbers (76ms/523, crash/525) hold for roughly half of seeds 1..300 on
@@ -102,6 +103,36 @@ test('seed 525 no longer produces a degenerate (zero-dimension) canvas', () => {
           }
         }
       }
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Addendum Q: the three fields the key grew, bounded and well formed on every seed
+//
+// `expectedAudit`, `forbidden` and `amendments` are small by construction, but they are the first
+// key fields that are OPTIONAL per rung, and an optional field that is sometimes a malformed
+// object is exactly the kind of thing that reaches a grader rather than a test. The budget checks
+// above already cover their size; this covers their shape, over the whole 300-seed sweep's worth
+// of shapes in the two seeds most likely to be odd.
+// ---------------------------------------------------------------------------
+
+test('every rung of every seed carries well-formed 0.7.0 key fields', () => {
+  for (const seed of [1, 2, 3, 525]) {
+    const world = makeWorld(seed);
+    for (let n = 0; n < 100; n += 1) {
+      const rung = makeRung(world, n);
+      const where = `seed ${seed} rung ${n}`;
+      if (rung.expectedAudit !== null) {
+        assert.ok(Array.isArray(rung.expectedAudit.stages) && rung.expectedAudit.stages.length >= 4, `${where} audit`);
+        for (const stage of rung.expectedAudit.stages) assert.equal(typeof stage, 'string', `${where} audit stage`);
+      }
+      if (rung.forbidden !== null) {
+        assert.ok(REFUSAL_ACTS[rung.forbidden.act] !== undefined, `${where}: unknown forbidden act`);
+        assert.equal(typeof rung.forbidden.rule, 'number', `${where} forbidden rule`);
+      }
+      assert.ok(Array.isArray(rung.amendments), `${where} amendments`);
+      assert.ok(rung.rules && typeof rung.rules.roundTo === 'number', `${where} resolved rules`);
     }
   }
 });

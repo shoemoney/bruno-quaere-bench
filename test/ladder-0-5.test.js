@@ -12,11 +12,11 @@ import { readFileSync } from 'node:fs';
 import { makeWorld, VERSION, RUNG_MUTATION_POOL, FIRST_MUTATION_RUNG } from '../src/world.js';
 import { MUTATION_NAMES } from '../src/api/admin.js';
 import { create, diff, combine } from '../src/media.js';
-import { makeRung, difficulty } from '../src/ladder/rung.js';
+import { makeRung, saysOneOf, difficulty } from '../src/ladder/rung.js';
 import { BANDS, bandFor, composePlan, runPlanLocallyTrace, submittedDescriptorFor } from '../src/ladder/grammar.js';
 
 const SEEDS = [1, 2, 3];
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.6.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.7.md', import.meta.url), 'utf8');
 
 function everyRung(fn) {
   for (const seed of SEEDS) {
@@ -29,14 +29,16 @@ function everyRung(fn) {
 // version
 // ---------------------------------------------------------------------------
 
-test('the world declares ladder 0.6.0', () => {
+test('the world declares ladder 0.7.0', () => {
   // Addendum M bumped 0.5.0 -> 0.5.1 (descriptor caps plus the percentOfDims grid-floor fix, not
   // a grammar change, so the running 0.5.0 round kept its own label). Addendum O then bumped
   // 0.5.1 -> 0.6.0: the stitch antecedent, the graded chain and the stated label are all
   // generator changes, so no 0.5.x row is comparable with a 0.6.x one. Every rule pinned in the
   // rest of this file is a 0.5.0 rule that 0.6.0 keeps; test/ladder-0-6.test.js pins the new ones.
-  assert.equal(VERSION, '0.6.0');
-  assert.equal(makeWorld(1).version, '0.6.0');
+  // Addendum Q then bumped 0.6.0 -> 0.7.0 (paraphrased clause surface, amendments, the mutation
+  // density ramp, the listing bucket); test/ladder-0-7.test.js pins those.
+  assert.equal(VERSION, '0.7.0');
+  assert.equal(makeWorld(1).version, '0.7.0');
 });
 
 // ---------------------------------------------------------------------------
@@ -136,7 +138,11 @@ test('rule 1: the recalled value is never repeated in the task text', () => {
       const source = submittedDescriptorFor(world, step.args.fromRung);
       const text = makeRung(world, n).text;
       // the reference must be POINTED at in the text, by rung number
-      assert.match(text, new RegExp(`turned in at step ${step.args.fromRung}\\b`),
+      // Addendum Q rule 1: the sentence that points at the earlier rung is one of four
+      // phrasings, so the check is against the clause KIND, not against a fixed sentence. What
+      // every phrasing of `piece` must do is name the step number, which is what makes the
+      // reference resolvable at all.
+      assert.ok(saysOneOf(text, 'piece', { m: step.args.fromRung }),
         `seed ${seed} rung ${n} recalls rung ${step.args.fromRung} but never names it`);
       if (step.args.field === 'ground') {
         assert.ok(!text.includes(source.background.color),
@@ -184,21 +190,37 @@ test('rule 2: every rung from 30 up carries at least one parameter the API has t
   });
 });
 
+// The plain-language phrase each derived source reads as. Mirrors grammar/rung's own table; the
+// recipe clause is checked through saysOneOf, so only the noun phrase has to be supplied here.
+const DERIVED_SOURCE_PHRASE_FOR_TEST = {
+  d: 'shape left on that leftover piece',
+  combined: 'shape on the stack you just built',
+  sd: 'tone left over when you took the second sound out of the first',
+  vseq: 'frame in the stitched clip',
+  live: 'copy of yours still standing in that listing once the cleared-out ones are left out',
+};
+
 test('rule 2: the derived percent is never printed in the task text, only its recipe', () => {
   everyRung((world, n, seed) => {
     if (n < 30) return;
     const { narrative } = composePlan(world, n);
     const text = makeRung(world, n).text;
     for (const step of derivedChainSteps(narrative)) {
-      assert.ok(text.includes(`start at ${step.base} and take ${Math.abs(step.perUnit)} off`),
-        `seed ${seed} rung ${n} never states the derived recipe`);
+      assert.ok(
+        saysOneOf(text, 'recipe', {
+          base: step.base,
+          off: Math.abs(step.perUnit),
+          phrase: DERIVED_SOURCE_PHRASE_FOR_TEST[step.sourceKey],
+        }),
+        `seed ${seed} rung ${n} never states the derived recipe`,
+      );
       assert.equal(step.base - Math.abs(step.perUnit) * step.count, step.percent,
         `seed ${seed} rung ${n}: the printed recipe does not reproduce the key's percent`);
     }
   });
 });
 
-test('rule 2: every derived source the generator uses is documented in RULES-0.6.md', () => {
+test('rule 2: every derived source the generator uses is documented in RULES-0.7.md', () => {
   const seen = new Set();
   everyRung((world, n) => {
     for (const step of derivedChainSteps(composePlan(world, n).narrative)) seen.add(step.sourceKey);
@@ -213,7 +235,7 @@ test('rule 2: every derived source the generator uses is documented in RULES-0.6
   };
   for (const key of seen) {
     assert.ok(documented[key] !== undefined, `derived source "${key}" has no documented phrase`);
-    assert.ok(RULES_DOC.includes(documented[key]), `RULES-0.6.md does not document the derived source "${key}"`);
+    assert.ok(RULES_DOC.includes(documented[key]), `RULES-0.7.md does not document the derived source "${key}"`);
   }
 });
 
@@ -248,7 +270,7 @@ test('rule 3: a rung with an announced mutation says so in its text, and one wit
   let announced = 0;
   everyRung((world, n, seed) => {
     const rung = makeRung(world, n);
-    const warned = rung.text.includes('the house has changed something about the way it answers');
+    const warned = saysOneOf(rung.text, 'mutation');
     const expected = world.rungMutations[n] !== null;
     assert.equal(warned, expected, `seed ${seed} rung ${n}: warning ${warned}, mutation ${expected}`);
     assert.deepEqual(rung.mutation, world.rungMutations[n]);
@@ -296,7 +318,7 @@ test('rule 8 primitive: a difference over two sounds leaves the tones A has and 
   const left = diff(world, a, b);
   assert.equal(left.kind, 'audio');
   assert.deepEqual(left.notes.map((n) => n.freq), [440, 660]);
-  // the leftover keeps A's length and sample rate, which is what rule 14/15 of RULES-0.6.md says
+  // the leftover keeps A's length and sample rate, which is what rule 14/15 of RULES-0.7.md says
   assert.equal(left.durationMs, a.durationMs);
   assert.equal(left.sampleRate, a.sampleRate);
   assert.equal(diff(world, a, a).notes.length, 0);
@@ -373,7 +395,7 @@ test('rule 6: every rung from 70 up applies three or more ordered house rules, w
       i + 1 < chain.length
       && ((s.kind === 'lora' && resizes.has(chain[i + 1].kind)) || (resizes.has(s.kind) && chain[i + 1].kind === 'lora')));
     assert.ok(adjacent, `seed ${seed} rung ${n}: no style sits next to a resize, so nothing turns on the order`);
-    assert.match(makeRung(world, n).text, /Order is the whole game here/,
+    assert.ok(saysOneOf(makeRung(world, n).text, 'order'),
       `seed ${seed} rung ${n} never tells the reader the order decides the answer`);
   });
 });
@@ -382,7 +404,7 @@ test('rule 6: every rung from 70 up applies three or more ordered house rules, w
 // the documents gate: nothing in a key may turn on a rule that is not written down
 // ---------------------------------------------------------------------------
 
-test('RULES-0.6.md documents every rule the 0.5.0 generator newly relies on', () => {
+test('RULES-0.7.md documents every rule the 0.5.0 generator newly relies on', () => {
   const required = [
     'snapped to six decimal places',
     'rounded onto the house grid',
@@ -398,7 +420,7 @@ test('RULES-0.6.md documents every rule the 0.5.0 generator newly relies on', ()
     'keyed hash over the house',
   ];
   for (const phrase of required) {
-    assert.ok(RULES_DOC.includes(phrase), `RULES-0.6.md is missing the rule: "${phrase}"`);
+    assert.ok(RULES_DOC.includes(phrase), `RULES-0.7.md is missing the rule: "${phrase}"`);
   }
 });
 

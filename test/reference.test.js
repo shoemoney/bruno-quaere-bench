@@ -142,6 +142,17 @@ test('the same partial climb passes when the caller explicitly opts into the rec
 // against a real climb rather than only against the generator. The reference walks compose ->
 // render -> publish and writes the stated word under If-Match, so a server that grades on
 // expectedProjectState/expectedLabel grades the reference as a pass.
+//
+// Addendum Q adds three obligations the 0..99 climbs above now also carry, each of which would
+// have made every rung above its band red rather than merely ungraded:
+//   * rule 3 -- the listing's next page lives ONLY in a `Link: rel="next"` header. A client that
+//     looks for a body field stops after page one, undercounts, and gets the derived percent
+//     wrong on every batch rung.
+//   * rule 10 -- the climb compares the stage sequence it actually walked against
+//     `expectedAudit.stages` and fails the rung on a mismatch, so the state machine, the 409
+//     recovery and the release are graded work rather than six invisible mechanisms.
+//   * rule 7 -- the climb refuses what a house rule forbids and fails itself if it does not;
+//     test/refusal.test.js drives the failing half.
 // ---------------------------------------------------------------------------
 
 test('the answer key a real climb is graded against carries the project state and label', () => {
@@ -151,6 +162,11 @@ test('the answer key a real climb is graded against carries the project state an
   assert.deepEqual(graded.map((r) => r.n), Array.from({ length: 20 }, (_, i) => 50 + i));
   for (const entry of graded) {
     assert.equal(entry.expectedProjectState, 'published');
-    assert.ok(entry.expectedLabel && entry.text.includes(`write the word "${entry.expectedLabel}" onto it`));
+    // Addendum Q rule 1 paraphrases the clause, so the word is what is checked, not the sentence.
+    assert.ok(entry.expectedLabel && entry.text.includes(`"${entry.expectedLabel}"`));
+    // Addendum Q rule 10: the same rungs record the path, not only the terminal artifact.
+    assert.ok(entry.expectedAudit, `rung ${entry.n} publishes but records no audit`);
+    assert.equal(entry.expectedAudit.bodyDigestOf, 'submittedAsset');
+    assert.ok(entry.expectedAudit.stages.includes('render:409'));
   }
 });
