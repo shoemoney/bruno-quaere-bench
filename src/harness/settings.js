@@ -27,11 +27,17 @@ export function settingsPathFor(repoRoot) {
 export const LINEUP = [
   { id: 'claude-fable-5-1', cli: 'ai', directDriver: null },
   { id: 'gpt-6-astra', cli: 'codex', directDriver: null },
+  // qwen3.8-flash before qwen3.8-max: both share the `qwen` CLI, and doctor.js's SMOKE_MODEL map
+  // (settings.js LINEUP filtered to one id per cli) keeps whichever entry comes LAST for a given
+  // cli, so max stays doctor's qwen smoke-test model, unchanged from before this addition.
+  { id: 'qwen3.8-flash', cli: 'qwen', directDriver: null },
   { id: 'qwen3.8-max', cli: 'qwen', directDriver: null },
   { id: 'gemini-3.8-flash', cli: 'gemini', directDriver: 'google' },
   { id: 'kimi-code/k3', cli: 'kimi', directDriver: null },
   { id: 'x-ai/grok-4.6', cli: 'grok', directDriver: 'xai' },
   { id: 'deepseek-flash', cli: null, directDriver: 'deepseek' },
+  // Jeremy's lineup addition, 2026-09-13: Meta Muse via the `muse` CLI (src/harness/cli/muse.js).
+  { id: 'muse-spark-1.3-contributor', cli: 'muse', directDriver: null },
 ];
 
 // --- tiny dotenv, same shape as the gemini/qwen adapters' own copies (KEY=VALUE, '#' comments,

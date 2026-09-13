@@ -171,10 +171,11 @@ async function cmdRun(args) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let result;
     if (driverName === 'cli') {
-      // Addendum F: native CLI drivers (--cli ai|codex|qwen|gemini|kimi) run the model through its
-      // own agent CLI as a subprocess, rather than a tool-calling loop this process drives itself.
+      // Addendum F: native CLI drivers (--cli ai|codex|qwen|gemini|kimi|grok|muse) run the model
+      // through its own agent CLI as a subprocess, rather than a tool-calling loop this process
+      // drives itself.
       if (!cliName) {
-        throw new Error('--driver cli requires --cli <name> (e.g. ai|codex|qwen|gemini|kimi|grok)');
+        throw new Error('--driver cli requires --cli <name> (e.g. ai|codex|qwen|gemini|kimi|grok|muse)');
       }
       // eslint-disable-next-line no-await-in-loop
       result = await cliClimb({

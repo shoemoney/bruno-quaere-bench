@@ -162,10 +162,12 @@ the sandbox contains what the docs promise.
 | claude-fable-5-1 | `--driver cli --cli ai` | Claude Code via the `ai` wrapper, fresh `CLAUDE_CONFIG_DIR` |
 | gpt-6-astra | `--driver cli --cli codex` | fresh `CODEX_HOME` with only the auth file |
 | qwen3.8-max | `--driver cli --cli qwen` | fresh `HOME`, env from `~/.qwen/.env` |
+| qwen3.8-flash | `--driver cli --cli qwen` | same adapter/isolation as qwen3.8-max, different `-m` |
 | kimi-code/k3 | `--driver cli --cli kimi` | model id must carry the `kimi-code/` prefix |
 | gemini-3.8-flash | `--driver google` | the Gemini CLI silently serves 3.5-flash for any 3.8 id |
 | deepseek-flash | `--driver deepseek` | the only flash id DeepSeek's API serves |
 | x-ai/grok-4.6 | `--driver openrouter` | while the x.ai key is team-blocked |
+| muse-spark-1.3-contributor | `--driver cli --cli muse` | fresh `XDG_CONFIG_HOME`/`XDG_DATA_HOME`; usage lives only on disk (the session log), never in `--json` stdout |
 
 Every CLI runs from an isolated home with only its credentials, so no user skills or memories
 climb with it. Each adapter records the model the tool actually served; a mismatch voids the run.

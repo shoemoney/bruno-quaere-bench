@@ -17,6 +17,7 @@ const REGISTRY = {
   gemini: () => import('./gemini.js'),
   kimi: () => import('./kimi.js'),
   grok: () => import('./grok.js'),
+  muse: () => import('./muse.js'),
 };
 
 export const CLI_NAMES = Object.keys(REGISTRY);

@@ -261,11 +261,18 @@ test('runDoctor() writes .quaere/settings.json with the documented shape and res
     // models: qwen has no direct-provider fallback in this lineup -> openrouter; grok's direct
     // fallback (xai) is found but not working (team_blocked), so it ALSO falls to openrouter now.
     assert.equal(settings.models['qwen3.8-max'].driver, 'openrouter');
+    // qwen3.8-flash shares the `qwen` CLI with qwen3.8-max, so it fails the exact same way here.
+    assert.equal(settings.models['qwen3.8-flash'].driver, 'openrouter');
     assert.equal(settings.models['x-ai/grok-4.6'].driver, 'openrouter');
     assert.match(settings.models['x-ai/grok-4.6'].reason, /team_blocked/);
     assert.equal(settings.models['gpt-6-astra'].driver, 'cli');
     // deepseek-flash has no CLI at all and no working deepseek key in this fixture -> openrouter.
     assert.equal(settings.models['deepseek-flash'].driver, 'openrouter');
+    // muse-spark-1.3-contributor: its CLI ('muse') smoke-tests clean in this fixture (only qwen is
+    // rigged to fail), so it resolves straight to the cli driver.
+    assert.equal(settings.models['muse-spark-1.3-contributor'].driver, 'cli');
+    assert.equal(settings.models['muse-spark-1.3-contributor'].cli, 'muse');
+    assert.equal(settings.clis.muse.headless, true);
 
     // it was actually written to disk, and read() would see the same JSON.
     const onDisk = JSON.parse(await (await import('node:fs/promises')).readFile(path.join(repoRoot, '.quaere', 'settings.json'), 'utf8'));
@@ -446,7 +453,7 @@ test('probeKeys(): found + working end to end for a clean google key via env var
 
 test('anyLineupCliFailed() is false only when every lineup CLI is found and headless-ok', () => {
   const clis = Object.fromEntries(
-    ['ai', 'codex', 'qwen', 'gemini', 'kimi', 'grok'].map((n) => [n, { found: true, headless: true }]),
+    ['ai', 'codex', 'qwen', 'gemini', 'kimi', 'grok', 'muse'].map((n) => [n, { found: true, headless: true }]),
   );
   assert.equal(anyLineupCliFailed({ clis }), false);
   clis.grok.headless = false;

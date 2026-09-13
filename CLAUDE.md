@@ -50,14 +50,17 @@ Climbs are launched from the main session as detached processes, never from work
 
 ```bash
 # one model; keys come from aigate (google, deepseek) or ./.env (OPENROUTER_API_KEY), exported per process
-caffeinate -i -s node bin/quaere.js run --driver <cli|google|openrouter|deepseek> [--cli ai|codex|qwen|kimi] \
+caffeinate -i -s node bin/quaere.js run --driver <cli|google|openrouter|deepseek> [--cli ai|codex|qwen|kimi|muse] \
   --model <id> --seed N --attempts 1 --skill-mode sloppy --skill-bytes 5000000 --wall-ms 21600000
 ```
 
-Lineup and drivers: claude-fable-5-1 via `--cli ai`, gpt-6-astra via `--cli codex`, qwen3.8-max
-via `--cli qwen`, kimi-code/k3 via `--cli kimi` (bare `k3` fails), gemini-3.8-flash via
-`--driver google` (the Gemini CLI silently serves 3.5-flash), deepseek-flash direct, x-ai/grok-4.6
-via OpenRouter while the x.ai key is team-blocked. Always `caffeinate`: the laptop slept 26
+Lineup and drivers: claude-fable-5-1 via `--cli ai`, gpt-6-astra via `--cli codex`, qwen3.8-max and
+qwen3.8-flash both via `--cli qwen` (same adapter, different `-m`), kimi-code/k3 via `--cli kimi`
+(bare `k3` fails), gemini-3.8-flash via `--driver google` (the Gemini CLI silently serves
+3.5-flash), deepseek-flash direct, x-ai/grok-4.6 via OpenRouter while the x.ai key is team-blocked,
+and muse-spark-1.3-contributor via `--cli muse` (fresh `XDG_CONFIG_HOME`/`XDG_DATA_HOME`; its
+`--json` stdout never carries usage at all, so tokens come only from the session log muse itself
+writes under that isolated home -- see src/harness/cli/muse.js). Always `caffeinate`: the laptop slept 26
 minutes into round three and voided it. Watch with a `bash -c` loop over
 `find runs -path "*/<seed>/1/result.json"`; a zsh `for p in $paths` does not word-split.
 

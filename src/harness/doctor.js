@@ -28,8 +28,8 @@ import {
 // LINEUP itself so this list can never drift out of sync with settings.js's own mapping.
 const DIRECT_PROVIDERS = [...new Set(LINEUP.filter((entry) => entry.directDriver).map((entry) => entry.directDriver))];
 
-// The six CLIs this bench's lineup can run through (deepseek-flash has no CLI at all).
-export const CLI_LIST = ['ai', 'codex', 'qwen', 'gemini', 'kimi', 'grok'];
+// The seven CLIs this bench's lineup can run through (deepseek-flash has no CLI at all).
+export const CLI_LIST = ['ai', 'codex', 'qwen', 'gemini', 'kimi', 'grok', 'muse'];
 
 // One trivial, cheap prompt reused for every CLI's smoke test -- just enough to prove the
 // binary, its auth, and its headless flag all actually work end to end.
