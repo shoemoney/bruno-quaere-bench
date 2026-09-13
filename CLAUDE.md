@@ -25,6 +25,7 @@ node bin/quaere.js serve --seed N    # public + admin ports; admin needs X-Admin
 node bin/quaere.js rung --seed N --n K [--answer]
 node bin/quaere.js skill --seed N [--mode sloppy --bytes 5000000]
 node bin/quaere.js board runs/ [--json results.json] > board.md
+node bin/quaere.js doctor [--json] [--no-smoke]      # scan every lineup CLI, resolve an openrouter fallback key, write .quaere/settings.json
 ```
 
 `node --test` exits 0 even when tests fail, and the rtk shell hook mangles its output when

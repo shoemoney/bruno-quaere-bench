@@ -2,6 +2,8 @@
 // quaere: serve, spec, skill, rung, reference, run, board. Minimal arg parsing, zero deps.
 
 import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { makeWorld } from '../src/world.js';
 import { createServer } from '../src/api/server.js';
@@ -12,6 +14,11 @@ import { climb as referenceClimb, answerKey } from '../src/ladder/reference.js';
 import { climb as harnessClimb } from '../src/harness/run.js';
 import { climb as cliClimb } from '../src/harness/run-cli.js';
 import { collectResults, readDnr, renderBoard, renderResultsData } from '../src/harness/board.js';
+import { runDoctor, anyLineupCliFailed } from '../src/harness/doctor.js';
+import { readSettings, ensureOpenrouterConsent } from '../src/harness/settings.js';
+
+// bin/quaere.js lives at <repo>/bin/quaere.js; doctor/settings both key off the repo root.
+const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // parseArgs(['--seed', '42', '--answer', 'runs/']) -> {seed:'42', answer:true, _:['runs/']}
 export function parseArgs(argv) {
@@ -131,9 +138,28 @@ const KNOWN_SKILL_MODES = new Set(['clean', 'sloppy']);
 const DEFAULT_WALL_MS = 10_800_000;
 
 async function cmdRun(args) {
-  const driverName = args.driver || 'anthropic';
+  // Addendum (quaere doctor): when --driver is omitted but --model names a lineup id doctor has
+  // already resolved (`.quaere/settings.json`), fall back to its choice -- this is the "or by
+  // doctor fallback" half of the openrouter-consent rule below.
+  let driverName = args.driver;
+  let cliName = args.cli;
+  if (!driverName && args.model) {
+    const settings = readSettings(REPO_ROOT);
+    const resolved = settings && settings.models && settings.models[args.model];
+    if (resolved) {
+      driverName = resolved.driver;
+      if (resolved.driver === 'cli' && resolved.cli && !cliName) cliName = resolved.cli;
+    }
+  }
+  driverName = driverName || 'anthropic';
   if (!KNOWN_DRIVERS.has(driverName)) {
     throw new Error(`--driver must be one of anthropic|openai|openrouter|xai|deepseek|google|cli, got: ${driverName}`);
+  }
+  // Explicit `--driver openrouter` or a doctor fallback that landed on it: never spend the key
+  // without either --yes or an interactive yes at this exact prompt (never printed, never a key
+  // value -- ensureOpenrouterConsent only ever surfaces the FILE it came from).
+  if (driverName === 'openrouter') {
+    await ensureOpenrouterConsent({ repoRoot: REPO_ROOT, yes: Boolean(args.yes) });
   }
   const skillMode = args['skill-mode'] !== undefined ? args['skill-mode'] : 'sloppy';
   if (!KNOWN_SKILL_MODES.has(skillMode)) {
@@ -147,12 +173,12 @@ async function cmdRun(args) {
     if (driverName === 'cli') {
       // Addendum F: native CLI drivers (--cli ai|codex|qwen|gemini|kimi) run the model through its
       // own agent CLI as a subprocess, rather than a tool-calling loop this process drives itself.
-      if (!args.cli) {
-        throw new Error('--driver cli requires --cli <name> (e.g. ai|codex|qwen|gemini|kimi)');
+      if (!cliName) {
+        throw new Error('--driver cli requires --cli <name> (e.g. ai|codex|qwen|gemini|kimi|grok)');
       }
       // eslint-disable-next-line no-await-in-loop
       result = await cliClimb({
-        cliName: args.cli,
+        cliName,
         model: args.model,
         seed: seedFrom(args),
         attempt,
@@ -210,6 +236,20 @@ async function cmdBoard(args) {
   process.stdout.write(renderBoard(results, { dnr }));
 }
 
+// `quaere doctor [--json] [--no-smoke]`: scans this Mac for every lineup CLI (a login-shell
+// binary resolve + `--version` + a trivial headless smoke through the adapter's own build()/
+// parseUsage()), finds an OpenRouter key as the last-resort driver, and writes
+// `.quaere/settings.json`. Exits non-zero if any lineup CLI is missing or fails its smoke.
+async function cmdDoctor(args) {
+  const { settings, table } = await runDoctor({ repoRoot: REPO_ROOT, noSmoke: args['no-smoke'] !== undefined });
+  if (args.json !== undefined) {
+    process.stdout.write(`${JSON.stringify(settings, null, 2)}\n`);
+  } else {
+    process.stdout.write(table);
+  }
+  process.exitCode = anyLineupCliFailed(settings) ? 1 : 0;
+}
+
 async function main() {
   const [, , cmd, ...rest] = process.argv;
   const args = parseArgs(rest);
@@ -222,11 +262,12 @@ async function main() {
     reference: cmdReference,
     run: cmdRun,
     board: cmdBoard,
+    doctor: cmdDoctor,
   };
 
   const handler = commands[cmd];
   if (!handler) {
-    console.error('usage: quaere <serve|spec|skill|rung|reference|run|board> [options]');
+    console.error('usage: quaere <serve|spec|skill|rung|reference|run|board|doctor> [options]');
     process.exitCode = 1;
     return;
   }

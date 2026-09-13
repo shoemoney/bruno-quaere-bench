@@ -170,6 +170,10 @@ the sandbox contains what the docs promise.
 Every CLI runs from an isolated home with only its credentials, so no user skills or memories
 climb with it. Each adapter records the model the tool actually served; a mismatch voids the run.
 
+| Command | What it checks |
+|---|---|
+| `node bin/quaere.js doctor [--json] [--no-smoke]` | scans this Mac for every CLI above (login-shell alias resolution, `--version`, a live headless smoke through the same adapters `run` uses), finds a fallback OpenRouter key, and writes `.quaere/settings.json` mapping each lineup id to the driver it should actually run through; exits non-zero if a lineup CLI is missing or fails its smoke |
+
 ## 🚀 Quick start
 
 ```bash

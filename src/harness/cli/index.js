@@ -16,6 +16,7 @@ const REGISTRY = {
   qwen: () => import('./qwen.js'),
   gemini: () => import('./gemini.js'),
   kimi: () => import('./kimi.js'),
+  grok: () => import('./grok.js'),
 };
 
 export const CLI_NAMES = Object.keys(REGISTRY);

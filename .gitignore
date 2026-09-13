@@ -3,3 +3,4 @@ runs/
 *.log
 .env
 .remember/
+.quaere/
