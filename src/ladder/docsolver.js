@@ -117,10 +117,14 @@ export function gridAfterScale(world, value) {
   return Math.round(q) * roundTo;
 }
 
-// Rule 5 + rule 20: percent resize is size x percent / 100, snapped, then gridded.
-// A derived percentage goes through exactly the same arithmetic as a stated one.
+// Rule 5 + rule 20: percent resize is size x percent / 100, snapped, then gridded, floored at
+// one whole grid step (Addendum M rebaselined rule 5's floor from bare `1` to `roundTo`: a floor
+// of 1 is not itself on the grid whenever roundTo > 1, so the very next grid-rounding pass rule 3
+// requires -- what a live resize does to any explicit pixel target next, stated or derived alike
+// -- would round it straight back down to 0). A derived percentage goes through exactly the same
+// arithmetic as a stated one.
 function percentTarget(world, size, pct) {
-  return Math.max(1, grid(world, snap6((size * pct) / 100)));
+  return Math.max(world.rules.roundTo, grid(world, snap6((size * pct) / 100)));
 }
 
 // ---------------------------------------------------------------------------

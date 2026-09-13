@@ -60,6 +60,11 @@ test('regression: seed 316 rung 16, 180x152 at 58% -> 108x92 under roundTo 4 up 
 // ---------------------------------------------------------------------------
 
 test('runCompute percentOfDims always matches roundToGrid(snap6(raw), roundTo, roundMode)', () => {
+  // Rebaselined by Addendum M: the floor is now `roundTo` (one whole grid step), not bare `1` --
+  // a bare-1 floor is not itself grid-aligned whenever roundTo > 1, so the next grid-rounding
+  // pass (what a live resize target goes through next) rounded it straight back down to 0, which
+  // is what OOM'd seed 525's answer key. See docs/RULES-0.5.md rule 5 and grammar.js's
+  // runCompute for the full mechanism.
   const cases = [
     { of: { width: 100, height: 50 }, percent: 33 },
     { of: { width: 999, height: 1 }, percent: 150 },
@@ -70,8 +75,8 @@ test('runCompute percentOfDims always matches roundToGrid(snap6(raw), roundTo, r
     const { roundTo, roundMode } = world.rules;
     for (const c of cases) {
       const expected = {
-        width: Math.max(1, roundToGrid(snap6(c.of.width * (c.percent / 100)), roundTo, roundMode)),
-        height: Math.max(1, roundToGrid(snap6(c.of.height * (c.percent / 100)), roundTo, roundMode)),
+        width: Math.max(roundTo, roundToGrid(snap6(c.of.width * (c.percent / 100)), roundTo, roundMode)),
+        height: Math.max(roundTo, roundToGrid(snap6(c.of.height * (c.percent / 100)), roundTo, roundMode)),
       };
       assert.deepEqual(runCompute(world, 'percentOfDims', c), expected, `seed ${seed} ${JSON.stringify(c)}`);
     }

@@ -418,9 +418,24 @@ export function runCompute(world, fn, args) {
     const { roundTo, roundMode } = world.rules;
     const rawW = snap6(of.width * (percent / 100));
     const rawH = snap6(of.height * (percent / 100));
+    // RULES-0.5.md rule 5 ("a width can never come out below 1") and rule 3 ("every size the
+    // house stores is rounded onto the house grid") were jointly unsatisfiable whenever roundTo >
+    // 1: flooring at bare `1` (the old code) satisfies rule 5 but hands back a value that is NOT
+    // itself on the grid, so the very next grid-rounding pass rule 3 requires -- which is exactly
+    // what media.js's convert() does to whatever explicit pixel target it receives next, stated
+    // or derived alike -- rounds that 1 straight back down to 0. A canvas that collapses to 0x0
+    // mid-chain then divides every further scale step by zero, producing NaN shape coordinates
+    // that fed the PNG rasteriser's line-drawing Bresenham walk an unterminating loop (NaN never
+    // equals its own target) and OOM'd seed 525's answer key.
+    // The floor is now `roundTo` itself (one whole grid step) rather than bare pixels: still
+    // "never below 1" (roundTo is always >= 1) but now ALSO already on the grid, so the very next
+    // roundToGrid pass is a no-op and the collapse can't happen. Addendum M rebaselines rule 5's
+    // wording (docs/RULES-0.5.md) and percent-resize.test.js's pinned oracle to match -- no rung
+    // that ever produced a real (non-crashing) descriptor depended on the old bare-1 floor, since
+    // any rung that would have needed it crashed before it could be submitted.
     return {
-      width: Math.max(1, roundToGrid(rawW, roundTo, roundMode)),
-      height: Math.max(1, roundToGrid(rawH, roundTo, roundMode)),
+      width: Math.max(roundTo, roundToGrid(rawW, roundTo, roundMode)),
+      height: Math.max(roundTo, roundToGrid(rawH, roundTo, roundMode)),
     };
   }
   // Addendum J rule 2: the derived-parameter family. Each of these turns something the API had
@@ -547,10 +562,23 @@ function execStep(world, store, env, step) {
 }
 
 // runPlanLocally(world, plan) -> Map(resultKey -> descriptor | descriptor[] | computeValue)
+// Addendum M: composePlan now has to actually RUN a candidate plan itself, to know whether any
+// step's result busts the descriptor caps (rule 1) -- the args alone don't say what a combine or
+// batch step really produced. Every other caller (rung.js's makeRung, submittedDescriptorFor)
+// then runs that exact same plan array again to get its result. Rather than pay for the same
+// deterministic execution twice per rung, cache by the plan array's own identity: a plan object
+// is built fresh once per composePlan attempt and never mutated after caps are satisfied (only
+// shrinkForCaps below still mutates it, and only before this cache would ever see it), so two
+// calls sharing the same array always mean "the same plan, already run."
+const PLAN_RUN_CACHE = new WeakMap();
+
 export function runPlanLocally(world, plan) {
+  const cached = PLAN_RUN_CACHE.get(plan);
+  if (cached !== undefined && cached.world === world) return cached.env;
   const env = new Map();
   const store = seedSnapshot(world);
   for (const step of plan) execStep(world, store, env, step);
+  PLAN_RUN_CACHE.set(plan, { world, env });
   return env;
 }
 
@@ -785,8 +813,12 @@ function solveChainPercents(world, chain, i, width, height) {
     const candidate = original + delta;
     if (candidate < lo || candidate > hi) continue;
     if (percentIsAmbiguous(world, { width, height }, candidate)) continue;
-    const w = Math.max(1, roundToGrid(snap6(width * (candidate / 100)), roundTo, roundMode));
-    const h = Math.max(1, roundToGrid(snap6(height * (candidate / 100)), roundTo, roundMode));
+    // Mirrors runCompute's percentOfDims floor exactly (Addendum M: floor at `roundTo`, not bare
+    // `1`) -- this function predicts what the NEXT step in the chain will actually receive, so it
+    // has to agree with what percentOfDims will really produce or the search solves the wrong
+    // problem.
+    const w = Math.max(roundTo, roundToGrid(snap6(width * (candidate / 100)), roundTo, roundMode));
+    const h = Math.max(roundTo, roundToGrid(snap6(height * (candidate / 100)), roundTo, roundMode));
     step.percent = candidate;
     if (solveChainPercents(world, chain, i + 1, w, h)) return true;
   }
@@ -1487,15 +1519,105 @@ function tier9(world, r, band, n) {
 
 const TIER_COMPOSERS = [tier0, tier1, tier2, tier3, tier4, tier5, tier6, tier7, tier8, tier9];
 
+// ---------------------------------------------------------------------------
+// Addendum M rule 1: descriptor caps, asserted after every step
+//
+// Nothing in the grammar stops a combine/batch step from stacking more shapes/notes/clips into
+// one descriptor than the next step downstream (or the renderer) can be trusted with. A cap is
+// asserted on every value a plan step produces -- not just the final submitted descriptor -- and
+// a plan that exceeds it is redrawn from a fresh, deterministic sub-seed, never silently
+// truncated after the fact (truncating the shapes array a step already committed to would desync
+// the plan from the task text, which describes what was DRAWN, not what survived a cap).
+// ---------------------------------------------------------------------------
+
+const MAX_SHAPES = 64;
+const MAX_NOTES = 64;
+const MAX_CLIPS = 32;
+const MAX_REDRAWS = 40;
+
+function withinDescriptorCaps(value, seen = new Set()) {
+  if (Array.isArray(value)) return value.every((v) => withinDescriptorCaps(v, seen));
+  if (value === null || typeof value !== 'object') return true;
+  if (seen.has(value)) return true;
+  seen.add(value);
+  if (Array.isArray(value.shapes) && value.shapes.length > MAX_SHAPES) return false;
+  if (Array.isArray(value.notes) && value.notes.length > MAX_NOTES) return false;
+  if (Array.isArray(value.clips) && value.clips.length > MAX_CLIPS) return false;
+  return Object.values(value).every((v) => withinDescriptorCaps(v, seen));
+}
+
+// planWithinCaps(world, plan): actually runs the plan (the only way to know what a combine step
+// really produced -- composePlan's own args are pre-execution) and checks EVERY step's result,
+// per rule 1, not only the value the rung ultimately submits.
+function planWithinCaps(world, plan) {
+  let env;
+  try {
+    env = runPlanLocally(world, plan);
+  } catch {
+    // A plan that fails to run at all (e.g. a downstream MediaValidationError) is not this rung's
+    // problem to paper over -- let composePlan's caller see the real error on the final attempt.
+    return true;
+  }
+  for (const value of env.values()) {
+    if (!withinDescriptorCaps(value)) return false;
+  }
+  return true;
+}
+
+// shrinkForCaps(plan): the "choose a smaller op, never truncate silently" fallback (rule 1) for
+// when no redraw within budget clears the caps. Deterministically walks every batch/create step
+// and takes one unit of size off the largest offender (a batch's subsetSize, or a create's own
+// shapes/notes list, drawn by the SAME composer that decided how many to draw in the first
+// place) -- shrinking what gets DRAWN, not what a finished descriptor gets to keep. Returns
+// whether anything was shrunk, so the caller knows when it has bottomed out.
+function shrinkForCaps(plan) {
+  let shrunk = false;
+  for (const step of plan) {
+    if (step.op === 'batch' && step.args.subsetSize > 1) {
+      step.args.subsetSize -= 1;
+      shrunk = true;
+    } else if (step.op === 'create' && step.args.params) {
+      const { params } = step.args;
+      if (Array.isArray(params.shapes) && params.shapes.length > 1) {
+        params.shapes = params.shapes.slice(0, -1);
+        shrunk = true;
+      }
+      if (Array.isArray(params.notes) && params.notes.length > 1) {
+        params.notes = params.notes.slice(0, -1);
+        shrunk = true;
+      }
+    }
+  }
+  // The plan array's own identity is unchanged (only step args inside it were mutated), but
+  // runPlanLocally's cache is keyed on that identity -- drop the stale entry or the next
+  // planWithinCaps call below would see the PRE-shrink result and never converge.
+  if (shrunk) PLAN_RUN_CACHE.delete(plan);
+  return shrunk;
+}
+
 // composePlan(world, n) -> { plan, submitKey, narrative, band, mutation }. `plan` is exactly what
 // runPlanLocally and the HTTP interpreter both execute. Every tier composer above already nudges
 // its own percent steps away from ambiguity (fixChainPercents, Addendum I rule 2) before
-// returning, so nothing further to guard here. `mutation` is Addendum J rule 3's announced
-// change for this rung, read straight off the World (never drawn here) so the API, the answer key
-// and the task text cannot disagree about what is about to move under the agent's feet.
+// returning. `mutation` is Addendum J rule 3's announced change for this rung, read straight off
+// the World (never drawn here) so the API, the answer key and the task text cannot disagree about
+// what is about to move under the agent's feet.
 export function composePlan(world, n) {
   const band = bandFor(n);
-  const r = rng(sub(world.seed, `rung:${n}`));
-  const result = TIER_COMPOSERS[band.tier](world, r, band, n);
+  let result;
+  let attempt = 0;
+  for (;;) {
+    const label = attempt === 0 ? `rung:${n}` : `rung:${n}:cap-redraw:${attempt}`;
+    const r = rng(sub(world.seed, label));
+    result = TIER_COMPOSERS[band.tier](world, r, band, n);
+    if (planWithinCaps(world, result.plan) || attempt >= MAX_REDRAWS) break;
+    attempt += 1;
+  }
+  // Redraws alone exhausted (band ranges are bounded, so a bad seed keeps landing on the same
+  // shape): shrink the last attempt's plan deterministically until it clears the caps. Bounded by
+  // construction -- every batch/create count this can shrink bottoms out at 1, and a lone item's
+  // own shape/note count is already within band limits.
+  while (!planWithinCaps(world, result.plan) && shrinkForCaps(result.plan)) {
+    // loop condition re-checks planWithinCaps against the freshly-shrunk plan
+  }
   return { ...result, band, mutation: (world.rungMutations && world.rungMutations[n]) || null };
 }

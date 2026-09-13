@@ -30,8 +30,10 @@ function everyRung(fn) {
 // ---------------------------------------------------------------------------
 
 test('the world declares ladder 0.5.0', () => {
-  assert.equal(VERSION, '0.5.0');
-  assert.equal(makeWorld(1).version, '0.5.0');
+  // Addendum M bumped 0.5.0 -> 0.5.1: descriptor caps plus the percentOfDims grid-floor fix, not
+  // a grammar change, so the running 0.5.0 round keeps its own label (Addendum M rule 3).
+  assert.equal(VERSION, '0.5.1');
+  assert.equal(makeWorld(1).version, '0.5.1');
 });
 
 // ---------------------------------------------------------------------------

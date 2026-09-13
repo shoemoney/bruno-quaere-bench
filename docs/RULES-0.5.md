@@ -36,7 +36,7 @@ only so the docsolver knows to parse them.
 
 5. **(skill)** A percentage resize is worked out as `size × percent ÷ 100`, snapped to six
    decimals (rule 2), then rounded onto the grid (rule 3). It is **not** rounded to a whole pixel
-   first and then gridded. A width can never come out below 1.
+   first and then gridded. A width can never come out below one whole step of the house grid.
 
 6. **(skill)** When a picture is resized, every shape on it moves and scales with the canvas:
    horizontal figures multiply by the width ratio, vertical figures by the height ratio, a radius

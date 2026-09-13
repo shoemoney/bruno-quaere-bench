@@ -25,7 +25,7 @@ import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 // chains at 50+ (rule 4), audio/video math at 50+ (rules 5 and 8), multi-rule ordering at 70+
 // (rule 6) and a much longer step envelope (rule 9). Every 0.4.x hash is superseded and no 0.4.x
 // board row is comparable with a 0.5.x one.
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.1';
 
 // ---------------------------------------------------------------------------
 // Addendum J rule 3: announced per-rung mutations

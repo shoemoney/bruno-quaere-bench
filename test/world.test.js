@@ -42,9 +42,10 @@ test('world.version is pinned', () => {
   // same way every other convert target does, plus grammar.js's ambiguous-percent redraw), then
   // 0.4.0 -> 0.5.0 by Addendum J, which changed the ladder grammar wholesale (cross-rung
   // references, derived parameters, announced per-rung mutations, state-machine/HMAC/ETag chains,
-  // audio and video math, multi-rule ordering, a much longer step envelope) -- see world.js's
-  // VERSION comment.
-  assert.equal(makeWorld(1).version, '0.5.0');
+  // audio and video math, multi-rule ordering, a much longer step envelope), then 0.5.0 -> 0.5.1
+  // by Addendum M's descriptor caps and percentOfDims grid-floor fix -- see world.js's VERSION
+  // comment.
+  assert.equal(makeWorld(1).version, '0.5.1');
 });
 
 test('vocab has the four required nouns as non-empty strings', () => {
