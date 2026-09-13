@@ -824,3 +824,45 @@ fall. Rule: `POST /rungs/{n}/submit` with `n` not equal to the current rung retu
 problem+json (`detail: "rung 999 is not the current rung (60)"`) and records nothing; the
 current-rung one-submission rule is unchanged. Test both. The seed-526 run is voided and rerun.
 Fable's rung-60 submission (seed 520) was to the current rung with a real asset and stands.
+
+## Addendum O: rung 60 audit; ladder 0.6.0 grades the chain and states the antecedent
+
+Added 2026-09-13 02:20. Five of six finished climbs on 0.5.0 round two fell at rung 60 (fable,
+qwen, deepseek with fidelity ~0.03; gemini 0.91; grok fell earlier at 41). Opus audit findings:
+
+1. **UNDERSPECIFIED antecedent.** After the video stitch, the "Then, in this order" chain
+   reattaches to the finished picture; the stitched clip is only a measuring stick for the frame
+   count. Nothing in RULES-0.5.md, the skill, or the spec says so; the docsolver inferred it from
+   an API constraint the docs never state (video converts only to qvid). Fable, qwen, and
+   deepseek applied the chain to the clip: arithmetic 100 percent correct, wrong antecedent,
+   fidelity 0.03. **Voided.** Gemini recalled an intermediate asset's size instead of its own
+   rung-40 submission (rule 21 is explicit): **stands** as a model error.
+2. **The house accepts the wrong reading for two of three steps.** Resize on a video is 201;
+   lora on a video returns 201 and stamps `lora: {applied: true}` while changing nothing the
+   grader sees (`media.js` returns non-image descriptors untouched); only the png save 422s.
+3. **Most of rung 60 is ungraded.** The state machine, HMAC release, conditional write, and the
+   stitch contribute nothing to the submitted hash: four public calls (create, convert, lora,
+   convert png) reproduce the key exactly. Six mechanisms of work, invisible to the scorer.
+4. **Gate blind spots.** `test/docsolver.test.js` covers seeds 1..20; rounds run on 4xx/5xx
+   seeds. The reference's `recallValue` fallback lets a partial climb pass without the earlier
+   rung existing, so an unretrievable cross-rung value is never detected.
+
+Rules for ladder 0.6.0:
+- **State the antecedent.** RULES rule (new): "a stitched moving piece is only there to be
+  counted; the chain carries on with the finished picture." Emitted in every stitch rung's text
+  and stated in the skill. The docsolver parses that sentence and fails loudly if a stitch rung
+  lacks it.
+- **The house refuses the wrong reading.** Lora on a non-image is 422 (`styles apply to pictures
+  only`); `applyLora` never stamps `applied` on an untouched descriptor; `assets.convert.format`
+  carries a per-kind enum in the spec, and the skill states that a video converts only to qvid.
+- **Grade the chain.** From rung 50 up, a submission passes only if the hashes match AND the
+  submitted asset's project is `published` (through compose, rendered, published in order) AND
+  the asset carries the label written under If-Match. The answer key records the required project
+  state and label; the rung text already demands them. Anything the text demands is graded or
+  removed from the text.
+- **Gates cover the seeds that run.** The docsolver test takes a seed list that includes the
+  round's seed block (default 1..20 plus 500..540); the reference climb resolves a recall
+  strictly from a prior submission in the same climb and fails if it cannot (no `recallValue`
+  fallback in the gate).
+- Version 0.6.0. Round two on 0.5.0 is superseded; its comparable facts are Gemini 59 (real,
+  fell at 60 on bookkeeping), Grok 40, Kimi 25, and the three voided 59s.
