@@ -792,3 +792,19 @@ a sandbox-fidelity test runs the reference climb using ONLY files present in a f
 sandbox (TASK.md, spec.json, HOUSE-RULES.md, environments/local.yml) as its inputs, so anything
 the docs promise the sandbox contains is proven present. The 0.5.0 round is voided and rerun
 on one harness version for all seven.
+
+## Addendum M: a seed can make the generator explode
+
+Added 2026-09-13 01:00. `answerKey(makeWorld(525))` exhausts a 3 GB heap in 6.6 s; seed 523
+takes 76 ms and 305 KB. The grok run on seed 525 died at setup with `FATAL ERROR: JavaScript heap
+out of memory` before its sandbox was written. Some composition in the 0.5.0 grammar grows
+without bound on certain seeds (a stack-everything step over accumulated artifacts, a redraw loop
+that never converges, or a cross-rung reference chain that re-embeds prior descriptors).
+
+Rules: (1) every artifact descriptor is capped (at most 64 shapes, 64 notes, 32 clips) and every
+combine or stack step draws inputs bounded by that cap; the generator asserts the cap after each
+step and redraws the step if exceeded, never silently truncating; (2) `test/keygen-bounds.test.js`
+generates the answer key for seeds 1..300 and asserts each finishes under 2 s and serializes under
+2 MB, and that `makeRung` for seed 525 rung by rung stays under those bounds; (3) VERSION bumps to
+0.5.1; the running 0.5.0 round keeps its label. A seed that cannot be generated is a generator
+bug, never a "hard seed".
