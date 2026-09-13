@@ -332,7 +332,7 @@ export async function computeTrap(world, collectionDir) {
 // A provider failure is transient if retrying the identical request could plausibly succeed:
 // rate limits, gateway/overload 5xx, and socket-level resets. Anything else (401 bad key, 400 bad
 // request, 404 unknown model) will fail identically forever, so retrying only burns wall clock.
-const TRANSIENT = /\b(429|500|502|503|504|529)\b|overloaded|rate.?limit|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up/i;
+const TRANSIENT = /\b(429|500|502|503|504|529)\b|overloaded|rate.?limit|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up|\bterminated\b/i;
 
 const RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000];
 
