@@ -5,7 +5,12 @@
 # budget. See CLAUDE.md's "Running a calibration round" for the manual single-model form this
 # fans out; this script is the whole-round version for it.
 #
-# Usage: scripts/launch-round.sh <base-seed>
+# Usage: [DRIVERS=cli[,google,...]] [RUNS_DIR=/abs/runs] scripts/launch-round.sh <base-seed>
+#
+# DRIVERS (optional) is a comma list of driver names to launch; any lineup model whose resolved
+# driver is not in the list is skipped and named on stderr. `DRIVERS=cli` is the subscription-only
+# round: no per-token provider key is ever fetched. RUNS_DIR (optional) is passed as --out so a
+# round launched from a git worktree still writes into the main checkout's runs/ tree.
 #
 # Requires .quaere/settings.json (run `node bin/quaere.js doctor --no-smoke` first if it's
 # missing -- this script does that for you, once, the first time it doesn't find one).
@@ -108,6 +113,19 @@ while IFS=$'\t' read -r idx id driver cli; do
   # generic usage message and exits instantly (caught 2026-09-13: all nine round-five launches
   # exited in under a second because --driver landed before "run").
   args=(run --yes --model "$id" --seed "$seed" --attempts 1 --skill-mode sloppy --skill-bytes 5000000 --wall-ms 21600000)
+  if [ -n "${RUNS_DIR:-}" ]; then
+    args=("${args[@]}" --out "$RUNS_DIR")
+  fi
+
+  if [ -n "${DRIVERS:-}" ]; then
+    case ",$DRIVERS," in
+      *",$driver,"*) ;;
+      *)
+        echo "launch-round: $id -- driver \"$driver\" not in DRIVERS=$DRIVERS, skipping" >&2
+        continue
+        ;;
+    esac
+  fi
 
   key_var=""
   key_val=""
