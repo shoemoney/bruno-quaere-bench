@@ -19,12 +19,8 @@ import { climb, resolveDriver } from '../src/harness/run.js';
 import { scoreRuns } from '../src/harness/score.js';
 import { renderBoard } from '../src/harness/board.js';
 
-let nextPort = 49300;
 function freshPorts() {
-  const publicPort = nextPort;
-  const adminPort = nextPort + 1;
-  nextPort += 2;
-  return { publicPort, adminPort };
+  return { publicPort: 0, adminPort: 0 };
 }
 
 // makeScriptedDriver(script) -> {driver, calls}. `script[i]` (or the last entry, once the script
