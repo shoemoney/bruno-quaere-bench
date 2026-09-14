@@ -714,8 +714,17 @@ function recall(opts, step, what) {
 // being released (rule 35). Both are part of the answer from rung 50 up, and the
 // canonical string's field order is itself amendable (rule 33), which is why it is read
 // off the rules in force rather than off the pristine world.
-const AUDIT_STAGES = ['draft', 'render:409', 'composed', 'rendering', 'rendered', 'published'];
-const auditFor = (w) => ({ stages: [...AUDIT_STAGES], canonical: w.hmac.canon, bodyDigestOf: 'submittedAsset' });
+// Addendum S / RULES-0.7 rule 38: `render:409` belongs in the stage sequence only when the
+// task text itself carries the instructional stage-recovery sentence (clauseStageRecover,
+// below) -- never merely because the project reaches `published`. The plan that actually
+// produces the 409 is invisible to this file; the text is the only thing it may read.
+const AUDIT_STAGES_BASE = ['draft', 'composed', 'rendering', 'rendered', 'published'];
+const AUDIT_STAGES_RECOVER = ['draft', 'render:409', 'composed', 'rendering', 'rendered', 'published'];
+const auditFor = (w, recover409) => ({
+  stages: [...(recover409 ? AUDIT_STAGES_RECOVER : AUDIT_STAGES_BASE)],
+  canonical: w.hmac.canon,
+  bodyDigestOf: 'submittedAsset',
+});
 
 // RULES-0.7 rule 36: what a refusal clause asks for, and the numbered rule that forbids
 // it. The gate compares these three leaves; the key's own `detail` is prose about the
@@ -748,6 +757,7 @@ export function solveGraded(world, rungText, n, opts = {}) {
     projectState: null,
     label: null,
     forbidden: null,
+    stageRecover409: false,
     stitched: false,
     stitchAntecedent: false,
     turnedIn: false,
@@ -781,7 +791,7 @@ export function solveGraded(world, rungText, n, opts = {}) {
     descriptors: [state.current],
     expectedProjectState: state.projectState,
     expectedLabel: state.label,
-    expectedAudit: state.projectState === 'published' ? auditFor(w) : null,
+    expectedAudit: state.projectState === 'published' ? auditFor(w, state.stageRecover409) : null,
     forbidden: state.forbidden,
   };
 }
@@ -1161,6 +1171,17 @@ const STAGE_REFUSAL_NOTE = note(
   'An out-of-turn stage is refused by design -- let it be refused, insert the stage you were missing, and keep going\\.',
 );
 
+// Addendum S / RULES-0.7 rule 38: the recover409-dependent half of the stage clause, stated as
+// a deliberate instruction rather than a warning about the consequence. Only ITS presence -- not
+// the project reaching `published`, not anything about the plan this file cannot see -- puts
+// `render:409` in the computed audit's stage list (see clauseStage below).
+const STAGE_RECOVER = note(
+  'Before you lock it in, reach for the finishing run on purpose -- take the refusal it earns you, then put in the stage you skipped and carry on from there\\.',
+  'Before you compose it, reach for the render stage on purpose -- take the refusal, then walk every stage in the house\'s order starting from where you actually are\\.',
+  'On purpose, ask for the render stage before you compose it -- take the refusal that earns you, then work every stage in the house\'s order from wherever that leaves you\\.',
+  'Deliberately reach for the finishing run before you compose it -- let it be refused, then carry on through every stage in the house\'s order from where that refusal leaves you\\.',
+);
+
 const SIGN = note(
   'Then sign and send the release notice the house requires before anything can go out the door\\.',
   'Nothing goes out the door unreleased: sign the release notice the house requires and send it\\.',
@@ -1399,6 +1420,15 @@ function clauseShortPage(c) { return saysOneOf(c, SHORT_PAGE) !== undefined; }
 function clauseStackNote(c) { return saysOneOf(c, STACK_NOTE) !== undefined; }
 function clauseStageRefusalNote(c) { return saysOneOf(c, STAGE_REFUSAL_NOTE) !== undefined; }
 
+// RULES-0.7 rule 38: this is the ONLY thing that may set the flag `auditFor` reads. If a rung's
+// text never asks for the early reach, none is required and none is graded -- the plan is not
+// consulted, ever.
+function clauseStageRecover(c, state) {
+  if (saysOneOf(c, STAGE_RECOVER) === undefined) return false;
+  state.stageRecover409 = true;
+  return true;
+}
+
 // --- `amendment` (rule 33) --------------------------------------------------
 // The announcement names no rule and no value -- "a numbered rule was amended as of this
 // rung; go and read the house rules again". The amended VALUES reach this solver through
@@ -1552,6 +1582,7 @@ const CLAUSE_ORDER = [
   clauseCreateImage,
   clauseDiffImage,
   clauseStage,
+  clauseStageRecover,
   clauseStageRefusalNote,
   clauseSign,
   clauseStitch,

@@ -1,6 +1,6 @@
 # House rules the ladder answer key depends on
 
-Ladder version **0.7.0** (`src/world.js` `VERSION`). Written by the ladder workstream for the
+Ladder version **0.7.1** (`src/world.js` `VERSION`). Written by the ladder workstream for the
 skill workstream and the docsolver workstream. Was `docs/RULES-0.5.md` through 0.5.1 and
 `docs/RULES-0.6.md` through 0.6.0; renamed each time, never restarted, so every rule number below
 is stable across every bump.
@@ -12,8 +12,8 @@ not here, that is a generator bug of exactly the kind Addendum I was written abo
 `docsolver` gate exists to catch it, and this file is what `docsolver` is allowed to read.
 
 Rules 1–15 carried over from 0.4.0 and are unchanged in substance; 16–27 are new in 0.5.0; 28–29
-are new in 0.6.0; **30–37 are new in 0.7.0** (Addendum Q). All of them are appended rather than
-slotted in, so nothing renumbers.
+are new in 0.6.0; 30–37 are new in 0.7.0 (Addendum Q); **38 is new in 0.7.1** (Addendum S). All of
+them are appended rather than slotted in, so nothing renumbers.
 
 **What changed most in 0.7.0 is not a rule but the appendix.** Through 0.6.0 the last section of
 this file published the closed set of *sentences* the task text could emit, and a solver parsed
@@ -253,6 +253,19 @@ only so the docsolver knows to parse them.
     one that fits. Ties never happen: the candidates are the house's own stated sample rates, in
     order.
 
+## Stage recovery is stated outright, not inferred — new in 0.7.1
+
+38. **(skill, new in 0.7.1)** **A rung that tests stage recovery says so outright.** Rule 23 says
+    the house refuses a stage asked for out of turn; a rung whose answer key requires that refusal
+    to have happened says as much in the task text itself, as a plain instruction to reach for a
+    later stage on purpose before you are ready for it, take the refusal, and then walk every
+    stage in the house's order from wherever that leaves you. **If a rung's task text does not ask
+    for that early reach, none is required of the agent and none is graded** — a competent agent
+    that takes every stage in order the first time, exactly as asked, cannot be marked down for
+    never having been refused. What decides whether the audit trail includes the refusal is the
+    instruction in the text, never an assumption baked into the key from something the text itself
+    never says.
+
 ---
 
 ## What this file does NOT contain, on purpose
@@ -319,7 +332,7 @@ rather than guess, as it already does for an unknown create clause.
 | `csvPull` | ask for the same listing as a spreadsheet rather than the usual reply |
 | `clearOut` | clear the last N of this rung's copies out, confirm both directions, then count what stands (rule 19) |
 | `shortPage` | that listing is metered tightly; a short page is not the end, only a missing next cursor is (rule 31) |
-| `stage` | walk every house stage in house order, expect a refusal out of turn, take it and carry on (rule 23) |
+| `stage` | walk every house stage in house order, wait for the finishing run's check-back (rule 23); when the rung tests stage recovery it also instructs a deliberate early reach for the render stage before composing, taking the refusal, and carrying on from there (rule 38) -- graded only when stated |
 | `sign` | sign and send the release notice before anything leaves (rules 24, 35) |
 | `stitch` | a stitched moving piece is only there to be counted; carry on with the finished picture (rule 28) |
 | `tag` | write the STATED word onto the LAST piece, conditionally, so it fails rather than overwrites (rules 25, 29) |

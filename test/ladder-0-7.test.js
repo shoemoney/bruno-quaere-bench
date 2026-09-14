@@ -21,8 +21,8 @@ const RULES_DOC = readFileSync(new URL('../docs/RULES-0.7.md', import.meta.url),
 const SEEDS = [1, 2, 3];
 
 test('the world declares ladder 0.7.0', () => {
-  assert.equal(VERSION, '0.7.0');
-  assert.equal(makeWorld(1).version, '0.7.0');
+  assert.equal(VERSION, '0.7.1');
+  assert.equal(makeWorld(1).version, '0.7.1');
 });
 
 // ---------------------------------------------------------------------------

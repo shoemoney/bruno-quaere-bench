@@ -170,11 +170,19 @@ const PHRASINGS = {
     () => 'How the stacking step fades each layer is set by the house rule on compounding; go and find it.',
     () => 'The number is the step; the house rule on compounding is what turns it into each layer\'s solidity.',
   ],
+  // Addendum S: the second sentence is the recover409-dependent part. When the render step's
+  // plan actually sets `args.recover409` (the same flag `rung.js`'s `auditFor()` reads to decide
+  // whether the key requires a `render:409` in the audit trail), the sentence has to INSTRUCT the
+  // deliberate early reach, not just narrate what happens if one occurs -- otherwise a competent
+  // agent that does every stage correctly the first time can never produce the sequence the key
+  // demands, through no fault of its own reading. When recover409 is false (no rung in this
+  // text-generator path currently draws one; renderTier always sets it true), the original
+  // descriptive warning stands untouched, because no early reach is required or graded.
   stage: [
-    () => 'Walk it all the way through the house stages in the house order -- lock it in, kick off the finishing run, and do not call it done until you check back and it actually says finished. If you reach for a stage out of turn the house will refuse you; take the refusal, put the missing stage in, and carry on.',
-    () => 'Take it through every house stage, in the house\'s order: lock it in, start the finishing run, then check back and wait until the check-back really says finished. Reaching for a stage early earns a refusal -- accept it, do the stage you skipped, and go on.',
-    () => 'The house stages happen in one order and all of them happen. Lock it in, start the finishing run, and only treat it as finished once a check-back says so. Ask for a stage out of turn and you will be refused; take that refusal, fill in what was missing, continue.',
-    () => 'Every stage, in house order, no shortcuts: lock in, start the finishing run, poll until the answer is finished. An out-of-turn stage is refused by design -- let it be refused, insert the stage you were missing, and keep going.',
+    ({ recover409 } = {}) => `Walk it all the way through the house stages in the house order -- lock it in, kick off the finishing run, and do not call it done until you check back and it actually says finished. ${recover409 ? 'Before you lock it in, reach for the finishing run on purpose -- take the refusal it earns you, then put in the stage you skipped and carry on from there.' : 'If you reach for a stage out of turn the house will refuse you; take the refusal, put the missing stage in, and carry on.'}`,
+    ({ recover409 } = {}) => `Take it through every house stage, in the house's order: lock it in, start the finishing run, then check back and wait until the check-back really says finished. ${recover409 ? 'Before you compose it, reach for the render stage on purpose -- take the refusal, then walk every stage in the house\'s order starting from where you actually are.' : 'Reaching for a stage early earns a refusal -- accept it, do the stage you skipped, and go on.'}`,
+    ({ recover409 } = {}) => `The house stages happen in one order and all of them happen. Lock it in, start the finishing run, and only treat it as finished once a check-back says so. ${recover409 ? 'On purpose, ask for the render stage before you compose it -- take the refusal that earns you, then work every stage in the house\'s order from wherever that leaves you.' : 'Ask for a stage out of turn and you will be refused; take that refusal, fill in what was missing, continue.'}`,
+    ({ recover409 } = {}) => `Every stage, in house order, no shortcuts: lock in, start the finishing run, poll until the answer is finished. ${recover409 ? 'Deliberately reach for the finishing run before you compose it -- let it be refused, then carry on through every stage in the house\'s order from where that refusal leaves you.' : 'An out-of-turn stage is refused by design -- let it be refused, insert the stage you were missing, and keep going.'}`,
   ],
   sign: [
     () => 'Then sign and send the release notice the house requires before anything can go out the door.',
@@ -700,7 +708,7 @@ function tagNote(ctx, label) {
 
 function text5(ctx, narrative) {
   const world = ctx.world;
-  return `Make ${describeCreate(ctx, 'audio', narrative.audioA)}. Then make a second sound ${describeTones(ctx, narrative.audioB)}. Work out every tone the first sound has that the second one does not -- that leftover sound is the one that matters later -- and re-encode it as ${describeKind('audio', narrative.audioFormat)} at ${narrative.sampleRate} samples a second. Then, inside a fresh ${world.vocab.project} of your own making, over in ${labelled(ctx, world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(ctx, 'image', narrative.params, narrative.crossRef)}. ${say(ctx, 'stage')} ${say(ctx, 'sign')}${describeChain(ctx, narrative.chain)} ${tagNote(ctx, narrative.label)} ${say(ctx, 'turnInLast')}`;
+  return `Make ${describeCreate(ctx, 'audio', narrative.audioA)}. Then make a second sound ${describeTones(ctx, narrative.audioB)}. Work out every tone the first sound has that the second one does not -- that leftover sound is the one that matters later -- and re-encode it as ${describeKind('audio', narrative.audioFormat)} at ${narrative.sampleRate} samples a second. Then, inside a fresh ${world.vocab.project} of your own making, over in ${labelled(ctx, world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(ctx, 'image', narrative.params, narrative.crossRef)}. ${say(ctx, 'stage', { recover409: narrative.recover409 })} ${say(ctx, 'sign')}${describeChain(ctx, narrative.chain)} ${tagNote(ctx, narrative.label)} ${say(ctx, 'turnInLast')}`;
 }
 
 function describeClip(params, index) {
@@ -709,7 +717,7 @@ function describeClip(params, index) {
 
 function text6(ctx, narrative) {
   const world = ctx.world;
-  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(ctx, world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(ctx, 'image', narrative.params, narrative.crossRef)}. ${say(ctx, 'stage')} ${say(ctx, 'sign')} Then build a pair of short moving takes over that same finished picture: ${describeClip(narrative.videoA, 1)}; ${describeClip(narrative.videoB, 2)}. Don't tell the house how fast to run them -- let it use its own usual speed. Stitch the two end to end, first one first, into a single moving piece. ${say(ctx, 'stitch')}${describeChain(ctx, narrative.chain)} ${tagNote(ctx, narrative.label)} ${say(ctx, 'turnInLast')}`;
+  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(ctx, world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(ctx, 'image', narrative.params, narrative.crossRef)}. ${say(ctx, 'stage', { recover409: narrative.recover409 })} ${say(ctx, 'sign')} Then build a pair of short moving takes over that same finished picture: ${describeClip(narrative.videoA, 1)}; ${describeClip(narrative.videoB, 2)}. Don't tell the house how fast to run them -- let it use its own usual speed. Stitch the two end to end, first one first, into a single moving piece. ${say(ctx, 'stitch')}${describeChain(ctx, narrative.chain)} ${tagNote(ctx, narrative.label)} ${say(ctx, 'turnInLast')}`;
 }
 
 // Addendum J rule 2's most literal form, in plain language. The count is never stated, the

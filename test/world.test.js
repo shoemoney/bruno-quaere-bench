@@ -52,7 +52,7 @@ test('world.version is pinned', () => {
   // clause surface paraphrased four ways, dated mid-ladder amendments, the announced-mutation
   // density ramp and its new load-bearing target pool, and the tighter listing bucket)
   // -- see world.js's VERSION comment.
-  assert.equal(makeWorld(1).version, '0.7.0');
+  assert.equal(makeWorld(1).version, '0.7.1');
 });
 
 test('vocab has the four required nouns as non-empty strings', () => {

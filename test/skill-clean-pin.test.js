@@ -38,7 +38,11 @@ import { sha256 } from '../src/canon.js';
 // the four parts are newline-separated rather than concatenated -- and its worked example is four
 // lines instead of one. test/skill.test.js proves an agent following the section actually
 // publishes, and that the pre-0.7.0 recipes do not. A real, intended content change.
-const CLEAN_SEED_1_SHA256 = '4478573b71132af966beb19934e9a1f64166a808df86cb14194ef569fb21f52b';
+// Rebaselined a seventh time for ladder 0.7.1 / docs/RULES-0.7.md rule 38 (Addendum S): the
+// "Project state machine" section now states outright that a task testing stage recovery says so
+// as a plain instruction, and that a task which never asks for the early reach never requires or
+// grades one. A real, intended content addition, not a regression.
+const CLEAN_SEED_1_SHA256 = '45063d869b24e4fc02543e512182f71487fc5c13a2841039d1ba009a487e85f7';
 
 test('clean-mode toSkill(world) output for seed 1 is byte-identical to the pre-sloppy baseline', () => {
   const world = makeWorld(1);

@@ -1496,7 +1496,11 @@ function renderTier(world, r, band, n, { withPublish, chain, prePlan = [], postP
   params = applyCrossRef(params, resolvedCrossRef);
   const plan = [...prePlan];
   if (resolvedCrossRef) plan.push(recallStep(resolvedCrossRef));
-  plan.push({ op: 'render', resultKey: 'rendered', args: { kind: 'image', params, workspaceId, recover409: true } });
+  // Addendum S: the task text's stage clause reads this same flag to decide whether it narrates
+  // the early reach as a warning or instructs it outright -- `rung.js`'s `auditFor()` and this
+  // narrative field must never drift apart, so both come from one local.
+  const recover409 = true;
+  plan.push({ op: 'render', resultKey: 'rendered', args: { kind: 'image', params, workspaceId, recover409 } });
   if (withPublish) plan.push({ op: 'publish', resultKey: 'published', args: { renderKey: 'rendered' } });
   // The finished picture the rest of the rung works over: the released one where there is a
   // release, the rendered one otherwise. Identical descriptors -- publishing is a project state
@@ -1517,7 +1521,7 @@ function renderTier(world, r, band, n, { withPublish, chain, prePlan = [], postP
     plan,
     submitKey: 'tagged',
     narrative: {
-      kind: 'image', params, workspaceId, workspaceLabel: workspace.name, withPublish, chain, crossRef: resolvedCrossRef, label,
+      kind: 'image', params, workspaceId, workspaceLabel: workspace.name, withPublish, chain, crossRef: resolvedCrossRef, label, recover409,
     },
   };
 }

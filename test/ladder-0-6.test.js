@@ -48,8 +48,8 @@ function stitches(plan) {
 // ---------------------------------------------------------------------------
 
 test('the world declares ladder 0.7.0', () => {
-  assert.equal(VERSION, '0.7.0');
-  assert.equal(makeWorld(1).version, '0.7.0');
+  assert.equal(VERSION, '0.7.1');
+  assert.equal(makeWorld(1).version, '0.7.1');
 });
 
 // ---------------------------------------------------------------------------

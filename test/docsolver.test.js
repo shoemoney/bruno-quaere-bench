@@ -710,9 +710,13 @@ test('the ladder exercises every obligation the solver models', () => {
     'derived count: standing copies (rules 19, 32)': (text) => /copy of yours still standing in that listing/.test(text),
     'stitch antecedent (rule 28)': statesStitchAntecedent,
   };
-  for (const kind of ['mutation', 'stage', 'sign', 'shortPage', 'clearOut', 'csvPull', 'order', 'trap', 'stack', 'idem']) {
+  for (const kind of ['mutation', 'sign', 'shortPage', 'clearOut', 'csvPull', 'order', 'trap', 'stack', 'idem']) {
     byKind[`clause kind: ${kind}`] = (text) => statesKind(text, kind);
   }
+  // Addendum S: every rung that emits `stage` today sets `recover409: true` (renderTier bakes it
+  // in unconditionally), so the recover409-dependent half of the clause always renders as the
+  // instructional sentence, never the plain args-less one `statesKind`'s default would probe for.
+  byKind['clause kind: stage'] = (text) => statesKind(text, 'stage', { recover409: true });
   const outstanding = new Set(Object.keys(byKind));
   // Deliberately DEFAULT_SEEDS and not SEEDS: whether the grammar can emit an obligation
   // at all is a property of the grammar, not of whichever block a round happens to run on.

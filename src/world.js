@@ -44,7 +44,16 @@ import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 // this file publishes names the load-bearing fields a solver actually parses rather than the
 // decorative ones 0.6.0 moved; (4) `rate.buckets` (Q9) declares the tighter bucket on the listing
 // that feeds a derived count, and with it the short-page rule.
-export const VERSION = '0.7.0';
+//
+// Bumped to 0.7.1 by Addendum S: the render step's `recover409` flag (renderTier bakes it in
+// unconditionally on every rung that walks the house stages) now makes the stage clause's task
+// text INSTRUCT the deliberate early reach for the render stage before composing, instead of
+// only narrating the refusal it earns as a warning -- gpt-6-astra, qwen3.8-flash and
+// muse-spark-1.3-contributor all cleared through rung 49 and fell at 50 on an audit requirement
+// (`render:409`) the text never told them to earn. Same hashes, same plan; only the sentence and
+// the docsolver's audit-stage derivation (now read from the presence of that sentence, never
+// inferred from anything else) change.
+export const VERSION = '0.7.1';
 
 // ---------------------------------------------------------------------------
 // Addendum J rule 3: announced per-rung mutations

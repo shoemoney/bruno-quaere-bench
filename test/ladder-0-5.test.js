@@ -37,8 +37,8 @@ test('the world declares ladder 0.7.0', () => {
   // rest of this file is a 0.5.0 rule that 0.6.0 keeps; test/ladder-0-6.test.js pins the new ones.
   // Addendum Q then bumped 0.6.0 -> 0.7.0 (paraphrased clause surface, amendments, the mutation
   // density ramp, the listing bucket); test/ladder-0-7.test.js pins those.
-  assert.equal(VERSION, '0.7.0');
-  assert.equal(makeWorld(1).version, '0.7.0');
+  assert.equal(VERSION, '0.7.1');
+  assert.equal(makeWorld(1).version, '0.7.1');
 });
 
 // ---------------------------------------------------------------------------
