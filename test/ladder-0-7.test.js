@@ -276,9 +276,14 @@ test('the ladder <-> API contract for all three new fields is written down in on
 // shrink step now carries a minPercent pinned from the seeded library's smallest rect, and the
 // Addendum I solver nudges those percents upward to honor it -- so the affected rungs' keys moved.
 // Deliberate; see the shrinkFloor computation in src/ladder/grammar.js's batchTier.
+// Rebaselined once more for the shrinkFloor cap-yield fix (0.8.0): on seed 2 the rung-40
+// roundTo 4->16 amendment pins batchTier's floor above the SHRINK_PERCENT cap, and
+// solveChainPercents now lets the floor win (hiEff = max(hi, lo)) instead of collapsing the
+// chain to MIN_CHAIN_STEPS -- so seed 2's key moved and seeds 1 and 3 did not. Deliberate;
+// see the hiEff computation in src/ladder/grammar.js's solveChainPercents.
 const PINNED_KEY_HASHES = {
   1: 'd3c8f1df9a9e9b685e78882c912ed05c6f5bf79686096d35fb1f4fcf03ab2444',
-  2: 'c9b4bd3a5a1acf688b76cad6167aac359f99c2bdaf6406714335478a17990b05',
+  2: 'fff25489bb4d8cb1ab4a2f6cc56b19feef45ddc4502fc70909c062a0f50a18d6',
   3: 'bf3a8033208d76c1bb1fd913745cc30598355c38c317afe7aed5d1d83375e32c',
 };
 
