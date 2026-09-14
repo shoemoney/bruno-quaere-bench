@@ -8,16 +8,19 @@
 [![Node 22+](https://img.shields.io/badge/Node-22%2B-39b600?logo=node.js)](package.json)
 [![Zero deps](https://img.shields.io/badge/runtime%20deps-0-blue)](package.json)
 [![Judge](https://img.shields.io/badge/judge-bru%20run%20%2B%20sha256-orange)](docs/ARCHITECTURE.md)
-[![Ladder](https://img.shields.io/badge/ladder-0.6.0%20measured%20%C2%B7%200.7.0%20verifying-purple)](docs/ARCHITECTURE.md)
+[![Ladder](https://img.shields.io/badge/ladder-0.6.0%20measured%20%C2%B7%200.7.1%20fix%20verifying-purple)](docs/ARCHITECTURE.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](package.json)
 
 </div>
 
-> 🚧 **Status, 2026-09-13.** Ladder **0.6.0** is the first version where every rung is graded
-> as written; its full seven-model round is below. Ladder **0.7.0** is built and in its
-> verification pass; no model has climbed it yet. Every earlier round is kept under its version
-> number and marked superseded. The design promise "no current model past rung 30" did not
-> survive contact with 2026 models and is no longer claimed.
+> 🚧 **Status, 2026-09-13 evening.** Ladder **0.6.0** is the last version with a clean, fully
+> valid round (seven models, below). Ladder **0.7.0**'s first nine-model round found a real bug
+> in the benchmark itself: six independent models, six different seeds, all hit the exact same
+> wall the instant they reached the new stage-recovery audit check. That is voided, not scored —
+> see [What 0.7.0 changes](#-what-070-changes). The fix is **0.7.1**, in final verification now;
+> a clean round six follows. Every earlier round is kept under its version number, superseded,
+> never rescored. The design promise "no current model past rung 30" did not survive contact
+> with 2026 models and is no longer claimed.
 
 ## 🧒 Like you're five
 
@@ -33,7 +36,7 @@ ever tastes. Once a dish is wrong, the AI is out, and its score is how far it go
 
 **What does it use?** One kitchen tool only: Bruno, the little program that sends web requests,
 plus a plain notepad to write in. Everything the AI cooks is fake but exact, like a Lego picture
-that is the same bricks every time, so the machine can check it brick for brick. Seven different
+that is the same bricks every time, so the machine can check it brick for brick. Nine different
 AIs each get their own kitchen with their own fresh recipe book.
 
 **Why is it hard?** The recipe book has old crossed-out numbers next to the real ones and you
@@ -88,6 +91,20 @@ Zero rule violations, zero admin probes, zero resumes across all seven. Every fa
 hash with both chain checks passing. **One attempt per model is noise** (qwen went 99 on one
 ladder and 5 on the next); the published board will be the median of three once a version holds.
 `board.md` is regenerated from `runs/` by the CLI and the same data is available as JSON.
+
+### Ladder 0.7.0, round five (seeds 900-909, nine models) — voided by a real bug in the benchmark
+
+Astra, qwen3.8-max, qwen3.8-flash, muse, kimi, and grok-4.6 (six of six that reached the band)
+each cleared to rung 49 and fell at 50 with **hash, project state, and label all correct** and
+only the new stage-recovery **audit** check wrong. The reference proved rung 50 was passable, and
+six independent models converging on the identical failure shape on six different answers was
+the tell: the generator required a deliberate out-of-turn stage attempt that the task text only
+*warned about*, never *instructed*. A competent agent that read the sentence honestly and did
+every stage correctly in order — exactly what the rest of the sentence says to do — could not
+pass. Fixed as **Addendum S**: the sentence now instructs the early reach outright when it's
+required, and states nothing when it isn't. Every rung-50 fall above is voided, not scored.
+A non-JSON gateway error page (Addendum R) separately killed a clean grok-4.6 climb at rung 36
+mid-round; the three message-loop drivers now retry that instead of dying on a bare parse error.
 
 <details>
 <summary>📜 Superseded rounds (kept, never rescored)</summary>
@@ -237,7 +254,7 @@ flowchart LR
 
 Every version is a dated addendum in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), which
 records each rule and the bug that changed it. The rules the answer key may depend on live in
-[`docs/RULES-0.6.md`](docs/RULES-0.6.md) (0.7.0 renames it).
+[`docs/RULES-0.7.md`](docs/RULES-0.7.md).
 
 ## 🧠 What 0.7.0 changes
 
@@ -263,6 +280,12 @@ that made replay possible:
 
 Two new board columns, **code writes** and **doc reads**, separate templating from reasoning
 better than turns do.
+
+**Postscript, same day.** Round five's own new check — rule 10, "grade the path" — caught a bug
+in the benchmark itself before anyone published a number from it: the generator required a
+recovery step the task text never asked for, six models failed it identically, and the fix
+(Addendum S) is what "no rung publishes a rule the docs don't state" looks like applied to the
+benchmark's own build process, not just the models being graded.
 
 ## 📁 Layout
 

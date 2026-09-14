@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Bruno QUAERE: a seeded, deterministic media API plus a hundred-rung task ladder that AI agents
 climb using only the Bruno CLI (`bru`), judged by sha256 hash equality on rendered bytes plus,
 from rung 50 up, the project state and label the task demanded. Zero runtime dependencies, Node
-22+, ESM. The contract is `docs/ARCHITECTURE.md`; its dated Addenda A through P are the change
+22+, ESM. The contract is `docs/ARCHITECTURE.md`; its dated Addenda A through S are the change
 log of every rule and every bug that changed a rule. Read the newest addenda first. `docs/SPEC.md`
 is the original intent; `docs/RULES-0.7.md` is the plain-language list of every house rule the
 answer key may depend on.
@@ -77,4 +77,16 @@ is comparable only with rows from the same `version`. Publish the median of thre
   budget silently; use 32K and never append an empty assistant turn (K).
 - `axios/*` requests are bru pre-request scripts, not a shell (K). Turns are counted at the API
   by User-Agent `bruno-runtime/` (G).
-- Anything the rung text demands must be graded or removed from the text (O).
+- Anything the rung text demands must be graded or removed from the text (O) -- and the reverse
+  holds too: anything a rung's answer key requires must be an explicit instruction in the task
+  text, never a fact only implied by a warning about the consequence of not doing it (S). The
+  tell for both directions is the same one that catches undocumented generator rules generally:
+  several independent models converging on the identical failure shape on different answers.
+- A driver must read a fetch response body as text and parse it, never call `res.json()`
+  directly -- a non-JSON gateway error page (an HTML 502/Cloudflare challenge) throws a bare
+  `SyntaxError` with no `.status`, invisible to the transient-retry classifier, and kills a clean
+  climb instead of retrying it (R).
+- `scripts/launch-round.sh`: driver flags must be appended to the args array AFTER the base
+  `run ...` args, never prepended -- `run` is a positional subcommand and must stay `argv[0]`, or
+  every launch prints the usage banner and exits in under a second while looking like nine climbs
+  that started successfully (their PIDs are real, their logs are one line).
