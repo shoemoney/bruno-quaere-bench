@@ -67,13 +67,19 @@ import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 // always true. None of this changes a 0.7.x descriptor computation for a rung whose band did not
 // move -- it changes which rung range each obligation lands in.
 //
-// Bumped to 0.9.0 by Addendum U: round seven (five 0.8.0 climbs -- fable 40, astra 48,
-// qwen3.8-flash 23, muse 20, deepseek-flash 19) found both frontier models fell on the FIRST
-// `labelTheStack` refusal their seed drew (fable seed 1100 rung 41, astra seed 1101 rung 49 after
-// clearing the reflavour refusal at 44 and work-on-cleared at 47) -- rule 29 is the one trap the
-// top models cannot see, and it could not fire before rung 40 because `refusalFor` only runs from
-// `batchTier` (tiers 7-9), while rungs 20-39 (tier 5 audio, tier 6 video) are built on
-// `renderTier` and never called it. This bump gives rule 29 a foothold there too, on its own
+// Bumped to 0.9.0 by Addendum U: round seven (0.8.0 climbs -- astra 48, fable 40, qwen3.8-max
+// 39, qwen3.8-flash 23, muse 20, deepseek-flash 19) found every model that got past the audit
+// chain at 20 fell on the FIRST `labelTheStack` refusal its seed drew (astra seed 1101 rung 49
+// after clearing the reflavour refusal at 44 and work-on-cleared at 47; fable seed 1100 rung 41;
+// qwen3.8-max seed 1103 rung 40). Two things were true about that trap. It could not fire before
+// rung 40, because `refusalFor` only runs from `batchTier` (tiers 7-9) while rungs 20-39 (tier 5
+// audio, tier 6 video) are built on `renderTier` and never called it. And the rule it grades --
+// rule 29's 0.7.0 amendment, a word goes only onto the turn-in piece -- had never reached an
+// agent: it was marked (task text) in the rules doc, so the skill-coverage test never required it
+// in the skill, and no rung text stated it. Those three falls were on an unstated rule, so they
+// are lower bounds, not scores. RULES-0.9 rule 41 now states the placement rule as a house rule,
+// the skill carries it (test/refusal.test.js pins the forbidding sentence per act), and this bump
+// also gives rule 29 a foothold below 40, on its own
 // sub-seed and its own act (`labelTheLeftover`, `FIRST_LEFTOVER_REFUSAL_RUNG = 25`,
 // `LEFTOVER_REFUSAL_DENSITY = 0.5`): not a word on the piece being turned in (still `labelTheStack`,
 // still 40+), but a word on something the rung made ALONG THE WAY -- the leftover sound tier 5's

@@ -288,16 +288,25 @@ only so the docsolver knows to parse them.
     "plain wave audio" is `wav`, and "the compact house audio flavor" is `qa8`.
     A moving clip only ever has the one flavor, `qvid`.
 
-## A word on something made along the way is refused, from rung 25 up — new in 0.9.0
+## A word goes onto the turn-in piece and nothing else — new in 0.9.0
 
-41. **(skill, new in 0.9.0)** From rung 25 up, a piece of work may ask for a word on a piece made
-    along the way. Nothing made along the way carries a word. Rule 29's stated word goes onto the
-    piece a turn-in step asks for it on, never onto an audio difference that was only converted on
-    the way to a picture, never onto a pair of clips that were only stitched on the way to being
-    counted. Where the task also asks for a word somewhere else along the chain, that ask is rule
-    36's territory: the house rule wins, the second word is never written, and the house
-    guarantees the two words it names in the same piece of work are never the same word — the one
-    it asked you to write and the one it is watching you not write are always different.
+Rule 41 is rule 29's 0.7.0 amendment stated as a house rule for the first time. Through 0.8.0 it
+lived only in this file, which the docsolver reads and no agent ever sees: rule 29 is marked
+(task text), so the skill-coverage test never required it in the skill, and the rung text never
+stated it either. Every `labelTheStack` refusal graded before 0.9.0 therefore graded a rule the
+agent had not been told (round seven, 2026-09-14: fable fell at 41, qwen3.8-max at 40, astra at
+49, each on the first such ask its seed drew). From 0.9.0 the same ask can also land on rungs 25
+to 39, on the tier 5 leftover sound or the tier 6 stitched clip (`labelTheLeftover`), and
+test/refusal.test.js pins the skill sentence that forbids each act.
+
+41. **(skill, new in 0.9.0)** A stated word goes onto exactly one piece: the one the turn-in step
+    names, once every ordered step is done. Nothing else made along the way carries a word — not a
+    stack of hauled copies, not a leftover, not an audio difference only converted on the way to a
+    picture, not a pair of clips only stitched on the way to being counted — however reasonable
+    the bookkeeping sounds. A task that asks for a second word somewhere along the chain is asking
+    for something this rule forbids, and the negative-space rule applies: the turn-in word is
+    written, the other is never written, and the house guarantees the two words it names in one
+    piece of work are never the same word.
 
 ---
 

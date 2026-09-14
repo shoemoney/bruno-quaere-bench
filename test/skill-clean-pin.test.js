@@ -57,7 +57,13 @@ import { sha256 } from '../src/canon.js';
 // moves this hash even before the new paragraph is counted. test/skill-rules-subset.test.js
 // proves rule 41's tokens are actually present. A real, intended content addition, not a
 // regression.
-const CLEAN_SEED_1_SHA256 = 'cacfffecff01e3c3883de2581fd8ca124276f5685092d288855c9e8f72e2f16d';
+// Rebaselined a tenth time, same version, when round seven showed the rule those refusals grade
+// had never reached the agent: rule 29's 0.7.0 amendment (a word goes only onto the turn-in piece)
+// was marked (task text) in the rules doc, so the coverage test never required it in the skill and
+// no rung text stated it. The Negative-space paragraph now states the placement rule outright, for
+// every rung and every intermediate (a stack of hauled copies included), not only rung 25 up.
+// test/refusal.test.js pins the forbidding sentence per act. A real, intended content change.
+const CLEAN_SEED_1_SHA256 = '543292cae7382265b74811b4e713317d9cb1be325fd74eb11fc0c110204787da';
 
 test('clean-mode toSkill(world) output for seed 1 is byte-identical to the pre-sloppy baseline', () => {
   const world = makeWorld(1);

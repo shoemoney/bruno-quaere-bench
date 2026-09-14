@@ -19,6 +19,7 @@ import { createServer } from '../src/api/server.js';
 import { makeRung, saysOneOf } from '../src/ladder/rung.js';
 import { composePlan, REFUSAL_ACTS } from '../src/ladder/grammar.js';
 import { climb, answerKey, recallFallbackResolver } from '../src/ladder/reference.js';
+import { toSkill } from '../src/skill.js';
 
 const RULES_DOC = readFileSync(new URL('../docs/RULES-0.9.md', import.meta.url), 'utf8');
 // The rules doc is hard-wrapped markdown, so a sentence that must appear "in these words" is
@@ -309,4 +310,40 @@ test('the rules doc states the refusal rule, in the words the ladder relies on',
   // Addendum U (0.9.0): rule 40 was already taken (0.8.0, "the plain words name the flavor"), so
   // the amendment's own skill-marked rule is 41, not 40.
   assert.match(RULES_DOC, /41\. \*\*\(skill, new in 0\.9\.0\)\*\*/);
+});
+
+// Round seven (2026-09-14, ladder 0.8.0): three models fell on labelTheStack at rungs 40, 41 and
+// 49, and the rule they broke -- rule 29's 0.7.0 amendment -- was stated in RULES-0.8.md and
+// nowhere an agent could read it: rule 29 is marked (task text), so skill-rules-subset never
+// required it in the skill, and the rung text never stated it either. A refusal graded on a rule
+// the agent was never told is not difficulty. So, per act, the sentence in the CLEAN skill that
+// forbids it is pinned here (the sloppy expansion embeds every clean section intact), and an act
+// with no pinned sentence cannot be added to the pool without one.
+test('every refusal act is forbidden by a sentence the agent can read in the skill', () => {
+  const skillFlat = toSkill(makeWorld(1)).replace(/\s+/g, ' ');
+  const STATED = {
+    labelTheStack: [
+      'Nothing else made along the way carries a word',
+      'not a stack of hauled copies',
+    ],
+    labelTheLeftover: [
+      'Nothing else made along the way carries a word',
+      'not an audio difference only converted on the way to a picture',
+      'not a pair of clips only stitched on the way to being counted',
+    ],
+    workOnClearedCopies: [
+      'A cleared-out (soft-deleted) asset has left the house\'s working set entirely',
+      'no style lookup',
+    ],
+    reflavourClearedCopies: [
+      'A cleared-out (soft-deleted) asset has left the house\'s working set entirely',
+      'no re-encoding into another flavor',
+    ],
+  };
+  for (const act of Object.keys(REFUSAL_ACTS)) {
+    assert.ok(STATED[act], `act "${act}" has no pinned skill sentence -- state its rule in the skill before the ladder may draw it`);
+    for (const sentence of STATED[act]) {
+      assert.ok(skillFlat.includes(sentence), `the skill never tells the agent "${sentence}" (act ${act})`);
+    }
+  }
 });
