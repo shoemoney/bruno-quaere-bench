@@ -8,7 +8,7 @@
 [![Node 22+](https://img.shields.io/badge/Node-22%2B-39b600?logo=node.js)](package.json)
 [![Zero deps](https://img.shields.io/badge/runtime%20deps-0-blue)](package.json)
 [![Judge](https://img.shields.io/badge/judge-bru%20run%20%2B%20sha256-orange)](docs/ARCHITECTURE.md)
-[![Ladder](https://img.shields.io/badge/ladder-0.6.0%20measured%20%C2%B7%200.8.0%20steepening%20verifying-purple)](docs/ARCHITECTURE.md)
+[![Ladder](https://img.shields.io/badge/ladder-0.6.0%20measured%20%C2%B7%200.8.0%20verified-purple)](docs/ARCHITECTURE.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](package.json)
 
 </div>
@@ -20,7 +20,14 @@
 > Round six found a second undocumented grading rule the same way (Addendum T) — see
 > [What 0.8.0 changes](#-what-080-changes). 0.8.0 also moves the graded release chain and a
 > clear-out composer down to rungs 20-49, since round five cleared to 49 on five of nine seeds
-> with no rung below 50 costing anyone anything. In verification now; a clean round seven follows.
+> with no rung below 50 costing anyone anything.
+> **0.8.0 is verified** (2026-09-14): the full suite passed twice in a row (787/787 both runs),
+> including the three in-process 100-rung reference climbs, after three self-inflicted failures
+> were fixed on the way — the shrinkFloor cap-yield collapse (86c456b), the docsolver missing
+> the `:409` audit stage (82d4c44), and the hardcoded test ports that only collided inside the
+> full suite (56278e3) — and the pinned answer keys were rebaselined for all three (9e7bb16).
+> The reference solver also passes 100/100 on the round-seven seeds (1100, 1101, 1105).
+> Round seven is next.
 > Every earlier round is kept under its version number, superseded, never rescored. The design
 > promise "no current model past rung 30" did not survive contact with 2026 models and is no
 > longer claimed.
