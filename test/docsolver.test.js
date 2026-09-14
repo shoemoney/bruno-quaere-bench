@@ -467,7 +467,8 @@ test('a word written after the turn-in would label a different piece, and fails 
 // ---------------------------------------------------------------------------
 
 test('the audit records the stage sequence and the canonical signing string', async () => {
-  const found = await findRung(SEEDS[0], (rung) => rung.expectedAudit !== null && rung.expectedAudit !== undefined);
+  const found = await findRung(SEEDS[0], (rung) => rung.expectedAudit !== null && rung.expectedAudit !== undefined
+    && rung.expectedAudit.stages.some((s) => s.endsWith(':409')));
   assert.ok(found !== null, `no rung on seed ${SEEDS[0]} grades a path`);
   assert.ok(found.n >= GRADED_FROM, `the audit is graded below rung ${GRADED_FROM}`);
   const graded = solveGraded(found.world, found.rung.text, found.n, found.opts);
