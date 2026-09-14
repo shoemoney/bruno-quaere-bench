@@ -53,8 +53,9 @@ test('world.version is pinned', () => {
   // density ramp and its new load-bearing target pool, and the tighter listing bucket), then
   // 0.7.0 -> 0.7.1 by Addendum S (the stage clause instructs, never only warns), then 0.7.1 ->
   // 0.8.0 by Addendum T (tiers 5-9 reassigned to rungs 20-99, moving the graded release chain and
-  // a clear-out composer down to 20-49) -- see world.js's VERSION comment.
-  assert.equal(makeWorld(1).version, '0.8.0');
+  // a clear-out composer down to 20-49), then 0.8.0 -> 0.9.0 by Addendum U (rule 29's word
+  // refusal reaches tiers 5 and 6, rungs 25-39) -- see world.js's VERSION comment.
+  assert.equal(makeWorld(1).version, '0.9.0');
 });
 
 test('vocab has the four required nouns as non-empty strings', () => {
@@ -154,7 +155,7 @@ test('loras: 6 to 12 entries, human first names, valid ops, unique ids', () => {
 
 test('hmac config matches the documented shape', () => {
   const w = makeWorld(10);
-  // Addendum Q rule 10 / RULES-0.8 rule 35: 0.7.0's canonical string binds a digest of the
+  // Addendum Q rule 10 / RULES-0.9 rule 35: 0.7.0's canonical string binds a digest of the
   // artifact being released, so the house's default recipe is digest-bound. Rule 33 may amend the
   // FIELD ORDER of that string mid-ladder, never the digest binding itself.
   assert.deepEqual(w.hmac, {

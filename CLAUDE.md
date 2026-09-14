@@ -9,14 +9,14 @@ climb using only the Bruno CLI (`bru`), judged by sha256 hash equality on render
 from rung 20 up, the project state and label the task demanded. Zero runtime dependencies, Node
 22+, ESM. The contract is `docs/ARCHITECTURE.md`; its dated Addenda A through T are the change
 log of every rule and every bug that changed a rule. Read the newest addenda first. `docs/SPEC.md`
-is the original intent; `docs/RULES-0.8.md` is the plain-language list of every house rule the
+is the original intent; `docs/RULES-0.9.md` is the plain-language list of every house rule the
 answer key may depend on.
 
 ## Commands
 
 ```bash
 npm run lint                         # node --check over bin, src, test
-npm test                             # node:test, ~90-95 min measured (0.8.0); includes the 100-rung reference climbs
+npm test                             # node:test, ~90-95 min measured (0.8.0, unremeasured for 0.9.0); includes the 100-rung reference climbs
 node --test test/<file>.test.js      # one file; ALWAYS write output to a file and grep it:
 node --test test/x.test.js > /tmp/x.log 2>&1; grep -E "^# (pass|fail)" /tmp/x.log
 bash scripts/run-behaviors.sh        # 16 behaviors proven with bru run against a live instance

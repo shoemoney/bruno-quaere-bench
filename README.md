@@ -264,7 +264,7 @@ flowchart LR
 
 Every version is a dated addendum in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), which
 records each rule and the bug that changed it. The rules the answer key may depend on live in
-[`docs/RULES-0.8.md`](docs/RULES-0.8.md).
+[`docs/RULES-0.9.md`](docs/RULES-0.9.md).
 
 ## 🧠 What 0.7.0 changes
 

@@ -439,11 +439,13 @@ async function httpListCount(ctx, args, copyIds) {
 // legal on any live asset -- so it is the act that can really be violated, the violation is
 // invisible in the submitted hash (a label never touches a descriptor), and it is the one
 // test/refusal.test.js drives. All three stay in the pool: the variety is the anti-template value,
-// and RULES-0.8 rules 29 and 30 forbid all three regardless of which the house happens to catch.
+// and RULES-0.9 rules 29 and 30 forbid all three regardless of which the house happens to catch.
 async function performForbiddenAct(ctx, forbidden, { victims, ids }) {
   let created = 0;
-  if (forbidden.act === 'labelTheStack') {
-    const target = ids.get('combined');
+  if (forbidden.act === 'labelTheStack' || forbidden.act === 'labelTheLeftover') {
+    // Addendum U: labelTheLeftover targets whichever intermediate the rung named (tier 5's
+    // converted diff result, tier 6's stitched clip) instead of the batch tiers' `combined`.
+    const target = ids.get(forbidden.act === 'labelTheStack' ? 'combined' : forbidden.targetKey);
     if (target === undefined) return 0;
     const path = pathFor(ctx.world, 'assets.patch', { asset_id: target });
     // Addendum Q rule 3: ETag travels only in the response header now, never the body.
@@ -720,7 +722,7 @@ export async function climb({
         // demand in the text was graded by nothing.
         failed.push({
           n,
-          reason: `refusal: rung ${n} performed the forbidden act "${rung.forbidden.act}" (RULES-0.8 rule ${rung.forbidden.rule}) and the house passed it anyway: ${rung.forbidden.detail}`,
+          reason: `refusal: rung ${n} performed the forbidden act "${rung.forbidden.act}" (RULES-0.9 rule ${rung.forbidden.rule}) and the house passed it anyway: ${rung.forbidden.detail}`,
         });
         if (log) log({ n, pass: false, checks: body.checks });
         continue;

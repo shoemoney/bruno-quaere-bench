@@ -16,7 +16,7 @@ import { makeRung, saysOneOf, difficulty } from '../src/ladder/rung.js';
 import { BANDS, bandFor, composePlan, runPlanLocallyTrace, submittedDescriptorFor } from '../src/ladder/grammar.js';
 
 const SEEDS = [1, 2, 3];
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.8.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.9.md', import.meta.url), 'utf8');
 
 function everyRung(fn) {
   for (const seed of SEEDS) {
@@ -29,7 +29,7 @@ function everyRung(fn) {
 // version
 // ---------------------------------------------------------------------------
 
-test('the world declares ladder 0.8.0', () => {
+test('the world declares ladder 0.9.0', () => {
   // Addendum M bumped 0.5.0 -> 0.5.1 (descriptor caps plus the percentOfDims grid-floor fix, not
   // a grammar change, so the running 0.5.0 round kept its own label). Addendum O then bumped
   // 0.5.1 -> 0.6.0: the stitch antecedent, the graded chain and the stated label are all
@@ -40,8 +40,10 @@ test('the world declares ladder 0.8.0', () => {
   // 0.7.0 -> 0.7.1 (the stage clause instructs, never only warns). Addendum T then bumped 0.7.1
   // -> 0.8.0: the band table reassigns tiers 5-9 to rungs 20-99, moving the graded release chain,
   // a clear-out composer and refusal down to rungs 20-49; test/ladder-0-8.test.js pins those.
-  assert.equal(VERSION, '0.8.0');
-  assert.equal(makeWorld(1).version, '0.8.0');
+  // Addendum U then bumped 0.8.0 -> 0.9.0: rule 29's word refusal reaches tiers 5 and 6, rungs
+  // 25-39; test/refusal.test.js and test/docsolver.test.js pin those.
+  assert.equal(VERSION, '0.9.0');
+  assert.equal(makeWorld(1).version, '0.9.0');
 });
 
 // ---------------------------------------------------------------------------
@@ -221,7 +223,7 @@ test('rule 2: the derived percent is never printed in the task text, only its re
   });
 });
 
-test('rule 2: every derived source the generator uses is documented in RULES-0.8.md', () => {
+test('rule 2: every derived source the generator uses is documented in RULES-0.9.md', () => {
   const seen = new Set();
   everyRung((world, n) => {
     for (const step of derivedChainSteps(composePlan(world, n).narrative)) seen.add(step.sourceKey);
@@ -236,7 +238,7 @@ test('rule 2: every derived source the generator uses is documented in RULES-0.8
   };
   for (const key of seen) {
     assert.ok(documented[key] !== undefined, `derived source "${key}" has no documented phrase`);
-    assert.ok(RULES_DOC.includes(documented[key]), `RULES-0.8.md does not document the derived source "${key}"`);
+    assert.ok(RULES_DOC.includes(documented[key]), `RULES-0.9.md does not document the derived source "${key}"`);
   }
 });
 
@@ -334,7 +336,7 @@ test('rule 8 primitive: a difference over two sounds leaves the tones A has and 
   const left = diff(world, a, b);
   assert.equal(left.kind, 'audio');
   assert.deepEqual(left.notes.map((n) => n.freq), [440, 660]);
-  // the leftover keeps A's length and sample rate, which is what rule 14/15 of RULES-0.8.md says
+  // the leftover keeps A's length and sample rate, which is what rule 14/15 of RULES-0.9.md says
   assert.equal(left.durationMs, a.durationMs);
   assert.equal(left.sampleRate, a.sampleRate);
   assert.equal(diff(world, a, a).notes.length, 0);
@@ -420,7 +422,7 @@ test('rule 6: every rung from 40 up applies three or more ordered house rules, w
 // the documents gate: nothing in a key may turn on a rule that is not written down
 // ---------------------------------------------------------------------------
 
-test('RULES-0.8.md documents every rule the 0.5.0 generator newly relies on', () => {
+test('RULES-0.9.md documents every rule the 0.5.0 generator newly relies on', () => {
   const required = [
     'snapped to six decimal places',
     'rounded onto the house grid',
@@ -436,7 +438,7 @@ test('RULES-0.8.md documents every rule the 0.5.0 generator newly relies on', ()
     'keyed hash over the house',
   ];
   for (const phrase of required) {
-    assert.ok(RULES_DOC.includes(phrase), `RULES-0.8.md is missing the rule: "${phrase}"`);
+    assert.ok(RULES_DOC.includes(phrase), `RULES-0.9.md is missing the rule: "${phrase}"`);
   }
 });
 

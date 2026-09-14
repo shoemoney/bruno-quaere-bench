@@ -8,7 +8,7 @@ import { listLies } from './spec.js';
 import { resolvePath, fieldName } from './world.js';
 import { canonicalString, bindsDigest } from './hmac.js';
 
-// The header the artifact digest travels in, when the digest-bound recipe is live (RULES-0.8
+// The header the artifact digest travels in, when the digest-bound recipe is live (RULES-0.9
 // rule 35). Named here because both the prose and the house spell it.
 const DIGEST_HEADER = 'X-Body-Digest';
 import { toSkill as toSloppySkill, truthTable as sloppyTruthTable } from './skill-sloppy.js';
@@ -533,6 +533,12 @@ export function toSkill(world, opts = {}) {
     'then undone. Carry out the rest of the task exactly as written and simply leave the forbidden',
     'part undone. Doing it anyway is a failure even when the piece you turn in is byte-for-byte',
     'correct, because part of what is checked is the **absence** of the thing the rule forbids.',
+    '',
+    'From rung 25 up, that same refusal reaches further: nothing made along the way -- an audio',
+    'difference only converted on the way to a picture, a pair of clips only stitched on the way',
+    'to being counted -- may carry a word either, even on a task that also writes its own stated',
+    'turn-in word in the same piece of work. The house guarantees the two words such a task names',
+    'are never the same word.',
     '',
     '## Byte budgets',
     '',

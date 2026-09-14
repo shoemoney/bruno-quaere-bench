@@ -28,7 +28,7 @@ import {
 import { makeRung, saysOneOf } from '../src/ladder/rung.js';
 import { canonical } from '../src/canon.js';
 
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.8.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.9.md', import.meta.url), 'utf8');
 
 // A world with the amendments this seed draws, live. Identical to `makeWorld(seed)` now that
 // AMENDMENTS_ENFORCED is true; kept as its own name so every test below still says which world it

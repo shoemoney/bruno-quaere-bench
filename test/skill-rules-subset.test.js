@@ -1,4 +1,4 @@
-// docs/RULES-0.8.md is the answer key's contract: every rule it marks (skill) must be stated,
+// docs/RULES-0.9.md is the answer key's contract: every rule it marks (skill) must be stated,
 // in plain language, inside the clean SKILL.md (and therefore, verbatim, inside the sloppy
 // expansion too -- skill-sloppy.js embeds every `## ` clean section as an intact block). This
 // test parses that file directly and proves the clean skill actually says what it claims to
@@ -20,13 +20,13 @@ import { toSkill } from '../src/skill.js';
 import { makeWorld } from '../src/world.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const RULES_PATH = path.join(__dirname, '..', 'docs', 'RULES-0.8.md');
+const RULES_PATH = path.join(__dirname, '..', 'docs', 'RULES-0.9.md');
 
 const SEEDS = [1, 2, 3, 4, 5];
 const SLOPPY_TARGET = 64 * 1024;
 
 // ---------------------------------------------------------------------------
-// Parsing docs/RULES-0.8.md
+// Parsing docs/RULES-0.9.md
 // ---------------------------------------------------------------------------
 
 // A rule starts with "N. **(marker)** text..." at column 0 and continues through every
@@ -115,7 +115,7 @@ const TASK_TEXT_RULES = ALL_RULES.filter((r) => markerKind(r.marker) === 'task t
 // Sanity on the parse itself -- if this drifts to 0, every test below would vacuously pass.
 // ---------------------------------------------------------------------------
 
-test('parses a plausible number of (skill) and (task text) rules out of RULES-0.8.md', () => {
+test('parses a plausible number of (skill) and (task text) rules out of RULES-0.9.md', () => {
   assert.ok(ALL_RULES.length >= 25, `only found ${ALL_RULES.length} numbered rules total`);
   assert.ok(SKILL_RULES.length >= 20, `only found ${SKILL_RULES.length} (skill) rules`);
   assert.ok(TASK_TEXT_RULES.length >= 4, `only found ${TASK_TEXT_RULES.length} (task text) rules`);
@@ -130,7 +130,7 @@ test('parses a plausible number of (skill) and (task text) rules out of RULES-0.
 
 // No (task text) rule may be required as skill content -- the skill states house RULES, never
 // the ladder's own rung-phrasing grammar. This is mostly a self-check on the categorization
-// above, but it also guards against a future edit to RULES-0.8.md relabeling a rule without the
+// above, but it also guards against a future edit to RULES-0.9.md relabeling a rule without the
 // generator noticing: if a rule the file calls task-text-only ever migrated into SKILL_RULES,
 // this would start requiring the skill to contain rung-grammar placeholders like `[W]` or `[M]`,
 // which it correctly never does.

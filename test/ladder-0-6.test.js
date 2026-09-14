@@ -20,7 +20,7 @@ import { composePlan, labelFor } from '../src/ladder/grammar.js';
 import { answerKey } from '../src/ladder/reference.js';
 
 const SEEDS = [1, 2, 3];
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.8.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.9.md', import.meta.url), 'utf8');
 
 // Addendum Q rule 1: the antecedent is one of four phrasings now, so every check below asks
 // whether the text carries ANY phrasing of the `stitch` clause kind rather than one sentence.
@@ -48,9 +48,9 @@ function stitches(plan) {
 // version
 // ---------------------------------------------------------------------------
 
-test('the world declares ladder 0.8.0', () => {
-  assert.equal(VERSION, '0.8.0');
-  assert.equal(makeWorld(1).version, '0.8.0');
+test('the world declares ladder 0.9.0', () => {
+  assert.equal(VERSION, '0.9.0');
+  assert.equal(makeWorld(1).version, '0.9.0');
 });
 
 // ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ test('makeRung refuses to emit a stitch rung whose text drops the antecedent', (
   assert.ok(saysAntecedent(makeRung(world, n).text));
 });
 
-test('RULES-0.8.md states the antecedent as a numbered (skill) rule', () => {
+test('RULES-0.9.md states the antecedent as a numbered (skill) rule', () => {
   assert.match(
     RULES_DOC,
     /28\. \*\*\(skill, new in 0\.6\.0\)\*\* A stitched moving piece is only there to be counted/,
@@ -192,7 +192,7 @@ test('the label word is deterministic in (seed, rung) and comes from one place',
   assert.ok(words.size >= 5, `only ${words.size} distinct label words across 20 graded rungs`);
 });
 
-test('RULES-0.8.md states that the label is given, and that the chain is graded', () => {
+test('RULES-0.9.md states that the label is given, and that the chain is graded', () => {
   assert.match(RULES_DOC, /29\. \*\*\(task text, new in 0\.6\.0\)\*\*/, 'rule 29 is not in the rules doc');
   assert.ok(RULES_DOC.includes('write the word "X" onto it'));
   assert.ok(RULES_DOC.includes('nothing is demanded for decoration'));

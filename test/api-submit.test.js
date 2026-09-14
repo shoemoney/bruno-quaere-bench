@@ -145,7 +145,7 @@ async function walkProjectTo(status, token, wsId, assetId) {
   if (status === 'rendered') return project.id;
 
   const publishPath = withParams(routeTemplate('projects.publish'), { workspace_id: wsId, project_id: project.id });
-  // RULES-0.8 rule 35: the release signature binds the house's own digest of the artifact being
+  // RULES-0.9 rule 35: the release signature binds the house's own digest of the artifact being
   // released, and the house checks that digest names a live asset in THIS project -- which the
   // composed asset is. Its digest is the `hash` the house reports for it.
   const asset = await (await fetch(urlFor('assets.get', { asset_id: assetId }), { headers: authHeaders(token) })).json();

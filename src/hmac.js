@@ -4,7 +4,7 @@
 // `rulesAt(world, n)` because Addendum Q rule 4's closed set includes the field order of this
 // very string.
 //
-// Addendum Q rule 10 / RULES-0.8 rule 35: from 0.7.0 the string BINDS A DIGEST of the artifact
+// Addendum Q rule 10 / RULES-0.9 rule 35: from 0.7.0 the string BINDS A DIGEST of the artifact
 // being released. The digest is the house's own sha256 of the artifact bytes, so the value can
 // only come from a live response -- a signature cannot be templated once and replayed per rung.
 // The three digest-bound recipes differ only in the order of the first three fields, which is

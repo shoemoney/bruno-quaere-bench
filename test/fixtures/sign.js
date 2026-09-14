@@ -1,4 +1,4 @@
-// Signing a release the way RULES-0.8 rule 35 describes, for the tests that need a publish to
+// Signing a release the way RULES-0.9 rule 35 describes, for the tests that need a publish to
 // succeed. One helper, built on src/hmac.js's `canonicalString`, so no test carries its own copy
 // of the recipe and none of them has to be touched again if rule 33 amends the field order.
 //

@@ -170,7 +170,7 @@ export function bandFor(n) {
 // since createdAt/updatedAt never feed a descriptor or its hash.
 function seedSnapshot(world) {
   const store = createResourceStore();
-  // ALWAYS the base world (Addendum Q rule 4 / RULES-0.8 rule 33). The server seeds its store once
+  // ALWAYS the base world (Addendum Q rule 4 / RULES-0.9 rule 33). The server seeds its store once
   // at startup, before rung 0, under the rules as first published; a mid-ladder amendment changes
   // what the house does NEXT, never what it already built. Seeding this snapshot from a rung's
   // amended rules would re-round every library asset and make the key describe a library the live
@@ -241,7 +241,7 @@ export function recallValue(world, m, field) {
 // with replacement: the draw off `r` still decides WHERE in the rotation this rung starts (so the
 // choice stays seeded), and the rung number then rotates it, so consecutive batch rungs land on
 // different projects and no single reel accumulates more than about (batch rungs / projects)
-// hauls' worth of copies. The API's half is the documented scope filter named in RULES-0.8
+// hauls' worth of copies. The API's half is the documented scope filter named in RULES-0.9
 // rule 32, which lets the derived count be taken without walking anybody else's rows.
 function pickProject(world, store, r, n = 0) {
   const pairs = [];
@@ -819,7 +819,7 @@ function shapeFloors(events) {
 // in the submitted hash, and it is the one an agent that reads the task and skips the rules cannot
 // pass by being good at arithmetic.
 //
-// Both acts here are forbidden by the same numbered rule (RULES-0.8 rule 30: a cleared-out piece
+// Both acts here are forbidden by the same numbered rule (RULES-0.9 rule 30: a cleared-out piece
 // has left the house's working set -- nothing is applied to it, and it never comes back into a
 // chain), so the conflict resolves to exactly one reading and the docsolver can say which.
 //
@@ -840,15 +840,32 @@ export const REFUSAL_ACTS = {
     rule: 30,
     detail: 'no copy this rung cleared out may be re-saved in another flavour after the clear-out, and no asset may exist that was made from one',
   },
+  labelTheLeftover: {
+    rule: 29,
+    detail: 'no asset this rung made along the way may carry the word the text asked for -- a word goes only onto the piece a turn-in step asks for it on, and this word was asked for on an intermediate',
+  },
 };
 
-const REFUSAL_ACT_NAMES = Object.keys(REFUSAL_ACTS);
+// labelTheLeftover (Addendum U) is drawn by its own leftoverRefusalFor below, on its own sub-seed
+// and its own rungs (25-39) -- it never competes for a slot in refusalFor's batch-tier draw, so
+// this list stays the three acts it has always been.
+const REFUSAL_ACT_NAMES = Object.keys(REFUSAL_ACTS).filter((name) => name !== 'labelTheLeftover');
 
 // Addendum T (0.8.0): pulled down to "40-99, about 1 in 2" now that a clear-out composer (tier 7)
 // sits at rungs 40-49 (forensics-0.7.0.md hypothesis H9). Still only fires where `hasClearOut` is
 // true below.
 const FIRST_REFUSAL_RUNG = 40;
 const REFUSAL_DENSITY = 0.5;
+
+// Addendum U (0.9.0): fable and astra both fell in round seven on the FIRST labelTheStack refusal
+// their seed drew, at rungs 41 and 49 -- rule 29 is the one trap the top models cannot see, and it
+// could not fire before rung 40 because refusalFor only runs from batchTier (tiers 7-9). Rungs
+// 25-39 are tier 5 (audio) and tier 6 (video), both built on renderTier, so leftoverRefusalFor
+// gives rule 29 a foothold there too: not a word on the piece being turned in (that is
+// labelTheStack's territory, still 40+), but a word on something the rung made ALONG THE WAY --
+// the leftover sound tier 5's diff converts, the stitched clip tier 6 combines.
+const FIRST_LEFTOVER_REFUSAL_RUNG = 25;
+const LEFTOVER_REFUSAL_DENSITY = 0.5;
 
 // refusalFor(world, n): drawn from its OWN sub-seed, so adding negative-space grading to the
 // ladder does not shift a single geometry draw a 0.6.x seed already made. Only a rung that
@@ -863,6 +880,21 @@ function refusalFor(world, n, hasClearOut) {
   if (act === 'workOnClearedCopies') refusal.styleName = pick(r, safeLoraPool(world)).name;
   if (act === 'labelTheStack') refusal.word = labelFor(world, n);
   return refusal;
+}
+
+// leftoverRefusalFor(world, n, {targetKey, piece}): the rung 25-39 counterpart to refusalFor
+// above, on its own sub-seed so it never shifts a draw either the geometry or refusalFor already
+// makes. The word it names is never the rung's own turn-in label (labelFor(world, n)) -- rule 29
+// as amended covers writing a SECOND word on something made along the way, and
+// server.js's refusalHonoured stands down whenever the forbidden word equals expectedLabel, so
+// the two must differ by construction, not by luck.
+function leftoverRefusalFor(world, n, { targetKey, piece }) {
+  if (n < FIRST_LEFTOVER_REFUSAL_RUNG || n >= FIRST_REFUSAL_RUNG) return null;
+  const r = rng(sub(world.seed, `leftoverRefusal:${n}`));
+  if (!chance(r, LEFTOVER_REFUSAL_DENSITY)) return null;
+  const turnInWord = labelFor(world, n);
+  const word = pick(r, LABEL_WORDS.filter((w) => w !== turnInWord));
+  return { act: 'labelTheLeftover', word, targetKey, piece };
 }
 
 const SHRINK_PERCENT = [55, 85];
@@ -1609,7 +1641,15 @@ function tier5(world, r, band, n) {
   return {
     plan: built.plan,
     submitKey: built.submitKey,
-    narrative: { tier: 5, ...built.narrative, audioA, audioB, audioFormat, sampleRate },
+    narrative: {
+      tier: 5,
+      ...built.narrative,
+      audioA,
+      audioB,
+      audioFormat,
+      sampleRate,
+      refusal: leftoverRefusalFor(world, n, { targetKey: 'sc', piece: 'leftover sound' }),
+    },
   };
 }
 
@@ -1641,7 +1681,13 @@ function tier6(world, r, band, n) {
   return {
     plan: built.plan,
     submitKey: built.submitKey,
-    narrative: { tier: 6, ...built.narrative, videoA, videoB },
+    narrative: {
+      tier: 6,
+      ...built.narrative,
+      videoA,
+      videoB,
+      refusal: leftoverRefusalFor(world, n, { targetKey: 'vseq', piece: 'stitched moving piece' }),
+    },
   };
 }
 

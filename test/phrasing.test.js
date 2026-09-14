@@ -21,7 +21,7 @@ import { makeWorld } from '../src/world.js';
 import { makeRung, CLAUSE_KINDS, PHRASING_COUNT, phrasingsFor, saysOneOf } from '../src/ladder/rung.js';
 import { canonical } from '../src/canon.js';
 
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.8.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.9.md', import.meta.url), 'utf8');
 
 // Addendum Q rule 1 says "k >= 4". Four is what the tables carry; this pins the floor, not the
 // exact number, so adding a fifth phrasing to one kind is not a test failure.
@@ -140,6 +140,7 @@ const LEAF_PROBES = {
   clearOut: ['3'],
   refusalWorkOnCleared: ['Jenny'],
   refusalLabelStack: ['quartz'],
+  refusalLabelLeftover: ['quartz', 'the piece you turned in at step 17'],
   amendment: ['2'],
 };
 
@@ -179,7 +180,7 @@ test('the rules doc publishes clause kinds and obligations, not the sentences', 
   // Every kind the generator can emit has to appear in the appendix table, or a docsolver reading
   // only the docs has no way to know the obligation exists.
   for (const kind of CLAUSE_KINDS) {
-    assert.ok(RULES_DOC.includes(`\`${kind}\``), `clause kind "${kind}" is not published in RULES-0.8.md`);
+    assert.ok(RULES_DOC.includes(`\`${kind}\``), `clause kind "${kind}" is not published in RULES-0.9.md`);
   }
 });
 

@@ -17,12 +17,12 @@ import { makeRung, saysOneOf } from '../src/ladder/rung.js';
 import { answerKey, canonicalString } from '../src/ladder/reference.js';
 import { canonical, sha256 } from '../src/canon.js';
 
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.8.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.9.md', import.meta.url), 'utf8');
 const SEEDS = [1, 2, 3];
 
-test('the world declares ladder 0.8.0', () => {
-  assert.equal(VERSION, '0.8.0');
-  assert.equal(makeWorld(1).version, '0.8.0');
+test('the world declares ladder 0.9.0', () => {
+  assert.equal(VERSION, '0.9.0');
+  assert.equal(makeWorld(1).version, '0.9.0');
 });
 
 // ---------------------------------------------------------------------------
@@ -150,7 +150,7 @@ test('consecutive batch rungs do not pile onto the same project', () => {
     const distinct = new Set(hauls.map((h) => h.projectId)).size;
     // The seeded library holds three projects, so the rotation can divide the accumulation by
     // three and no further -- the rest of Addendum Q rule 11 is the documented scope filter
-    // (RULES-0.8 rule 32), which lets a count be taken without walking anybody else's rows and is
+    // (RULES-0.9 rule 32), which lets a count be taken without walking anybody else's rows and is
     // the API workstream's half. A library with more projects would raise this number on its own.
     assert.ok(distinct >= 3, `seed ${seed}: only ${distinct} distinct projects across ${hauls.length} hauls`);
     assert.equal(distinct, new Set(hauls.map((h) => h.projectId)).size);

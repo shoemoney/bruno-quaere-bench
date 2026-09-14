@@ -1,6 +1,6 @@
 # House rules the ladder answer key depends on
 
-Ladder version **0.8.0** (`src/world.js` `VERSION`). Written by the ladder workstream for the
+Ladder version **0.9.0** (`src/world.js` `VERSION`). Written by the ladder workstream for the
 skill workstream and the docsolver workstream. Was `docs/RULES-0.5.md` through 0.5.1,
 `docs/RULES-0.6.md` through 0.6.0, and `docs/RULES-0.7.md` through 0.7.1; renamed each time, never
 restarted, so every rule number below is stable across every bump.
@@ -13,8 +13,8 @@ not here, that is a generator bug of exactly the kind Addendum I was written abo
 
 Rules 1–15 carried over from 0.4.0 and are unchanged in substance; 16–27 are new in 0.5.0; 28–29
 are new in 0.6.0; 30–37 are new in 0.7.0 (Addendum Q); 38 is new in 0.7.1 (Addendum S); **39 is
-new in 0.8.0** (Addendum T). All of them are appended rather than slotted in, so nothing
-renumbers.
+new in 0.8.0** (Addendum T). **41 is new in 0.9.0** (Addendum U). All of them are appended rather
+than slotted in, so nothing renumbers.
 
 **What changed most in 0.7.0 is not a rule but the appendix.** Through 0.6.0 the last section of
 this file published the closed set of *sentences* the task text could emit, and a solver parsed
@@ -191,6 +191,9 @@ only so the docsolver knows to parse them.
     onto the piece that is turned in. A piece of work that asks for a word to be written somewhere
     else — onto a stack, onto a leftover, onto an intermediate — is asking for something this rule
     forbids, and rule 36 applies.
+    **Amended in 0.9.0:** a piece of work may both name the word for its turn-in piece and ask for
+    a second word on something it made along the way — a leftover sound, a stitched clip. The
+    first is written. The second is what rule 36 refuses.
 
 ## Amendments — a rule that changes partway up the ladder — new in 0.7.0
 
@@ -285,6 +288,17 @@ only so the docsolver knows to parse them.
     "plain wave audio" is `wav`, and "the compact house audio flavor" is `qa8`.
     A moving clip only ever has the one flavor, `qvid`.
 
+## A word on something made along the way is refused, from rung 25 up — new in 0.9.0
+
+41. **(skill, new in 0.9.0)** From rung 25 up, a piece of work may ask for a word on a piece made
+    along the way. Nothing made along the way carries a word. Rule 29's stated word goes onto the
+    piece a turn-in step asks for it on, never onto an audio difference that was only converted on
+    the way to a picture, never onto a pair of clips that were only stitched on the way to being
+    counted. Where the task also asks for a word somewhere else along the chain, that ask is rule
+    36's territory: the house rule wins, the second word is never written, and the house
+    guarantees the two words it names in the same piece of work are never the same word — the one
+    it asked you to write and the one it is watching you not write are always different.
+
 ---
 
 ## What this file does NOT contain, on purpose
@@ -372,6 +386,7 @@ rule, the act must not be performed, and what is graded is the ABSENCE of what i
 | `refusalWorkOnCleared` | give a house style to the copies you just cleared out | rule 30 |
 | `refusalReflavourCleared` | re-save the cleared-out copies in another flavour | rule 30 |
 | `refusalLabelStack` | write a stated word onto the stack, on a rung whose turn-in asks for no word | rules 29, 36 |
+| `refusalLabelLeftover` | write a stated word onto something made along the way -- a leftover sound, a stitched clip -- from rung 25 up (rule 41), possibly alongside a turn-in word the rung does write | rules 29, 36, 41 |
 
 ### Rules stated here but not yet emitted by any 0.8.0 rung
 

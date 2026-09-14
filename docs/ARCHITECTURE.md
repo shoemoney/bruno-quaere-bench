@@ -919,7 +919,7 @@ skill is read once; (A3) response shapes on the routes the pipeline uses never m
 derived number is a `len()` of a body already held; (A5) recall resolves from the script's own
 ledger; (A6) only the terminal artifact is graded, never the path; (A7) nothing is failed by doing
 extra and no rung revisits an earlier artifact. 0.7.0 breaks each. Generator-only; keys derivable
-from `docs/RULES-0.8.md`; docsolver, reference, sandbox-fidelity gates stay; no hand-written rungs;
+from `docs/RULES-0.9.md`; docsolver, reference, sandbox-fidelity gates stay; no hand-written rungs;
 no model judge.
 
 1. **Paraphrase the clause surface (all bands).** Each clause kind renders as one of k ≥ 4 seeded
@@ -1038,13 +1038,13 @@ that reads the sentence as a caution and does every stage correctly and in order
 exactly as the rest of the sentence literally says to do ("in the house's order"), never triggers
 a 409, and therefore cannot produce the sequence the key requires -- through no fault of its own
 reading. This is an Addendum I violation: the key depends on a fact (a mandatory out-of-turn
-attempt) that is not stated anywhere in RULES-0.8.md, the skill, or the rung text as an
+attempt) that is not stated anywhere in RULES-0.9.md, the skill, or the rung text as an
 instruction.
 
 **Fix.** When `recover409` is true, the rung text states the requirement as a plain instruction,
 not a warning: something to the effect of "Before you compose it, reach for the render stage on
 purpose -- take the refusal, then walk every stage in the house's order starting from where you
-actually are." Add the (skill) rule to `docs/RULES-0.8.md`/the clean skill: "a rung that tests
+actually are." Add the (skill) rule to `docs/RULES-0.9.md`/the clean skill: "a rung that tests
 stage recovery says so outright; if a rung does not ask for an early reach, none is required and
 none is graded." `docsolver.js` must parse the new instructional sentence and require the
 `render:409` entry in its own computed audit only when that sentence is present -- never infer it
@@ -1102,7 +1102,7 @@ rung 50: `hash: true, project_state: true, label: true, refusal: true, audit: fa
 `src/api/server.js` (`~919`) grades the audit trail by EXACT sequence equality, refusals included
 -- a stray extra refusal, a repeated stage, or a stage asked for before the check-back says
 finished fails the piece even when every other check passes. Nothing in `docs/RULES-0.7.md` (now
-`RULES-0.8.md`) or the skill ever said the trail was graded exactly rather than merely "ends up in
+`RULES-0.9.md`) or the skill ever said the trail was graded exactly rather than merely "ends up in
 the right state." Same fix shape as Addendum S: state it, don't relax the check. Rule 39 (skill,
 new in 0.8.0) says the house keeps the trail exactly and grades it exactly; every phrasing of the
 `stage` clause in `src/ladder/rung.js` now carries a third sentence stating that outright, parsed

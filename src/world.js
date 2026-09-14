@@ -66,7 +66,27 @@ import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 // moves 70 -> 40; `renderTier`'s `recover409` flag is now a seeded per-rung draw instead of
 // always true. None of this changes a 0.7.x descriptor computation for a rung whose band did not
 // move -- it changes which rung range each obligation lands in.
-export const VERSION = '0.8.0';
+//
+// Bumped to 0.9.0 by Addendum U: round seven (five 0.8.0 climbs -- fable 40, astra 48,
+// qwen3.8-flash 23, muse 20, deepseek-flash 19) found both frontier models fell on the FIRST
+// `labelTheStack` refusal their seed drew (fable seed 1100 rung 41, astra seed 1101 rung 49 after
+// clearing the reflavour refusal at 44 and work-on-cleared at 47) -- rule 29 is the one trap the
+// top models cannot see, and it could not fire before rung 40 because `refusalFor` only runs from
+// `batchTier` (tiers 7-9), while rungs 20-39 (tier 5 audio, tier 6 video) are built on
+// `renderTier` and never called it. This bump gives rule 29 a foothold there too, on its own
+// sub-seed and its own act (`labelTheLeftover`, `FIRST_LEFTOVER_REFUSAL_RUNG = 25`,
+// `LEFTOVER_REFUSAL_DENSITY = 0.5`): not a word on the piece being turned in (still `labelTheStack`,
+// still 40+), but a word on something the rung made ALONG THE WAY -- the leftover sound tier 5's
+// diff converts (`sc`), the stitched clip tier 6 combines (`vseq`). Rule 29 is amended, not
+// replaced: a rung from 25 up may now both write its stated turn-in word and be asked, separately,
+// to write a second word on an intermediate -- the first is done, the second is what rule 36
+// refuses -- and the generator guarantees the two words never collide (`leftoverRefusalFor` draws
+// from `LABEL_WORDS` with the rung's own `labelFor` word excluded), so `expectedLabel`'s stand-down
+// in `refusalHonoured` stays the safety net it always was, not the mechanism doing the work. No
+// existing geometry draw or refusal draw moves: `leftoverRefusalFor` reads its own sub-seed
+// (`leftoverRefusal:${n}`) and `refusalFor`'s own act pool is unchanged. Target for 0.9.0: the
+// frontier models fall in 25-30.
+export const VERSION = '0.9.0';
 
 // ---------------------------------------------------------------------------
 // Addendum J rule 3: announced per-rung mutations
@@ -296,7 +316,7 @@ function makeAuth(seed) {
 // derived count, so a client that pages flat out 429s partway through the count instead of at
 // some harmless moment. `Retry-After` travels as a real header. The house also, on that same
 // pooled route, sometimes hands back a SHORT page inside the throttle window rather than an
-// error -- which is why the short-page rule (RULES-0.8 rule 31) has to be written down: a page
+// error -- which is why the short-page rule (RULES-0.9 rule 31) has to be written down: a page
 // shorter than the one you asked for is not the end of the listing; only the absence of a next
 // cursor is. The API workstream owns enforcing this bucket; the ladder publishes it.
 function makeRate(seed) {
@@ -343,7 +363,7 @@ export const AMENDMENT_RULES = {
   roundMode: { path: ['rules', 'roundMode'], choices: ROUND_MODE },
   opacityCompound: { path: ['rules', 'opacityCompound'], choices: OPACITY_COMPOUND },
   defaultFps: { path: ['rules', 'defaultFps'], choices: FPS_CHOICES },
-  // RULES-0.8 rule 35 says the signing string BINDS A DIGEST of the thing being released, and
+  // RULES-0.9 rule 35 says the signing string BINDS A DIGEST of the thing being released, and
   // rule 33 says an amendment may move "the order of the fields in the signing string". So every
   // candidate here is a digest-bound ordering: an amendment reorders the four fields, it never
   // unbinds the digest. Dropping the digest would be a rule change rule 33 does not license, and
@@ -430,7 +450,7 @@ const RULES_AT_CACHE = new WeakMap();
 // submitted (a rule-21 recall). Resolving rung 38 off a world already resolved at rung 60 would
 // re-apply only the amendments dated on or before 38 on top of rung 60's values, leaving rung
 // 60's grid or rounding in place -- which silently changes what rung 38's answer was, the one
-// thing RULES-0.8 rule 33 says an amendment never does.
+// thing RULES-0.9 rule 33 says an amendment never does.
 const RULES_AT_BASE = new WeakMap();
 
 export function rulesAt(world, n) {
@@ -513,7 +533,7 @@ function amountFor(op, r) {
 }
 
 function makeHmac() {
-  // Addendum Q rule 10 / RULES-0.8 rule 35: from 0.7.0 the release signature binds a digest of
+  // Addendum Q rule 10 / RULES-0.9 rule 35: from 0.7.0 the release signature binds a digest of
   // the artifact being released, so the house's canonical string is digest-bound by default.
   // `canonicalString` in src/hmac.js is the one implementation of every recipe.
   return { header: 'X-Signature', tsHeader: 'X-Timestamp', algo: 'sha256', canon: 'ts+method+path+digest' };

@@ -89,7 +89,7 @@
 //
 //   Forbidden = {
 //     act:    string,   // machine-readable name, from REFUSAL_ACTS below
-//     rule:   number,   // the numbered rule in docs/RULES-0.8.md that forbids it
+//     rule:   number,   // the numbered rule in docs/RULES-0.9.md that forbids it
 //     detail: string,   // one plain sentence naming the artifact or state that must be absent
 //   }
 //
@@ -123,7 +123,7 @@ import { bandFor, composePlan, runPlanLocally, REFUSAL_ACTS } from './grammar.js
 // identical meaning, drawn per (seed, rung, clause kind) from its own sub-seed so adding a kind
 // never reshuffles the ones that already exist.
 //
-// The obligation this puts on the documents is the whole point: `docs/RULES-0.8.md` publishes
+// The obligation this puts on the documents is the whole point: `docs/RULES-0.9.md` publishes
 // clause KINDS and what each one obliges, never the sentence that carries it. A reader pays
 // nothing -- four ways of saying "shrink this to 60 percent" all mean shrink this to 60 percent --
 // and a regex pays everything.
@@ -264,6 +264,15 @@ const PHRASINGS = {
     () => 'Write the cleared-out copies out as bitmaps too -- it is tidier to have every copy in the same flavour.',
     () => 'The ones you cleared out should be stored as bitmaps as well, so nothing in the set is in the wrong flavour.',
     () => 'Put the cleared-out copies into bitmap form too, so every copy you made ends up the same flavour.',
+  ],
+  // Addendum U (0.9.0): a word on something made ALONG THE WAY, not on the piece a turn-in step
+  // asks for it on -- rule 29 as amended. Reads as an ordinary bookkeeping instruction, same as
+  // its rungs-40+ cousin above.
+  refusalLabelLeftover: [
+    ({ word, piece }) => `Write the word "${word}" onto that ${piece} as well, so you can find it again later.`,
+    ({ word, piece }) => `Put the word "${word}" on that ${piece} as a marker -- it will be easier to pick out afterwards.`,
+    ({ word, piece }) => `Label that ${piece} with the word "${word}" so it does not get lost among the rest.`,
+    ({ word, piece }) => `Call that ${piece} "${word}" in the house's own records, for your own bookkeeping.`,
   ],
   // --- create clauses ----------------------------------------------------
   createImage: [
@@ -637,13 +646,14 @@ function orderNote(ctx, narrative) {
 
 // Addendum Q rule 7: the ask a numbered house rule forbids. It reads as an ordinary, reasonable
 // instruction -- that is the point. The plan does NOT contain it, the key records what must stay
-// absent, and RULES-0.8 rule 30 is what makes the refusal the correct reading.
+// absent, and RULES-0.9 rule 30 is what makes the refusal the correct reading.
 function refusalNote(ctx, narrative) {
   if (!narrative.refusal) return '';
   const { act, styleName } = narrative.refusal;
   if (act === 'workOnClearedCopies') return ` ${say(ctx, 'refusalWorkOnCleared', { styleName })}`;
   if (act === 'reflavourClearedCopies') return ` ${say(ctx, 'refusalReflavourCleared')}`;
   if (act === 'labelTheStack') return ` ${say(ctx, 'refusalLabelStack', { word: narrative.refusal.word })}`;
+  if (act === 'labelTheLeftover') return ` ${say(ctx, 'refusalLabelLeftover', { word: narrative.refusal.word, piece: narrative.refusal.piece })}`;
   throw new Error(`no phrasing for refusal act "${act}"`);
 }
 
@@ -714,7 +724,7 @@ function tagNote(ctx, label) {
 
 function text5(ctx, narrative) {
   const world = ctx.world;
-  return `Make ${describeCreate(ctx, 'audio', narrative.audioA)}. Then make a second sound ${describeTones(ctx, narrative.audioB)}. Work out every tone the first sound has that the second one does not -- that leftover sound is the one that matters later -- and re-encode it as ${describeKind('audio', narrative.audioFormat)} at ${narrative.sampleRate} samples a second. Then, inside a fresh ${world.vocab.project} of your own making, over in ${labelled(ctx, world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(ctx, 'image', narrative.params, narrative.crossRef)}. ${say(ctx, 'stage', { recover409: narrative.recover409 })} ${say(ctx, 'sign')}${describeChain(ctx, narrative.chain)} ${tagNote(ctx, narrative.label)} ${say(ctx, 'turnInLast')}`;
+  return `Make ${describeCreate(ctx, 'audio', narrative.audioA)}. Then make a second sound ${describeTones(ctx, narrative.audioB)}. Work out every tone the first sound has that the second one does not -- that leftover sound is the one that matters later -- and re-encode it as ${describeKind('audio', narrative.audioFormat)} at ${narrative.sampleRate} samples a second.${refusalNote(ctx, narrative)} Then, inside a fresh ${world.vocab.project} of your own making, over in ${labelled(ctx, world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(ctx, 'image', narrative.params, narrative.crossRef)}. ${say(ctx, 'stage', { recover409: narrative.recover409 })} ${say(ctx, 'sign')}${describeChain(ctx, narrative.chain)} ${tagNote(ctx, narrative.label)} ${say(ctx, 'turnInLast')}`;
 }
 
 function describeClip(params, index) {
@@ -723,7 +733,7 @@ function describeClip(params, index) {
 
 function text6(ctx, narrative) {
   const world = ctx.world;
-  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(ctx, world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(ctx, 'image', narrative.params, narrative.crossRef)}. ${say(ctx, 'stage', { recover409: narrative.recover409 })} ${say(ctx, 'sign')} Then build a pair of short moving takes over that same finished picture: ${describeClip(narrative.videoA, 1)}; ${describeClip(narrative.videoB, 2)}. Don't tell the house how fast to run them -- let it use its own usual speed. Stitch the two end to end, first one first, into a single moving piece. ${say(ctx, 'stitch')}${describeChain(ctx, narrative.chain)} ${tagNote(ctx, narrative.label)} ${say(ctx, 'turnInLast')}`;
+  return `Inside a fresh ${world.vocab.project} of your own making, over in ${labelled(ctx, world.vocab.workspace, narrative.workspaceLabel)}, make ${describeCreate(ctx, 'image', narrative.params, narrative.crossRef)}. ${say(ctx, 'stage', { recover409: narrative.recover409 })} ${say(ctx, 'sign')} Then build a pair of short moving takes over that same finished picture: ${describeClip(narrative.videoA, 1)}; ${describeClip(narrative.videoB, 2)}. Don't tell the house how fast to run them -- let it use its own usual speed. Stitch the two end to end, first one first, into a single moving piece.${refusalNote(ctx, narrative)} ${say(ctx, 'stitch')}${describeChain(ctx, narrative.chain)} ${tagNote(ctx, narrative.label)} ${say(ctx, 'turnInLast')}`;
 }
 
 // Addendum J rule 2's most literal form, in plain language. The count is never stated, the
@@ -821,6 +831,7 @@ function forbiddenFor(narrative) {
   if (spec === undefined) throw new Error(`unknown refusal act "${narrative.refusal.act}"`);
   const out = { act: narrative.refusal.act, rule: spec.rule, detail: spec.detail };
   if (narrative.refusal.word !== undefined) out.word = narrative.refusal.word;
+  if (narrative.refusal.targetKey !== undefined) out.targetKey = narrative.refusal.targetKey;
   return out;
 }
 
@@ -850,7 +861,7 @@ function gradedChain(ctx, plan, text, n, narrative) {
   // nothing to refuse and the fourth check grades a rung that never tempted anybody.
   if ((narrative.refusal !== undefined && narrative.refusal !== null)
       !== (ctx.emitted.has('refusalWorkOnCleared') || ctx.emitted.has('refusalReflavourCleared')
-           || ctx.emitted.has('refusalLabelStack'))) {
+           || ctx.emitted.has('refusalLabelStack') || ctx.emitted.has('refusalLabelLeftover'))) {
     throw new Error(`rung ${n}: the key records a refusal the text never asked for, or the other way round`);
   }
   return {

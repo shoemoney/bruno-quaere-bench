@@ -20,13 +20,14 @@ import { makeRung, saysOneOf } from '../src/ladder/rung.js';
 import { composePlan, REFUSAL_ACTS } from '../src/ladder/grammar.js';
 import { climb, answerKey, recallFallbackResolver } from '../src/ladder/reference.js';
 
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.8.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.9.md', import.meta.url), 'utf8');
 // The rules doc is hard-wrapped markdown, so a sentence that must appear "in these words" is
 // checked against the doc with its line breaks flattened -- the wording is the contract, the
 // column it wraps at is not.
 const RULES_FLAT = RULES_DOC.replace(/\s+/g, ' ');
 const SEEDS = [1, 2, 3];
 const FIRST_REFUSAL_RUNG = 40; // Addendum T: was 70
+const FIRST_LEFTOVER_REFUSAL_RUNG = 25; // Addendum U (0.9.0): labelTheLeftover's own range, 25-39
 
 function refusalRungs(world) {
   const out = [];
@@ -41,20 +42,37 @@ function refusalRungs(world) {
 // where they are, and how many
 // ---------------------------------------------------------------------------
 
-test('no rung below 40 asks for something a rule forbids', () => {
+test('no rung below 25 asks for something a rule forbids, and labelTheLeftover only lives in 25-39', () => {
   for (const seed of SEEDS) {
-    for (const { n } of refusalRungs(makeWorld(seed))) {
-      assert.ok(n >= FIRST_REFUSAL_RUNG, `seed ${seed} rung ${n} carries a refusal below rung ${FIRST_REFUSAL_RUNG}`);
+    for (const { n, forbidden } of refusalRungs(makeWorld(seed))) {
+      assert.ok(
+        n >= FIRST_LEFTOVER_REFUSAL_RUNG,
+        `seed ${seed} rung ${n} carries a refusal below rung ${FIRST_LEFTOVER_REFUSAL_RUNG}`,
+      );
+      if (n < FIRST_REFUSAL_RUNG) {
+        assert.equal(forbidden.act, 'labelTheLeftover', `seed ${seed} rung ${n} (25-39) carries a non-leftover refusal "${forbidden.act}"`);
+      } else {
+        assert.notEqual(forbidden.act, 'labelTheLeftover', `seed ${seed} rung ${n} (40-99) carries a leftover refusal`);
+      }
     }
   }
 });
 
 test('about one rung in two from 40 up carries a refusal', () => {
   for (const seed of SEEDS) {
-    const hits = refusalRungs(makeWorld(seed)).length;
+    const hits = refusalRungs(makeWorld(seed)).filter(({ n }) => n >= FIRST_REFUSAL_RUNG).length;
     // 60 rungs at p=0.5 (Addendum T: was 30 rungs at p=0.25): a band wide enough that no seed is
     // flaky, narrow enough that "always" or "never" is caught.
     assert.ok(hits >= 15 && hits <= 45, `seed ${seed} has ${hits} refusal rungs out of 60, expected about 30`);
+  }
+});
+
+test('about one rung in two from 25 to 39 carries a leftover refusal', () => {
+  for (const seed of SEEDS) {
+    const hits = refusalRungs(makeWorld(seed))
+      .filter(({ n }) => n >= FIRST_LEFTOVER_REFUSAL_RUNG && n < FIRST_REFUSAL_RUNG).length;
+    // 15 rungs at p=0.5: same shape of band as the 40-99 check above, sized for the shorter range.
+    assert.ok(hits >= 3 && hits <= 12, `seed ${seed} has ${hits} leftover-refusal rungs out of 15, expected about 7-8`);
   }
 });
 
@@ -70,7 +88,7 @@ test('every forbidden act is a named act citing a rule the documents state', () 
       // depend on
       assert.ok(
         new RegExp(`^${forbidden.rule}\\. \\*\\*\\(`, 'm').test(RULES_DOC),
-        `rule ${forbidden.rule} is cited by act "${forbidden.act}" but is not a numbered rule in RULES-0.8.md`,
+        `rule ${forbidden.rule} is cited by act "${forbidden.act}" but is not a numbered rule in RULES-0.9.md`,
       );
     }
   }
@@ -84,6 +102,7 @@ const REFUSAL_CLAUSE = {
   workOnClearedCopies: (f) => ['refusalWorkOnCleared', { styleName: composeStyleName(f) }],
   reflavourClearedCopies: () => ['refusalReflavourCleared', {}],
   labelTheStack: (f) => ['refusalLabelStack', { word: f.word }],
+  labelTheLeftover: (f, narrative) => ['refusalLabelLeftover', { word: f.word, piece: narrative.refusal.piece }],
 };
 
 // The style name lives on the narrative, not on the key (the key records what must be ABSENT, and
@@ -99,7 +118,7 @@ test('a refusal rung really does ask for the forbidden thing, in one of its four
     for (const { n, forbidden } of refusalRungs(world)) {
       const narrative = composePlan(world, n).narrative;
       STYLE_LOOKUP = narrative.refusal.styleName;
-      const [kind, args] = REFUSAL_CLAUSE[forbidden.act](forbidden);
+      const [kind, args] = REFUSAL_CLAUSE[forbidden.act](forbidden, narrative);
       assert.ok(
         saysOneOf(makeRung(world, n).text, kind, args),
         `seed ${seed} rung ${n}: the key records a refusal the text never asks for`,
@@ -113,6 +132,19 @@ test('a refusal rung\'s plan never contains the act, so the reference passes by 
     const world = makeWorld(seed);
     for (const { n, forbidden } of refusalRungs(world)) {
       const { plan } = composePlan(world, n);
+      if (forbidden.act === 'labelTheLeftover') {
+        // Addendum U: these rungs (25-39) DO write a turn-in label -- rule 29 as amended lets the
+        // two coexist -- so the plan must write a DIFFERENT word than the forbidden one, onto the
+        // piece actually being turned in, and the forbidden target must name a real step.
+        const tag = plan.find((s) => s.op === 'etag');
+        assert.ok(tag, `seed ${seed} rung ${n} carries a labelTheLeftover refusal but writes no turn-in label`);
+        assert.notEqual(tag.args.label, forbidden.word, `seed ${seed} rung ${n} writes the forbidden word as its own turn-in label`);
+        assert.ok(
+          plan.some((s) => s.resultKey === forbidden.targetKey),
+          `seed ${seed} rung ${n}: forbidden.targetKey "${forbidden.targetKey}" names no step in the plan`,
+        );
+        continue;
+      }
       // no rung 40-99 writes a label at all, and `labelTheStack` asks for one
       assert.ok(!plan.some((s) => s.op === 'etag'), `seed ${seed} rung ${n} writes a label its band never demands`);
       // the batch/clear-out steps work the rung's own live copies; nothing in the plan reaches for
@@ -200,6 +232,54 @@ test('the HOUSE fails the same rung when the forbidden act is performed', async 
   );
 });
 
+// Addendum U (0.9.0): the labelTheLeftover counterpart to findLabelRefusal above. Live in 25-39,
+// its own range, drawn on its own sub-seed.
+function findLeftoverRefusal(seed) {
+  const world = makeWorld(seed);
+  for (let n = FIRST_LEFTOVER_REFUSAL_RUNG; n < FIRST_REFUSAL_RUNG; n += 1) {
+    const rung = makeRung(world, n);
+    if (rung.forbidden && rung.forbidden.act === 'labelTheLeftover') return n;
+  }
+  return null;
+}
+
+test('the reference passes a leftover-refusal rung by leaving the forbidden word unwritten', async () => {
+  const n = findLeftoverRefusal(1);
+  assert.ok(n !== null, 'seed 1 is expected to carry a labelTheLeftover refusal somewhere in 25-39');
+  const result = await climbSlice(1, n, n);
+  assert.deepEqual(result.failed, [], `rung ${n} should pass when the refusal is honoured`);
+  assert.deepEqual(result.passed, [n]);
+});
+
+test('the HOUSE fails a leftover-refusal rung when the forbidden word is written', async () => {
+  const n = findLeftoverRefusal(1);
+  const result = await climbSlice(1, n, n, { performForbidden: true });
+  assert.deepEqual(result.passed, [], `rung ${n} passed while doing what rule 36 forbids`);
+  assert.equal(result.failed.length, 1);
+  const { reason } = result.failed[0];
+  assert.match(
+    reason,
+    /^submit returned pass:false \(failed: refusal\)$/,
+    `the house's refusal check must be the thing that failed it, got: ${reason}`,
+  );
+});
+
+test('a leftover refusal\'s word never equals that rung\'s own turn-in label', () => {
+  for (const seed of [1, 2, 3, 1100, 1101, 1102, 1103, 1105]) {
+    const world = makeWorld(seed);
+    for (let n = FIRST_LEFTOVER_REFUSAL_RUNG; n < FIRST_REFUSAL_RUNG; n += 1) {
+      const rung = makeRung(world, n);
+      if (rung.forbidden && rung.forbidden.act === 'labelTheLeftover') {
+        assert.notEqual(
+          rung.forbidden.word,
+          rung.expectedLabel,
+          `seed ${seed} rung ${n}: the leftover refusal word equals the rung's own turn-in label`,
+        );
+      }
+    }
+  }
+});
+
 test('a rung with no refusal is untouched by performForbidden', async () => {
   const world = makeWorld(1);
   let plain = null;
@@ -226,4 +306,7 @@ test('the rules doc states the refusal rule, in the words the ladder relies on',
     assert.ok(RULES_DOC.includes(`\`refusal`), 'the appendix never lists the refusal clause kinds');
     assert.ok(REFUSAL_ACTS[act].detail.length > 0);
   }
+  // Addendum U (0.9.0): rule 40 was already taken (0.8.0, "the plain words name the flavor"), so
+  // the amendment's own skill-marked rule is 41, not 40.
+  assert.match(RULES_DOC, /41\. \*\*\(skill, new in 0\.9\.0\)\*\*/);
 });

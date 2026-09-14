@@ -1,5 +1,5 @@
 // Addendum I rule 4: the answer key must be derivable from the documents.
-// docsolver.js is written clean-room from docs/RULES-0.8.md, the skill, the spec and the
+// docsolver.js is written clean-room from docs/RULES-0.9.md, the skill, the spec and the
 // rung text. If it disagrees with makeRung on any rung, one of the two is wrong and the
 // build is red.
 //
@@ -31,6 +31,7 @@ import assert from 'node:assert/strict';
 
 import { makeWorld, drawAmendments, rulesAt, AMENDMENT_RULES } from '../src/world.js';
 import { makeRung, PHRASING_COUNT, CLAUSE_KINDS, phrasingsFor } from '../src/ladder/rung.js';
+import { composePlan } from '../src/ladder/grammar.js';
 import {
   solve, solveGraded, gate, solverOpts, snap6, roundToGrid, gridAfterScale, firstDifference,
   forbiddenSummary, statesStitchAntecedent, stripStitchAntecedent, PHRASINGS_PER_KIND,
@@ -154,7 +155,7 @@ function insertBeforeTurnIn(text, sentence) {
 // The arithmetic the rules state
 // ---------------------------------------------------------------------------
 
-test('house arithmetic matches the rules RULES-0.8 states', () => {
+test('house arithmetic matches the rules RULES-0.9 states', () => {
   // rule 2: the six-decimal snap, so 0.56 in at 300 dpi is 168, never 168.00000000000003
   assert.equal(snap6(168.00000000000003), 168);
   assert.equal(snap6(0.1234565), 0.123457);
@@ -169,8 +170,8 @@ test('house arithmetic matches the rules RULES-0.8 states', () => {
   for (const mode of ['up', 'down', 'nearest']) assert.equal(roundToGrid(128, 16, mode), 128);
 });
 
-// The one rule this solver uses that docs/RULES-0.8.md does not state. If a future change
-// makes media.js snap inside a scale lora, or RULES-0.8.md grows the sentence that says it
+// The one rule this solver uses that docs/RULES-0.9.md does not state. If a future change
+// makes media.js snap inside a scale lora, or RULES-0.9.md grows the sentence that says it
 // does not, THIS test is the one to delete -- not the carve-out on its own.
 test('gridAfterScale is load-bearing: the scale lora grids the raw product, not the snapped one', () => {
   // seed 10: roundTo 2, direction up. 75 x 1.36 is 102.00000000000001 in IEEE-754.
@@ -204,7 +205,7 @@ test('every paraphrased clause kind is read in all four of its phrasings', () =>
 });
 
 test('every clause kind the generator can emit is either read or known not to be emitted yet', () => {
-  // RULES-0.8's appendix closes with the two kinds 0.7.0 does not emit: rule 34's
+  // RULES-0.9's appendix closes with the two kinds 0.7.0 does not emit: rule 34's
   // regression piece and rule 37's byte budget. They have no phrasings to read because no
   // rung states them; everything else must be in the solver's table.
   const NOT_YET_EMITTED = ['regressionRebuild', 'byteBudget'];
@@ -259,13 +260,13 @@ for (const seed of PHRASING_SEEDS) {
 // Failing loudly, which is the whole point of a clean-room gate
 // ---------------------------------------------------------------------------
 
-test('a clause kind outside the RULES-0.8 appendix fails loudly and names the residue', () => {
+test('a clause kind outside the RULES-0.9 appendix fails loudly and names the residue', () => {
   const world = makeWorld(SEEDS[0]);
   assert.throws(
     () => solve(world, plainTask('The house quietly halves everything on a Tuesday. '), 0),
     (err) => {
       assert.ok(err instanceof DocSolveError, `expected DocSolveError, got ${err && err.name}`);
-      assert.match(err.message, /no clause kind in the RULES-0\.8 appendix states this/);
+      assert.match(err.message, /no clause kind in the RULES-0\.9 appendix states this/);
       assert.match(err.message, /halves everything on a Tuesday/);
       return true;
     },
@@ -490,7 +491,7 @@ test('a rung that never reaches published has no audit to grade', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Addendum Q rule 7 / RULES-0.8 rule 36: negative-space grading
+// Addendum Q rule 7 / RULES-0.9 rule 36: negative-space grading
 // ---------------------------------------------------------------------------
 
 test('a refusal rung reports the forbidden act and never performs it', async () => {
@@ -506,14 +507,46 @@ test('a refusal rung reports the forbidden act and never performs it', async () 
       forbiddenSummary(found.rung.forbidden),
       `seed ${seed} rung ${found.n}: the solver and the key disagree about what is forbidden`,
     );
-    // Rule 36: the act is left undone. A rung that forbids a word grades no label, and a
-    // rung that forbids work on the cleared-out copies never reaches for them, so the
-    // piece turned in is exactly the piece the rest of the task produces.
-    assert.equal(graded.expectedLabel, null, 'a refusal rung graded a label as well');
+    // Rule 36: the act is left undone. A rung that forbids a word onto the STACK grades no
+    // label at all, and a rung that forbids work on the cleared-out copies never reaches
+    // for them, so the piece turned in is exactly the piece the rest of the task produces.
+    // Addendum U's `labelTheLeftover` is the one exception rule 29 licenses on purpose: the
+    // rung still writes its own stated turn-in label, just never the forbidden word.
+    if (found.rung.forbidden.act === 'labelTheLeftover') {
+      assert.equal(graded.expectedLabel, found.rung.expectedLabel);
+      assert.notEqual(graded.expectedLabel, graded.forbidden.word, 'the turn-in label equals the forbidden word');
+    } else {
+      assert.equal(graded.expectedLabel, null, 'a refusal rung graded a label as well');
+    }
     assert.deepEqual(graded.descriptors, found.rung.expectedDescriptors);
     assert.ok([29, 30].includes(graded.forbidden.rule), `rule ${graded.forbidden.rule} is not one of 29 or 30`);
   }
-  assert.ok(seen.size >= 2, `only ${seen.size} of the three forbidden acts turned up on the first twelve gate seeds`);
+  assert.ok(seen.size >= 2, `only ${seen.size} of the forbidden acts turned up on the first twelve gate seeds`);
+});
+
+// Addendum U (0.9.0): rule 29's leftover-refusal amendment, rungs 25-39. One tier-5 (audio) and
+// one tier-6 (video) rung from seed 1, each solved under all four `refusalLabelLeftover`
+// phrasings, so every one of the four is proven to parse to the right act and the right word --
+// not just the one phrasing the seed happened to draw.
+test('every phrasing of a labelTheLeftover refusal parses to the right word, tier 5 and tier 6', async () => {
+  const world1 = makeWorld(1);
+  const isLeftoverRefusal = (rung) => rung.forbidden !== null && rung.forbidden !== undefined
+    && rung.forbidden.act === 'labelTheLeftover';
+  const tier5 = await findRung(1, (rung) => isLeftoverRefusal(rung) && composePlan(world1, rung.n).narrative.tier === 5);
+  const tier6 = await findRung(1, (rung) => isLeftoverRefusal(rung) && composePlan(world1, rung.n).narrative.tier === 6);
+  assert.ok(tier5 !== null, 'seed 1 has no tier-5 labelTheLeftover refusal in 25-39');
+  assert.ok(tier6 !== null, 'seed 1 has no tier-6 labelTheLeftover refusal in 25-39');
+  for (const found of [tier5, tier6]) {
+    for (let v = 0; v < PHRASING_COUNT; v += 1) {
+      const rung = makeRung(found.world, found.n, { phrasingVariant: v });
+      const solved = solveGraded(found.world, rung.text, found.n, found.opts);
+      assert.deepEqual(
+        forbiddenSummary(solved.forbidden),
+        forbiddenSummary(found.rung.forbidden),
+        `rung ${found.n} phrasing ${v}: solved forbidden act/rule/word disagrees with the key`,
+      );
+    }
+  }
 });
 
 test('two forbidden asks in one rung fail loudly rather than resolving to one reading', async () => {

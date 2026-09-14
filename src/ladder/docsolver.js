@@ -3,7 +3,7 @@
 // Clean room. This file was written without reading src/ladder/grammar.js,
 // src/ladder/rung.js or src/ladder/reference.js. solve() computes a rung's expected
 // descriptor from:
-//   - docs/RULES-0.8.md (the enumerated house rules the key is allowed to depend on)
+//   - docs/RULES-0.9.md (the enumerated house rules the key is allowed to depend on)
 //   - docs/ARCHITECTURE.md (descriptor shapes; Addendum Q is the 0.7.0 spec)
 //   - the generated skill (`quaere skill`, clean and sloppy) and `truthTable(world)`
 //   - the generated OpenAPI document (`quaere spec`)
@@ -46,10 +46,10 @@
 //      over HTTP. gate() reads it from the API's own store, never from the ladder.
 //   3. opts.history -- what THIS solver turned in at each earlier rung, which is how a
 //      cross-rung reference ("as wide and as tall as the piece you turned in at step 18",
-//      RULES-0.8 rule 21) is resolved. It is the solver's own memory, never the
+//      RULES-0.9 rule 21) is resolved. It is the solver's own memory, never the
 //      generator's: gate() fills it from solve()'s own earlier answers, exactly as the
 //      climbing agent reads back its own collection on disk.
-//   4. `rulesAt` from ../world.js -- NOT from the ladder. RULES-0.8 rule 33 lets the house
+//   4. `rulesAt` from ../world.js -- NOT from the ladder. RULES-0.9 rule 33 lets the house
 //      amend one numbered rule at an announced rung, and world.js's own comment names the
 //      four callers that must resolve rules through that one function ("the answer key
 //      calls it, the reference calls it, the docsolver has to call it, and the house has
@@ -70,7 +70,7 @@
 //   expectedLabel          the word a conditional write puts on the LAST piece (rules 25, 29)
 //   expectedAudit          the ordered stage sequence and the canonical signing string,
 //                          Addendum Q rule 10 -- the path is graded, not just the terminus
-//   forbidden              Addendum Q rule 7 / RULES-0.8 rule 36: an act the text asks for
+//   forbidden              Addendum Q rule 7 / RULES-0.9 rule 36: an act the text asks for
 //                          that a numbered rule forbids. The act must NOT be performed and
 //                          what is graded is its ABSENCE, so it is part of the answer.
 //
@@ -95,7 +95,7 @@ const fail = (message, phrase) => {
 };
 
 // ---------------------------------------------------------------------------
-// House arithmetic (RULES-0.8 rules 1-6), resolved through the rules in force
+// House arithmetic (RULES-0.9 rules 1-6), resolved through the rules in force
 // ---------------------------------------------------------------------------
 
 // Rule 2: snap the raw product to 6 decimals before any rounding rule runs.
@@ -131,7 +131,7 @@ export function roundToGrid(value, roundTo, roundMode) {
 
 const grid = (w, value) => roundToGrid(value, w.rules.roundTo, w.rules.roundMode);
 
-// THE ONE RULE THIS SOLVER USES THAT docs/RULES-0.8.md DOES NOT STATE.
+// THE ONE RULE THIS SOLVER USES THAT docs/RULES-0.9.md DOES NOT STATE.
 //
 // Rule 13 says a house style that scales "re-rounds every shape figure onto the house
 // grid as it goes, the same grid rule as rule 3", and rule 2 says the six-decimal snap
@@ -146,7 +146,7 @@ const grid = (w, value) => roundToGrid(value, w.rules.roundTo, w.rules.roundMode
 // that turns on a rule absent from the RULES file. It is survivable for a climbing agent
 // only because the agent POSTs to /{assets}/{id}/lora and reads the geometry back rather
 // than computing it, the same way it reads a hue shift back. The fix belongs upstream --
-// either media.js snaps inside the scale lora, or RULES-0.8.md states that it does not.
+// either media.js snaps inside the scale lora, or RULES-0.9.md states that it does not.
 // Until then this function models the house, and `gridAfterScale is load-bearing` in the
 // test pins it so nobody deletes it without reading this.
 export function gridAfterScale(w, value) {
@@ -372,7 +372,7 @@ function frameCount(desc) {
 // The clause table: kinds, phrasings, obligations (Addendum Q rule 1)
 // ---------------------------------------------------------------------------
 //
-// Every entry below is one KIND from the RULES-0.8 appendix. `says` is the list of
+// Every entry below is one KIND from the RULES-0.9 appendix. `says` is the list of
 // phrasings that state it -- four of them wherever the generator paraphrases, one where
 // it does not -- and every phrasing in a list must yield the same leaves through the same
 // extractor. Nothing outside `parseClause` ever sees which phrasing matched.
@@ -714,7 +714,7 @@ function recall(opts, step, what) {
 // being released (rule 35). Both are part of the answer from rung 50 up, and the
 // canonical string's field order is itself amendable (rule 33), which is why it is read
 // off the rules in force rather than off the pristine world.
-// Addendum S / RULES-0.8 rule 38: `render:409` belongs in the stage sequence only when the
+// Addendum S / RULES-0.9 rule 38: `render:409` belongs in the stage sequence only when the
 // task text itself carries the instructional stage-recovery sentence (clauseStageRecover,
 // below) -- never merely because the project reaches `published`. The plan that actually
 // produces the 409 is invisible to this file; the text is the only thing it may read.
@@ -726,7 +726,7 @@ const auditFor = (w, recover409) => ({
   bodyDigestOf: 'submittedAsset',
 });
 
-// RULES-0.8 rule 36: what a refusal clause asks for, and the numbered rule that forbids
+// RULES-0.9 rule 36: what a refusal clause asks for, and the numbered rule that forbids
 // it. The gate compares these three leaves; the key's own `detail` is prose about the
 // same fact and is not something a doc-only solver can or should reproduce word for word.
 export function forbiddenSummary(forbidden) {
@@ -774,7 +774,7 @@ export function solveGraded(world, rungText, n, opts = {}) {
       c.reset(at);
     }
     if (!matched) {
-      fail('no clause kind in the RULES-0.8 appendix states this', c.rest().slice(0, 220));
+      fail('no clause kind in the RULES-0.9 appendix states this', c.rest().slice(0, 220));
     }
   }
 
@@ -970,6 +970,17 @@ const REFUSAL = [
     (m) => ({ act: 'labelTheStack', rule: 29, word: m[1], name: null })],
   ['Call that stack "([^"]+)" in the house\'s own records, for your own bookkeeping\\.',
     (m) => ({ act: 'labelTheStack', rule: 29, word: m[1], name: null })],
+
+  // Addendum U (0.9.0): rule 29's amendment -- a word on something made along the way, not the
+  // piece being turned in.
+  ['Write the word "([^"]+)" onto that (?:leftover sound|stitched moving piece) as well, so you can find it again later\\.',
+    (m) => ({ act: 'labelTheLeftover', rule: 29, word: m[1], name: null })],
+  ['Put the word "([^"]+)" on that (?:leftover sound|stitched moving piece) as a marker -- it will be easier to pick out afterwards\\.',
+    (m) => ({ act: 'labelTheLeftover', rule: 29, word: m[1], name: null })],
+  ['Label that (?:leftover sound|stitched moving piece) with the word "([^"]+)" so it does not get lost among the rest\\.',
+    (m) => ({ act: 'labelTheLeftover', rule: 29, word: m[1], name: null })],
+  ['Call that (?:leftover sound|stitched moving piece) "([^"]+)" in the house\'s own records, for your own bookkeeping\\.',
+    (m) => ({ act: 'labelTheLeftover', rule: 29, word: m[1], name: null })],
 ];
 
 function clauseRefusal(c, state) {
@@ -1171,7 +1182,7 @@ const STAGE_REFUSAL_NOTE = note(
   'An out-of-turn stage is refused by design -- let it be refused, insert the stage you were missing, and keep going\\.',
 );
 
-// Addendum S / RULES-0.8 rule 38: the recover409-dependent half of the stage clause, stated as
+// Addendum S / RULES-0.9 rule 38: the recover409-dependent half of the stage clause, stated as
 // a deliberate instruction rather than a warning about the consequence. Only ITS presence -- not
 // the project reaching `published`, not anything about the plan this file cannot see -- puts
 // `render:409` in the computed audit's stage list (see clauseStage below).
@@ -1405,7 +1416,7 @@ const INERT = note(
   'Make the request repeat-safe, with a fresh marker, so a second copy of it creates nothing new\\.',
   'Guard against a double send: use a fresh repeat-safe request the house can recognise as the same one\\.',
   'Send it in a way the house will not double-book if the same request arrives twice\\.',
-  // `trap` -- permanent, and never a house rule (RULES-0.8, "what this file does NOT contain")
+  // `trap` -- permanent, and never a house rule (RULES-0.9, "what this file does NOT contain")
   'Take nothing here on the written reference\'s word: at least one thing it says about the calls this needs is wrong about the live house, so check what actually comes back\\.',
   'Trust the replies, not the paperwork: something the written reference states about these calls is untrue of the live house\\.',
   'The written reference is wrong about at least one of the calls this needs\\. Believe the live house instead, and read its replies\\.',
@@ -1433,7 +1444,7 @@ function clauseStackNote(c) { return saysOneOf(c, STACK_NOTE) !== undefined; }
 function clauseStageRefusalNote(c) { return saysOneOf(c, STAGE_REFUSAL_NOTE) !== undefined; }
 function clauseStageTrailNote(c) { return saysOneOf(c, STAGE_TRAIL_NOTE) !== undefined; }
 
-// RULES-0.8 rule 38: this is the ONLY thing that may set the flag `auditFor` reads. If a rung's
+// RULES-0.9 rule 38: this is the ONLY thing that may set the flag `auditFor` reads. If a rung's
 // text never asks for the early reach, none is required and none is graded -- the plan is not
 // consulted, ever.
 function clauseStageRecover(c, state) {
@@ -1467,7 +1478,7 @@ function clauseAmendment(c) { return saysOneOf(c, AMENDMENT) !== undefined; }
 
 // --- rules 34 and 37: written down, not yet emitted --------------------------
 //
-// RULES-0.8's appendix ends with "Rules stated here but not yet emitted by any 0.7.0
+// RULES-0.9's appendix ends with "Rules stated here but not yet emitted by any 0.7.0
 // rung": rule 34 (a regression piece) and rule 37 (a byte budget) are the contract the
 // generator will emit against, and a rule that arrives with the rungs that use it arrives
 // too late for the solver. No 0.7.0 rung emits either clause, so there are no phrasings to
@@ -1560,6 +1571,7 @@ export const PHRASINGS_PER_KIND = {
   refusalWorkOnCleared: 4,
   refusalReflavourCleared: 4,
   refusalLabelStack: 4,
+  refusalLabelLeftover: 4,
 };
 
 // Does this text state rule 28's antecedent, in any of its four phrasings? Exported for
