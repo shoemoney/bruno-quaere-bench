@@ -20,7 +20,7 @@ import { composePlan, labelFor } from '../src/ladder/grammar.js';
 import { answerKey } from '../src/ladder/reference.js';
 
 const SEEDS = [1, 2, 3];
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.7.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.8.md', import.meta.url), 'utf8');
 
 // Addendum Q rule 1: the antecedent is one of four phrasings now, so every check below asks
 // whether the text carries ANY phrasing of the `stitch` clause kind rather than one sentence.
@@ -28,9 +28,10 @@ const RULES_DOC = readFileSync(new URL('../docs/RULES-0.7.md', import.meta.url),
 const ANTECEDENT = phrasingsFor('stitch')[0];
 const saysAntecedent = (text) => saysOneOf(text, 'stitch');
 
-// The chain is graded from rung 50 up, which is where the text starts demanding a state walk.
-const FIRST_GRADED_RUNG = 50;
-const LAST_GRADED_RUNG = 69;
+// The chain is graded from rung 20 up (Addendum T; was 50), which is where the text starts
+// demanding a state walk.
+const FIRST_GRADED_RUNG = 20;
+const LAST_GRADED_RUNG = 39;
 
 function everyRung(fn) {
   for (const seed of SEEDS) {
@@ -47,9 +48,9 @@ function stitches(plan) {
 // version
 // ---------------------------------------------------------------------------
 
-test('the world declares ladder 0.7.0', () => {
-  assert.equal(VERSION, '0.7.1');
-  assert.equal(makeWorld(1).version, '0.7.1');
+test('the world declares ladder 0.8.0', () => {
+  assert.equal(VERSION, '0.8.0');
+  assert.equal(makeWorld(1).version, '0.8.0');
 });
 
 // ---------------------------------------------------------------------------
@@ -69,7 +70,7 @@ test('every rung that stitches states the antecedent of the chain that follows',
   });
   // If the grammar ever stops stitching anywhere, this test would pass vacuously and the whole
   // Addendum O finding would go unguarded.
-  assert.ok(seen >= 30, `expected the video tier to stitch on every rung 60-69 of 3 seeds, saw ${seen}`);
+  assert.ok(seen >= 30, `expected the video tier to stitch on every rung 30-39 of 3 seeds, saw ${seen}`);
 });
 
 test('a rung that does not stitch does not say the antecedent either', () => {
@@ -87,13 +88,13 @@ test('makeRung refuses to emit a stitch rung whose text drops the antecedent', (
   // The generator's own gate, exercised directly: strip the sentence out of the text a stitch
   // rung would have produced and makeRung must throw rather than ship a rung nobody can read.
   const world = makeWorld(1);
-  const n = 60;
+  const n = 30;
   const { plan } = composePlan(world, n);
-  assert.ok(stitches(plan), 'rung 60 is expected to be a stitch rung');
+  assert.ok(stitches(plan), 'rung 30 is expected to be a stitch rung');
   assert.ok(saysAntecedent(makeRung(world, n).text));
 });
 
-test('RULES-0.7.md states the antecedent as a numbered (skill) rule', () => {
+test('RULES-0.8.md states the antecedent as a numbered (skill) rule', () => {
   assert.match(
     RULES_DOC,
     /28\. \*\*\(skill, new in 0\.6\.0\)\*\* A stitched moving piece is only there to be counted/,
@@ -106,7 +107,7 @@ test('RULES-0.7.md states the antecedent as a numbered (skill) rule', () => {
 // grade the chain
 // ---------------------------------------------------------------------------
 
-test('rungs 50-69 record the project state and the label beside the hashes', () => {
+test('rungs 20-39 record the project state and the label beside the hashes', () => {
   for (const seed of SEEDS) {
     const world = makeWorld(seed);
     const key = answerKey(world);
@@ -191,7 +192,7 @@ test('the label word is deterministic in (seed, rung) and comes from one place',
   assert.ok(words.size >= 5, `only ${words.size} distinct label words across 20 graded rungs`);
 });
 
-test('RULES-0.7.md states that the label is given, and that the chain is graded', () => {
+test('RULES-0.8.md states that the label is given, and that the chain is graded', () => {
   assert.match(RULES_DOC, /29\. \*\*\(task text, new in 0\.6\.0\)\*\*/, 'rule 29 is not in the rules doc');
   assert.ok(RULES_DOC.includes('write the word "X" onto it'));
   assert.ok(RULES_DOC.includes('nothing is demanded for decoration'));

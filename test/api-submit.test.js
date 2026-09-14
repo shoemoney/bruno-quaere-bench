@@ -4,14 +4,14 @@
 // attempts: they are recorded as a fail. Also covers the admin request log's `ua` field and
 // GET /admin/violations.
 //
-// Addendum O, "grade the chain": from rung 50 up an answer key entry may also carry
-// expectedProjectState/expectedLabel (src/ladder/rung.js's answer-key shape). A submit then
-// passes only if the hash matches AND the submitted asset's project reached that state (through
-// compose -> render -> publish, in order) AND the asset's display name equals the label written
-// under If-Match -- and the response/recorded submission say which of the three failed. Tested
-// here on rungs well under 50 (the check itself doesn't care what rung number it's attached to;
-// the ladder workstream is what restricts it to 50+ in practice) so this file doesn't have to
-// duplicate the full 100-rung ladder to prove the three-way check.
+// Addendum O, "grade the chain": from rung 20 up (Addendum T; was 50) an answer key entry may
+// also carry expectedProjectState/expectedLabel (src/ladder/rung.js's answer-key shape). A submit
+// then passes only if the hash matches AND the submitted asset's project reached that state
+// (through compose -> render -> publish, in order) AND the asset's display name equals the label
+// written under If-Match -- and the response/recorded submission say which of the three failed.
+// Tested here on rungs well under 20 (the check itself doesn't care what rung number it's
+// attached to; the ladder workstream is what restricts it to 20+ in practice) so this file
+// doesn't have to duplicate the full 100-rung ladder to prove the three-way check.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -145,7 +145,7 @@ async function walkProjectTo(status, token, wsId, assetId) {
   if (status === 'rendered') return project.id;
 
   const publishPath = withParams(routeTemplate('projects.publish'), { workspace_id: wsId, project_id: project.id });
-  // RULES-0.7 rule 35: the release signature binds the house's own digest of the artifact being
+  // RULES-0.8 rule 35: the release signature binds the house's own digest of the artifact being
   // released, and the house checks that digest names a live asset in THIS project -- which the
   // composed asset is. Its digest is the `hash` the house reports for it.
   const asset = await (await fetch(urlFor('assets.get', { asset_id: assetId }), { headers: authHeaders(token) })).json();

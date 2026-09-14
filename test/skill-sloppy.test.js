@@ -192,7 +192,7 @@ test('X-Signature, X-Timestamp, and the canonical string all appear, inside the 
     const body = doc.slice(publishSigning.offset, publishSigning.offset + publishSigning.length);
     assert.match(body, new RegExp(escapeRegExp(world.hmac.header)), `seed ${seed}: ${world.hmac.header} not in the signing section itself`);
     assert.match(body, new RegExp(escapeRegExp(world.hmac.tsHeader)), `seed ${seed}: ${world.hmac.tsHeader} not in the signing section itself`);
-    // The worked canonical string example. 0.7.0's default recipe is digest-bound (RULES-0.7 rule
+    // The worked canonical string example. 0.7.0's default recipe is digest-bound (RULES-0.8 rule
     // 35), so the block is four lines -- timestamp, method, path, digest -- rather than the one
     // concatenated line the pre-0.7.0 recipes printed. Accept either, since rule 33 may amend the
     // canon to a different field order and a hand-built world may still carry an older recipe.

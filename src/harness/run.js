@@ -252,11 +252,16 @@ async function runTool(sandbox, call) {
 // run-cli.js, which has no equivalent direct visibility into what the product's own tools did).
 const SCRIPT_EXT_RE = /\.(py|js|sh|ts)$/i;
 
-// touchesSkillDoc(sandboxDir, rel, docName): true when a read_file/grep call's own `path` input
+// touchesSkillDoc(sandboxDir, rel, docNames): true when a read_file/grep call's own `path` input
 // resolves to the planted skill document itself, or to the sandbox root (a grep of '.' walks
-// every file under it, docName included, per sandbox.js's own grep). Deliberately conservative --
+// every file under it, docNames included, per sandbox.js's own grep). Deliberately conservative --
 // a grep of an unrelated subdirectory that happens not to contain the doc does not count.
-function touchesSkillDoc(sandboxDir, rel, docName) {
+//
+// Addendum T (0.8.0): `docNames` is now one name or an array of names. This sandbox only ever
+// plants 'SKILL.md', but matching 'HOUSE-RULES.md' too costs nothing (it can only under-count,
+// never over-count) and keeps this function and run-cli.js's DOC_READ_RE agreeing on what counts
+// as the house-rules document across both harnesses.
+function touchesSkillDoc(sandboxDir, rel, docNames) {
   if (typeof rel !== 'string' || rel.length === 0 || path.isAbsolute(rel)) return false;
   let resolved;
   try {
@@ -264,7 +269,9 @@ function touchesSkillDoc(sandboxDir, rel, docName) {
   } catch {
     return false;
   }
-  return resolved === path.join(sandboxDir, docName) || resolved === sandboxDir;
+  if (resolved === sandboxDir) return true;
+  const names = Array.isArray(docNames) ? docNames : [docNames];
+  return names.some((docName) => resolved === path.join(sandboxDir, docName));
 }
 
 async function copyCollection(sandboxDir, collectionDir) {
@@ -763,7 +770,7 @@ export async function climb({
         }
         if (
           (call.name === 'read_file' || call.name === 'grep') &&
-          touchesSkillDoc(sandboxDir, call.input && call.input.path, 'SKILL.md')
+          touchesSkillDoc(sandboxDir, call.input && call.input.path, ['SKILL.md', 'HOUSE-RULES.md'])
         ) {
           docReads += 1;
         }

@@ -8,7 +8,7 @@ import { listLies } from './spec.js';
 import { resolvePath, fieldName } from './world.js';
 import { canonicalString, bindsDigest } from './hmac.js';
 
-// The header the artifact digest travels in, when the digest-bound recipe is live (RULES-0.7
+// The header the artifact digest travels in, when the digest-bound recipe is live (RULES-0.8
 // rule 35). Named here because both the prose and the house spell it.
 const DIGEST_HEADER = 'X-Body-Digest';
 import { toSkill as toSloppySkill, truthTable as sloppyTruthTable } from './skill-sloppy.js';
@@ -395,6 +395,12 @@ export function toSkill(world, opts = {}) {
     'if a task never asks for that early reach, you never need to trigger one, and the house',
     'never grades a refusal built on an assumption the task itself never stated.',
     '',
+    'The house keeps a trail of every stage you ask a project for, refusals included, in the',
+    'order you asked. A piece passes only if that trail is exactly the walk the task describes:',
+    'the stages in the house\'s order, plus the one refusal the task told you to earn when it',
+    'did, and nothing else. A second refusal, a repeated stage, or a stage asked for before the',
+    'check-back says finished leaves a mark on the trail and the piece does not pass.',
+    '',
     '## Conditional writes',
     '',
     'Updating an asset\'s metadata is a conditional write: send back the tag the house last',
@@ -472,6 +478,9 @@ export function toSkill(world, opts = {}) {
     `| Image | \`${rules.defaultFormat.image}\` | z-order: \`${rules.zOrder}\` |`,
     `| Audio | \`${rules.defaultFormat.audio}\` | sample rate: \`${rules.defaultSampleRate}\` Hz |`,
     `| Video | \`${rules.defaultFormat.video}\` | frame rate: \`${rules.defaultFps}\` fps |`,
+    '',
+    'The house\'s flavors have plain words in the task text: a vector file is `svg`,',
+    'a bitmap file is `png`, plain wave audio is `wav`, and the compact house audio flavor is `qa8`.',
     '',
     `Color math (hue shifts and the like) is done in **${rules.colorShiftSpace.toUpperCase()}**`,
     `space, converting back to hex afterward. Bitrate budgets in task text ("fit under 2 MB")`,

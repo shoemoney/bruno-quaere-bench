@@ -218,6 +218,17 @@ async function scanScriptMtimes(root, dir = root, skipDirs = new Set(['bin'])) {
 // two scanScriptMtimes() snapshots taken either side of one spawn's supervision window. A file
 // deleted between scans is not counted (nothing was "written"); a file rewritten more than once
 // inside the same window is still one count, since mtime scanning can't see intermediate writes.
+//
+// Addendum T (0.8.0), left as-is: forensics-0.7.0.md section 4 point 7 asks whether codex's own
+// `--json` event stream exposes a per-edit file-write/apply_patch event, which would let codeWrites
+// count per edit instead of per spawn (fourteen edits to one script across a whole climb currently
+// count as one, per `src/harness/cli/codex.js`'s single-spawn design). The only captured fixture,
+// `test/fixtures/cli-codex-usage.jsonl`, carries `item.completed` events of type `error` and
+// `agent_message` only -- no `file_change`/`patch_apply`/`command_execution` item ever seen in this
+// repo's evidence. Guessing at an undocumented event shape and hard-coding it would risk silently
+// mis-parsing a real climb's stdout without ever throwing, which is worse than leaving the known
+// per-spawn undercount in place. Left unaddressed until a real `codex exec --json` transcript with
+// a file-edit item is captured to build a fixture from.
 function countScriptWrites(before, after) {
   let count = 0;
   for (const [rel, mtimeMs] of after) {
@@ -226,12 +237,18 @@ function countScriptWrites(before, after) {
   return count;
 }
 
-// docReadInvocationsIn(text) -> count of grep/cat/sed invocations of HOUSE-RULES.md found in a
-// blob of the CLI's own stdout/stderr (e.g. a real CLI's --output-format json tool-use events, or
-// a shell trace) -- a plain substring/regex scan, not a shell parser, so it only ever
-// UNDER-counts (an invocation split across two stdout chunks, or spelled with an escaped path,
-// can be missed) and never invents one that isn't textually present.
-const DOC_READ_RE = /\b(?:cat|grep|sed)\b[^\n]{0,200}HOUSE-RULES\.md/gi;
+// docReadInvocationsIn(text) -> count of grep/cat/sed invocations of the planted house-rules
+// document found in a blob of the CLI's own stdout/stderr (e.g. a real CLI's --output-format json
+// tool-use events, or a shell trace) -- a plain substring/regex scan, not a shell parser, so it
+// only ever UNDER-counts (an invocation split across two stdout chunks, or spelled with an
+// escaped path, can be missed) and never invents one that isn't textually present.
+//
+// Addendum T (0.8.0): this harness always plants the document as HOUSE-RULES.md (see
+// prepareCliSandbox above), never SKILL.md (that name is run.js's message-loop sandbox only), but
+// the regex now matches either -- a subscription CLI's own tool-use transcript can echo the
+// generic "SKILL.md" name in its own boilerplate regardless of what the file on disk is actually
+// called, and matching only the name this harness plants can only under-count, never over-count.
+const DOC_READ_RE = /\b(?:cat|grep|sed)\b[^\n]{0,200}(?:HOUSE-RULES\.md|SKILL\.md)/gi;
 function docReadInvocationsIn(text) {
   if (!text) return 0;
   const matches = String(text).match(DOC_READ_RE);

@@ -17,25 +17,26 @@ import { makeRung, saysOneOf } from '../src/ladder/rung.js';
 import { answerKey, canonicalString } from '../src/ladder/reference.js';
 import { canonical, sha256 } from '../src/canon.js';
 
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.7.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.8.md', import.meta.url), 'utf8');
 const SEEDS = [1, 2, 3];
 
-test('the world declares ladder 0.7.0', () => {
-  assert.equal(VERSION, '0.7.1');
-  assert.equal(makeWorld(1).version, '0.7.1');
+test('the world declares ladder 0.8.0', () => {
+  assert.equal(VERSION, '0.8.0');
+  assert.equal(makeWorld(1).version, '0.8.0');
 });
 
 // ---------------------------------------------------------------------------
 // rule 2: mutations on the fields a solver parses, at a density that ramps
+// Addendum T (0.8.0): the ramp now starts at rung 20 and reaches its top at rung 50 (was 40/70).
 // ---------------------------------------------------------------------------
 
-test('the announced-mutation density ramps from 0.6 to 0.9 at rung 70', () => {
-  for (const n of [0, 10, 39]) assert.equal(mutationDensityAt(n), 0, `rung ${n}`);
-  for (const n of [40, 55, 69]) assert.equal(mutationDensityAt(n), 0.6, `rung ${n}`);
-  for (const n of [70, 85, 99]) assert.equal(mutationDensityAt(n), 0.9, `rung ${n}`);
+test('the announced-mutation density ramps from 0.6 to 0.9 at rung 50', () => {
+  for (const n of [0, 10, 19]) assert.equal(mutationDensityAt(n), 0, `rung ${n}`);
+  for (const n of [20, 35, 49]) assert.equal(mutationDensityAt(n), 0.6, `rung ${n}`);
+  for (const n of [50, 75, 99]) assert.equal(mutationDensityAt(n), 0.9, `rung ${n}`);
 });
 
-test('the top third really does announce a change nearly every rung', () => {
+test('the top half really does announce a change nearly every rung', () => {
   for (const seed of SEEDS) {
     const world = makeWorld(seed);
     const count = (from, to) => {
@@ -44,10 +45,10 @@ test('the top third really does announce a change nearly every rung', () => {
       return hits;
     };
     assert.equal(count(0, FIRST_MUTATION_RUNG - 1), 0, `seed ${seed} announces a change below rung ${FIRST_MUTATION_RUNG}`);
-    const mid = count(40, 69);
-    const top = count(70, 99);
-    assert.ok(mid >= 10 && mid <= 26, `seed ${seed}: ${mid} of 30 in 40-69, expected about 18`);
-    assert.ok(top >= 21, `seed ${seed}: only ${top} of 30 in 70-99, expected about 27`);
+    const mid = count(20, 49);
+    const top = count(50, 99);
+    assert.ok(mid >= 10 && mid <= 26, `seed ${seed}: ${mid} of 30 in 20-49, expected about 18`);
+    assert.ok(top >= 35, `seed ${seed}: only ${top} of 50 in 50-99, expected about 45`);
   }
 });
 
@@ -101,7 +102,8 @@ test('every rung that pages a listing states the short-page rule', () => {
   for (const seed of SEEDS) {
     const world = makeWorld(seed);
     for (let n = 0; n < 100; n += 1) {
-      const paged = n >= 40 && n <= 49 ? true : n >= 70;
+      // Addendum T: tiers 7-9 (the only composers that page a listing) are now contiguous, 40-99.
+      const paged = n >= 40;
       if (!paged) continue;
       assert.ok(
         saysOneOf(makeRung(world, n).text, 'shortPage'),
@@ -137,8 +139,8 @@ test('consecutive batch rungs do not pile onto the same project', () => {
     assert.ok(hauls.length >= 30, `seed ${seed}: only ${hauls.length} batch rungs`);
     let repeats = 0;
     for (let i = 1; i < hauls.length; i += 1) {
-      // adjacent RUNGS, not adjacent entries: 50-69 haul nothing, so the 49/70 pair is not a
-      // back-to-back haul and the twenty rungs between them are not a missed rotation.
+      // adjacent RUNGS, not adjacent entries: since Addendum T, tiers 7-9 (40-99) haul on every
+      // single rung with no gap, so this now checks every consecutive pair in the range.
       if (hauls[i].n === hauls[i - 1].n + 1 && hauls[i].projectId === hauls[i - 1].projectId) repeats += 1;
     }
     // Dealt round-robin, a project can never be hauled twice in a row; sampling with replacement
@@ -148,7 +150,7 @@ test('consecutive batch rungs do not pile onto the same project', () => {
     const distinct = new Set(hauls.map((h) => h.projectId)).size;
     // The seeded library holds three projects, so the rotation can divide the accumulation by
     // three and no further -- the rest of Addendum Q rule 11 is the documented scope filter
-    // (RULES-0.7 rule 32), which lets a count be taken without walking anybody else's rows and is
+    // (RULES-0.8 rule 32), which lets a count be taken without walking anybody else's rows and is
     // the API workstream's half. A library with more projects would raise this number on its own.
     assert.ok(distinct >= 3, `seed ${seed}: only ${distinct} distinct projects across ${hauls.length} hauls`);
     assert.equal(distinct, new Set(hauls.map((h) => h.projectId)).size);
@@ -160,28 +162,42 @@ test('consecutive batch rungs do not pile onto the same project', () => {
 // ---------------------------------------------------------------------------
 
 test('the answer key records an ordered stage sequence for exactly the rungs that walk one', () => {
+  // Addendum T: the render/publish/etag chain moved to 20-39 (was 50-69), and `recover409` is now
+  // a per-rung seeded draw rather than always true, so the expected stage list forks on it instead
+  // of always including `render:409`.
   for (const seed of SEEDS) {
     const world = makeWorld(seed);
     const key = answerKey(world);
     for (const entry of key.rungs) {
-      const walks = entry.n >= 50 && entry.n <= 69;
+      const walks = entry.n >= 20 && entry.n <= 39;
       if (!walks) {
         assert.equal(entry.expectedAudit, null, `seed ${seed} rung ${entry.n} grades a path it never walks`);
         continue;
       }
       assert.ok(entry.expectedAudit, `seed ${seed} rung ${entry.n} walks the stages but records no audit`);
+      const recovers = entry.expectedAudit.stages.includes('render:409');
       assert.deepEqual(
         entry.expectedAudit.stages,
-        ['draft', 'render:409', 'composed', 'rendering', 'rendered', 'published'],
+        recovers
+          ? ['draft', 'render:409', 'composed', 'rendering', 'rendered', 'published']
+          : ['draft', 'composed', 'rendering', 'rendered', 'published'],
         `seed ${seed} rung ${entry.n}`,
       );
-      // the deliberate out-of-turn reach (rule 23) is PART of the required sequence: a project
-      // that was never refused never took the path the text describes
-      assert.ok(entry.expectedAudit.stages.includes('render:409'));
       assert.equal(entry.expectedAudit.bodyDigestOf, 'submittedAsset');
       assert.equal(typeof entry.expectedAudit.canonical, 'string');
     }
   }
+});
+
+test('recover409 actually varies across 20-39, so the base stage list is exercised too', () => {
+  const world = makeWorld(1);
+  const key = answerKey(world);
+  const seen = new Set();
+  for (const entry of key.rungs) {
+    if (entry.n < 20 || entry.n > 39) continue;
+    seen.add(entry.expectedAudit.stages.includes('render:409'));
+  }
+  assert.deepEqual([...seen].sort(), [false, true], 'seed 1 never varies recover409 across rungs 20-39');
 });
 
 test('the canonical string is one implementation, and the digest-bound recipe needs a real digest', () => {
@@ -250,14 +266,20 @@ test('the ladder <-> API contract for all three new fields is written down in on
 //     for (const s of [1,2,3]) console.log(s, sha256(canonical(answerKey(makeWorld(s)).rungs.map(r=>r.expected))));"
 // ---------------------------------------------------------------------------
 
-// Rebaselined when Addendum Q rule 4's amendments went LIVE (AMENDMENTS_ENFORCED true) and rule
-// 10's canonical string became digest-bound by default: every rung at or above 30 is now composed
-// against the rules in force at it, so a seed whose first amendment moves the grid or the
-// rounding direction has a different key from rung 30 up. Deliberate; see src/world.js.
+// Rebaselined for Addendum T (0.8.0): the band-tier reassignment, the moved mutation/amendment/
+// refusal constants, the per-rung recover409 draw and the two reworded phrasings all change which
+// composer runs at which rung and what its plan looks like, so every hash moved. Deliberate; see
+// src/world.js and src/ladder/grammar.js. (Addendum Q rule 4's amendments are LIVE
+// (AMENDMENTS_ENFORCED true) and rule 10's canonical string is digest-bound by default: every rung
+// at or above the first amendment rung is composed against the rules in force at it.)
+// Rebaselined again for the batchTier shrink floor (0.8.0, Addendum D): the ordered batch chain's
+// shrink step now carries a minPercent pinned from the seeded library's smallest rect, and the
+// Addendum I solver nudges those percents upward to honor it -- so the affected rungs' keys moved.
+// Deliberate; see the shrinkFloor computation in src/ladder/grammar.js's batchTier.
 const PINNED_KEY_HASHES = {
-  1: 'd1ab092a251679ca460cc5e0576db440315b5e033afe8d535734e08feaebd7be',
-  2: '6b299b5248ca5f92b735b7e776f4963df9e35cca41799546eb464e5948564071',
-  3: '2c48244dfac0501d3431566de22a713838b5bf62cc78759a0d1c3e9b3bc6bc16',
+  1: 'd3c8f1df9a9e9b685e78882c912ed05c6f5bf79686096d35fb1f4fcf03ab2444',
+  2: 'c9b4bd3a5a1acf688b76cad6167aac359f99c2bdaf6406714335478a17990b05',
+  3: 'bf3a8033208d76c1bb1fd913745cc30598355c38c317afe7aed5d1d83375e32c',
 };
 
 test('the 0.7.0 answer key hashes are pinned for seeds 1, 2 and 3', () => {

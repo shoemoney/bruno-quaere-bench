@@ -4,8 +4,9 @@
 // Rule 4 is the only mechanism on the ladder that makes the 5 MB house document keep costing
 // after rung 0. Astra's seed-701 climb opened the skill on 10 of 373 tool calls, 7 of them at
 // rung 0, because nothing in 0.6.0 ever changed: house constants were ladder-constant, so the
-// skill was read once and cached into a 34 KB file. An amendment at rungs 30, 55 and 78 makes a
-// cached reading wrong three times, and the only way through is to go back and read.
+// skill was read once and cached into a 34 KB file. An amendment at rungs 20, 30, 40 and 60
+// (Addendum T; was 30, 55, 78) makes a cached reading wrong four times, and the only way through
+// is to go back and read.
 //
 // WHAT IS AND IS NOT LIVE YET. An amendment is only real when the HOUSE changes behaviour at the
 // announced rung, and the grid step, the rounding direction, the compounding rule, the default
@@ -22,12 +23,12 @@ import { readFileSync } from 'node:fs';
 
 import {
   makeWorld, rulesAt, amendmentsAt, drawAmendments, AMENDMENT_RUNGS, AMENDMENT_RULES,
-  AMENDMENTS_ENFORCED,
+  AMENDMENT_ALLOWED_RULES, AMENDMENTS_ENFORCED,
 } from '../src/world.js';
 import { makeRung, saysOneOf } from '../src/ladder/rung.js';
 import { canonical } from '../src/canon.js';
 
-const RULES_DOC = readFileSync(new URL('../docs/RULES-0.7.md', import.meta.url), 'utf8');
+const RULES_DOC = readFileSync(new URL('../docs/RULES-0.8.md', import.meta.url), 'utf8');
 
 // A world with the amendments this seed draws, live. Identical to `makeWorld(seed)` now that
 // AMENDMENTS_ENFORCED is true; kept as its own name so every test below still says which world it
@@ -46,11 +47,11 @@ function unamendedWorld(seed) {
 // the draw
 // ---------------------------------------------------------------------------
 
-test('amendments land at exactly the three announced rungs', () => {
-  assert.deepEqual(AMENDMENT_RUNGS, [30, 55, 78]);
+test('amendments land at exactly the four announced rungs', () => {
+  assert.deepEqual(AMENDMENT_RUNGS, [20, 30, 40, 60]);
   for (let seed = 1; seed <= 40; seed += 1) {
     const drawn = drawAmendments(seed);
-    assert.equal(drawn.length, 3, `seed ${seed}`);
+    assert.equal(drawn.length, 4, `seed ${seed}`);
     assert.deepEqual(drawn.map((a) => a.atRung), AMENDMENT_RUNGS, `seed ${seed}`);
   }
 });
@@ -66,12 +67,32 @@ test('every amendment is one item from the closed set, and really moves it', () 
   }
 });
 
-test('the three amendments of one seed never move the same rule twice', () => {
-  // Amendments accumulate (rule 33), so two amendments to one rule would make the second silently
-  // overwrite the first and the ladder would only really have two of them.
+// Addendum T: each rung draws from its own allow-list. Two rungs' allow-lists can overlap (20 and
+// 40 both allow roundTo/roundMode), so a seed CAN move the same rule twice -- rule 33 explicitly
+// allows this ("a rule amended at an earlier rung stays amended unless a later amendment moves it
+// again"), so this only pins that every draw is a legal member of its own rung's allow-list, and
+// that `.from` always reflects whatever the running value actually is (so a repeat is a real
+// second move, never a no-op).
+test('every rung draws only from its own allow-list, and a repeat move is a real change', () => {
   for (let seed = 1; seed <= 60; seed += 1) {
-    const rules = drawAmendments(seed).map((a) => a.rule);
-    assert.equal(new Set(rules).size, rules.length, `seed ${seed} amends the same rule twice: ${rules.join(', ')}`);
+    const drawn = drawAmendments(seed);
+    const seenRules = new Map();
+    for (const a of drawn) {
+      const allowed = AMENDMENT_ALLOWED_RULES[a.atRung];
+      assert.ok(allowed, `seed ${seed}: rung ${a.atRung} has no allow-list`);
+      assert.ok(allowed.includes(a.rule), `seed ${seed}: rung ${a.atRung} drew "${a.rule}", outside its allow-list ${allowed.join(', ')}`);
+      const prior = seenRules.get(a.rule);
+      if (prior !== undefined) assert.equal(a.from, prior, `seed ${seed}: rung ${a.atRung}'s "from" for ${a.rule} does not match the earlier amendment's "to"`);
+      assert.notEqual(a.to, a.from, `seed ${seed}: rung ${a.atRung} "changes" ${a.rule} to the value it already had`);
+      seenRules.set(a.rule, a.to);
+    }
+  }
+});
+
+test('every amendment rule that a future band could depend on has at least one rung whose allow-list can draw it', () => {
+  for (const rule of Object.keys(AMENDMENT_RULES)) {
+    const coverable = AMENDMENT_RUNGS.some((atRung) => (AMENDMENT_ALLOWED_RULES[atRung] ?? Object.keys(AMENDMENT_RULES)).includes(rule));
+    assert.ok(coverable, `"${rule}" cannot be drawn by any amendment rung`);
   }
 });
 
@@ -85,22 +106,32 @@ test('drawAmendments is pure in the seed', () => {
 // rulesAt
 // ---------------------------------------------------------------------------
 
+// valueOf(entry, world, n): the entry's own field, resolved through rulesAt at rung n. Generic
+// over `path` because an amendment's field can live under `rules` (roundTo, roundMode,
+// opacityCompound, defaultFps) or under `hmac` (hmacCanon) -- `AMENDMENT_RULES` says which.
+function valueOf(entry, world, n) {
+  return rulesAt(world, n)[entry.path[0]][entry.path[1]];
+}
+
 test('rulesAt is the base world below the first amendment and accumulates above it', () => {
-  const seed = 3; // roundTo at 30, roundMode at 55, defaultFps at 78
+  const seed = 3;
   const base = makeWorld(seed);
   const world = amendedWorld(seed);
-  const [first, second, third] = world.amendments;
+  const [first, second, third, fourth] = world.amendments;
+  assert.deepEqual([first.atRung, second.atRung, third.atRung, fourth.atRung], AMENDMENT_RUNGS);
 
-  for (const n of [0, 15, 29]) {
+  for (const n of [0, 10, 19]) {
     assert.equal(rulesAt(world, n), world, `rung ${n} should resolve to the world itself`);
-    assert.equal(rulesAt(world, n).rules[first.rule], base.rules[first.rule]);
+    assert.equal(valueOf(first, world, n), valueOf(first, base, n));
   }
-  assert.equal(rulesAt(world, first.atRung).rules[first.rule], first.to, 'live from its own rung, not the next one');
-  assert.equal(rulesAt(world, 54).rules[second.rule], second.from, 'a later amendment must not leak backwards');
-  assert.equal(rulesAt(world, second.atRung).rules[second.rule], second.to);
-  assert.equal(rulesAt(world, second.atRung).rules[first.rule], first.to, 'amendments accumulate');
-  assert.equal(rulesAt(world, 99).rules[third.rule], third.to);
-  assert.equal(rulesAt(world, 99).rules[first.rule], first.to);
+  assert.equal(valueOf(first, world, first.atRung), first.to, 'live from its own rung, not the next one');
+  assert.equal(valueOf(second, world, 29), second.from, 'a later amendment must not leak backwards');
+  assert.equal(valueOf(second, world, second.atRung), second.to);
+  assert.equal(valueOf(first, world, second.atRung), first.to, 'amendments accumulate');
+  assert.equal(valueOf(third, world, 59), third.to);
+  assert.equal(valueOf(fourth, world, 59), fourth.from, 'the fourth amendment must not leak backwards either');
+  assert.equal(valueOf(fourth, world, 99), fourth.to);
+  assert.equal(valueOf(first, world, 99), first.to);
 });
 
 test('rulesAt never mutates the world it is given', () => {
@@ -127,9 +158,10 @@ test('amendmentsAt names only what lands at exactly that rung', () => {
 // the generator reads it
 // ---------------------------------------------------------------------------
 
-// Seeds whose FIRST amendment is one that moves geometry (the grid step or the rounding
-// direction), so the amended key is observably different rather than merely differently labelled.
-const GEOMETRY_SEEDS = [3, 5, 11];
+// Seeds whose FIRST amendment (Addendum T: at rung 20, drawn from {roundTo, roundMode,
+// opacityCompound}) moves geometry (the grid step or the rounding direction), so the amended key
+// is observably different rather than merely differently labelled.
+const GEOMETRY_SEEDS = [2, 5, 6];
 
 test('a rung composed above a geometry amendment differs from the same rung composed below it', () => {
   for (const seed of GEOMETRY_SEEDS) {
@@ -139,7 +171,7 @@ test('a rung composed above a geometry amendment differs from the same rung comp
     assert.ok(['roundTo', 'roundMode'].includes(first.rule), `seed ${seed} is not a geometry-amendment seed any more`);
 
     // below the amendment: byte-identical, because nothing is in force yet
-    for (const n of [0, 10, 29]) {
+    for (const n of [0, 10, 19]) {
       assert.equal(
         canonical(makeRung(world, n, { phrasingVariant: 0 }).expectedDescriptors),
         canonical(makeRung(base, n, { phrasingVariant: 0 }).expectedDescriptors),
@@ -160,7 +192,7 @@ test('a rung composed above a geometry amendment differs from the same rung comp
 test('every rung records the amendments in force at it, and its own resolved rules', () => {
   const seed = 3;
   const world = amendedWorld(seed);
-  for (const n of [0, 29, 30, 54, 55, 77, 78, 99]) {
+  for (const n of [0, 19, 20, 29, 30, 39, 40, 59, 60, 99]) {
     const rung = makeRung(world, n);
     const live = world.amendments.filter((a) => a.atRung <= n);
     assert.deepEqual(rung.amendments, live, `rung ${n}`);

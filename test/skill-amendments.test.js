@@ -160,10 +160,10 @@ test('a different atRung is a distinct cache entry, not a stale one from a prior
 
 // ---------------------------------------------------------------------------
 // Real integration: world.js's own drawAmendments(), not a hand-rolled fixture. AMENDMENT_RUNGS
-// is [30, 55, 78] and AMENDMENT_RULES's five keys are exactly what AMENDMENT_RULE_TO_CHAIN_KEY
-// in skill-sloppy.js translates -- this is the actual object shape that will start flowing into
-// world.amendments the day AMENDMENTS_ENFORCED flips to true, attached here by hand in the
-// meantime (same pattern test/harness-amendments.test.js uses on the harness side).
+// is [20, 30, 40, 60] and AMENDMENT_RULES's five keys are exactly what AMENDMENT_RULE_TO_CHAIN_KEY
+// in skill-sloppy.js translates. AMENDMENTS_ENFORCED is true, so makeWorld already attaches these;
+// the tests below re-attach by hand to pin the actual object shape flowing into world.amendments
+// (same pattern test/harness-amendments.test.js uses on the harness side).
 // ---------------------------------------------------------------------------
 
 test('drawAmendments(seed) attached by hand: every one of world.js\'s five real rule names is recognized, one per AMENDMENT_RUNGS entry', () => {

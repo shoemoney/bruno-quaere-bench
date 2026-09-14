@@ -1,9 +1,9 @@
 # House rules the ladder answer key depends on
 
-Ladder version **0.7.1** (`src/world.js` `VERSION`). Written by the ladder workstream for the
-skill workstream and the docsolver workstream. Was `docs/RULES-0.5.md` through 0.5.1 and
-`docs/RULES-0.6.md` through 0.6.0; renamed each time, never restarted, so every rule number below
-is stable across every bump.
+Ladder version **0.8.0** (`src/world.js` `VERSION`). Written by the ladder workstream for the
+skill workstream and the docsolver workstream. Was `docs/RULES-0.5.md` through 0.5.1,
+`docs/RULES-0.6.md` through 0.6.0, and `docs/RULES-0.7.md` through 0.7.1; renamed each time, never
+restarted, so every rule number below is stable across every bump.
 
 **The contract.** Nothing in any rung's answer key may turn on a rule that is not in this file.
 Every rule below is stated in plain language, the way `skill.js` has to say it and the way an
@@ -12,8 +12,9 @@ not here, that is a generator bug of exactly the kind Addendum I was written abo
 `docsolver` gate exists to catch it, and this file is what `docsolver` is allowed to read.
 
 Rules 1–15 carried over from 0.4.0 and are unchanged in substance; 16–27 are new in 0.5.0; 28–29
-are new in 0.6.0; 30–37 are new in 0.7.0 (Addendum Q); **38 is new in 0.7.1** (Addendum S). All of
-them are appended rather than slotted in, so nothing renumbers.
+are new in 0.6.0; 30–37 are new in 0.7.0 (Addendum Q); 38 is new in 0.7.1 (Addendum S); **39 is
+new in 0.8.0** (Addendum T). All of them are appended rather than slotted in, so nothing
+renumbers.
 
 **What changed most in 0.7.0 is not a rule but the appendix.** Through 0.6.0 the last section of
 this file published the closed set of *sentences* the task text could emit, and a solver parsed
@@ -106,10 +107,10 @@ only so the docsolver knows to parse them.
 
 ## Derived numbers — a number the task does not state
 
-18. **(task text, new in 0.5.0)** From rung 30 up, at least one number a rung needs is not in the
-    task text. The text states a recipe instead: *start at B and take P off for every X*. The
-    answer is `B − P × (how many X there are)`, and `how many X there are` can only be learned by
-    asking the house.
+18. **(task text, new in 0.5.0)** **From rung 20 up (was 30, Addendum T)**, at least one number a
+    rung needs is not in the task text. The text states a recipe instead: *start at B and take P
+    off for every X*. The answer is `B − P × (how many X there are)`, and `how many X there are`
+    can only be learned by asking the house.
 
 19. **(task text, new in 0.5.0)** The five things `X` can be, and what counts each one:
     - *every shape left on that leftover piece* — the shapes on the result of taking the second
@@ -129,8 +130,9 @@ only so the docsolver knows to parse them.
 
 ## Cross-rung references — a value the task does not repeat
 
-21. **(task text, new in 0.5.0)** From rung 20 up, a rung may name a property of *the piece you
-    turned in at step M* and never state the value. There are exactly two such properties:
+21. **(task text, new in 0.5.0)** **From rung 30 up (was 20, Addendum T)**, a rung may name a
+    property of *the piece you turned in at step M* and never state the value. There are exactly
+    two such properties:
     - *as wide and as tall as the piece you turned in at step M* — that piece's canvas width and
       height, in pixels, exactly as the house stored them.
     - *the same ground colour as the piece you turned in at step M* — that piece's ground colour.
@@ -155,7 +157,7 @@ only so the docsolver knows to parse them.
 
 ## Announced changes
 
-26. **(task text, new in 0.5.0)** From rung 40 up, a rung may say that the house
+26. **(task text, new in 0.5.0)** **From rung 20 up (was 40, Addendum T)**, a rung may say that the house
     `has changed something about the way it answers`, starting with that piece of work, without
     saying what.
     The change is always one of: a status code that is no longer the usual one; a field that is no
@@ -180,8 +182,9 @@ only so the docsolver knows to parse them.
 29. **(task text, new in 0.6.0)** The conditional write of rule 25 puts a **stated** word on the
     thing. The task text names it — *write the word "X" onto it* — and it is written onto the
     **last** piece, after every ordered step is done, because that is the piece that gets turned
-    in and a label does not travel from one piece to the next one made out of it. From rung 50 up
-    it is graded: a piece whose hash is right but which never got the word written onto it, or
+    in and a label does not travel from one piece to the next one made out of it. **From rung 20
+    up (was 50, Addendum T)** it is graded: a piece whose hash is right but which never got the
+    word written onto it, or
     whose project never came all the way through the house stages to released, does not pass.
     Everything the task text demands is graded; nothing is demanded for decoration.
     **Amended in 0.7.0:** a word goes onto a piece only where a turn-in step asks for it, and only
@@ -231,7 +234,7 @@ only so the docsolver knows to parse them.
     project. The earlier piece is not edited and not replaced; the rebuild is a new piece.
 
 35. **(skill, new in 0.7.0)** A release notice's signature is computed over the house's canonical
-    string, and from 0.7.0 that string **binds a digest of the thing being released** as well as
+    string, and that string **binds a digest of the thing being released** as well as
     the timestamp, the method and the path. The digest is the house's own hash of the artifact
     bytes, taken from the house rather than computed from a local copy, and it travels in its own
     header beside the timestamp and the signature. A signature computed without it, or computed
@@ -265,6 +268,22 @@ only so the docsolver knows to parse them.
     never having been refused. What decides whether the audit trail includes the refusal is the
     instruction in the text, never an assumption baked into the key from something the text itself
     never says.
+
+## The stage trail is graded exactly, not loosely — new in 0.8.0
+
+39. **(skill, new in 0.8.0)** The house keeps a trail of every stage you ask a project for,
+    refusals included, in the order you asked. A piece passes only if that trail is exactly the
+    walk the task describes: the stages in the house's order, plus the one refusal the task told
+    you to earn when it did, and nothing else. A second refusal, a repeated stage, or a stage
+    asked for before the check-back says finished leaves a mark on the trail and the piece does
+    not pass.
+
+## The plain words name the flavor — new in 0.8.0
+
+40. **(skill, new in 0.8.0)** The task text names flavors in the house's plain
+    words: "a vector file" is the `svg` flavor, "a bitmap file" is `png`,
+    "plain wave audio" is `wav`, and "the compact house audio flavor" is `qa8`.
+    A moving clip only ever has the one flavor, `qvid`.
 
 ---
 
@@ -313,7 +332,7 @@ rather than guess, as it already does for an unknown create clause.
 |---|---|
 | `chainIntro` | what follows is an ordered list; each step is done to what the step before it produced |
 | `stepLora` | look the named house style up by its display name and apply it (rules 12, 13) |
-| `stepSave` | re-save what you have in the named flavor; the size is untouched |
+| `stepSave` | re-save what you have in the named flavor; the size is untouched; the plain words name the flavor (rule 40) |
 | `stepResize` | resize to the stated absolute pixel target (rules 3, 4, 6) |
 | `stepShrink` / `stepGrow` | resize to the stated percentage of the current size (rule 5) |
 | `stepDerivedShrink` / `stepDerivedGrow` | the same, with the percentage not stated but derived by the recipe (rules 18, 19, 20) |
@@ -332,7 +351,7 @@ rather than guess, as it already does for an unknown create clause.
 | `csvPull` | ask for the same listing as a spreadsheet rather than the usual reply |
 | `clearOut` | clear the last N of this rung's copies out, confirm both directions, then count what stands (rule 19) |
 | `shortPage` | that listing is metered tightly; a short page is not the end, only a missing next cursor is (rule 31) |
-| `stage` | walk every house stage in house order, wait for the finishing run's check-back (rule 23); when the rung tests stage recovery it also instructs a deliberate early reach for the render stage before composing, taking the refusal, and carrying on from there (rule 38) -- graded only when stated |
+| `stage` | walk every house stage in house order, wait for the finishing run's check-back (rule 23); when the rung tests stage recovery it also instructs a deliberate early reach for the render stage before composing, taking the refusal, and carrying on from there (rule 38) -- graded only when stated; every phrasing also states that the trail of stages you asked for, refusals included, is graded exactly (rule 39) |
 | `sign` | sign and send the release notice before anything leaves (rules 24, 35) |
 | `stitch` | a stitched moving piece is only there to be counted; carry on with the finished picture (rule 28) |
 | `tag` | write the STATED word onto the LAST piece, conditionally, so it fails rather than overwrites (rules 25, 29) |
@@ -354,14 +373,14 @@ rule, the act must not be performed, and what is graded is the ABSENCE of what i
 | `refusalReflavourCleared` | re-save the cleared-out copies in another flavour | rule 30 |
 | `refusalLabelStack` | write a stated word onto the stack, on a rung whose turn-in asks for no word | rules 29, 36 |
 
-### Rules stated here but not yet emitted by any 0.7.0 rung
+### Rules stated here but not yet emitted by any 0.8.0 rung
 
 Rule 34 (regression pieces) and rule 37 (byte budgets) are written down because they are the
 contract the generator will emit against, and because a rule that arrives with the rungs that use
-it arrives too late for the skill and the docsolver. **No rung in 0.7.0 emits either clause yet**;
+it arrives too late for the skill and the docsolver. **No rung in 0.8.0 emits either clause yet**;
 when they land, the kinds `regressionRebuild` and `byteBudget` join the tables above. Nothing in
-any 0.7.0 answer key turns on rule 34 or rule 37, so a solver that ignores both is complete for
-0.7.0 and ready for the rung that is not.
+any 0.8.0 answer key turns on rule 34 or rule 37, so a solver that ignores both is complete for
+0.8.0 and ready for the rung that is not.
 
 ### Never in the text
 

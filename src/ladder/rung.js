@@ -89,7 +89,7 @@
 //
 //   Forbidden = {
 //     act:    string,   // machine-readable name, from REFUSAL_ACTS below
-//     rule:   number,   // the numbered rule in docs/RULES-0.7.md that forbids it
+//     rule:   number,   // the numbered rule in docs/RULES-0.8.md that forbids it
 //     detail: string,   // one plain sentence naming the artifact or state that must be absent
 //   }
 //
@@ -123,7 +123,7 @@ import { bandFor, composePlan, runPlanLocally, REFUSAL_ACTS } from './grammar.js
 // identical meaning, drawn per (seed, rung, clause kind) from its own sub-seed so adding a kind
 // never reshuffles the ones that already exist.
 //
-// The obligation this puts on the documents is the whole point: `docs/RULES-0.7.md` publishes
+// The obligation this puts on the documents is the whole point: `docs/RULES-0.8.md` publishes
 // clause KINDS and what each one obliges, never the sentence that carries it. A reader pays
 // nothing -- four ways of saying "shrink this to 60 percent" all mean shrink this to 60 percent --
 // and a regex pays everything.
@@ -175,14 +175,20 @@ const PHRASINGS = {
   // whether the key requires a `render:409` in the audit trail), the sentence has to INSTRUCT the
   // deliberate early reach, not just narrate what happens if one occurs -- otherwise a competent
   // agent that does every stage correctly the first time can never produce the sequence the key
-  // demands, through no fault of its own reading. When recover409 is false (no rung in this
-  // text-generator path currently draws one; renderTier always sets it true), the original
-  // descriptive warning stands untouched, because no early reach is required or graded.
+  // demands, through no fault of its own reading. When recover409 is false (Addendum T: now a
+  // seeded per-rung draw in `renderTier`, roughly half), the original descriptive warning stands
+  // untouched, because no early reach is required or graded.
+  //
+  // Addendum T (0.8.0, second gap found the same way as Addendum S): `src/api/server.js` grades
+  // the audit trail by EXACT sequence equality, refusals included -- a stray extra refusal or a
+  // repeated stage fails a piece even when its hash, state and label are all right (round six,
+  // muse seed 1008, rung 50). Nothing told the agent that trail had to be exact, so the third
+  // sentence below states it outright, every phrasing, regardless of recover409.
   stage: [
-    ({ recover409 } = {}) => `Walk it all the way through the house stages in the house order -- lock it in, kick off the finishing run, and do not call it done until you check back and it actually says finished. ${recover409 ? 'Before you lock it in, reach for the finishing run on purpose -- take the refusal it earns you, then put in the stage you skipped and carry on from there.' : 'If you reach for a stage out of turn the house will refuse you; take the refusal, put the missing stage in, and carry on.'}`,
-    ({ recover409 } = {}) => `Take it through every house stage, in the house's order: lock it in, start the finishing run, then check back and wait until the check-back really says finished. ${recover409 ? 'Before you compose it, reach for the render stage on purpose -- take the refusal, then walk every stage in the house\'s order starting from where you actually are.' : 'Reaching for a stage early earns a refusal -- accept it, do the stage you skipped, and go on.'}`,
-    ({ recover409 } = {}) => `The house stages happen in one order and all of them happen. Lock it in, start the finishing run, and only treat it as finished once a check-back says so. ${recover409 ? 'On purpose, ask for the render stage before you compose it -- take the refusal that earns you, then work every stage in the house\'s order from wherever that leaves you.' : 'Ask for a stage out of turn and you will be refused; take that refusal, fill in what was missing, continue.'}`,
-    ({ recover409 } = {}) => `Every stage, in house order, no shortcuts: lock in, start the finishing run, poll until the answer is finished. ${recover409 ? 'Deliberately reach for the finishing run before you compose it -- let it be refused, then carry on through every stage in the house\'s order from where that refusal leaves you.' : 'An out-of-turn stage is refused by design -- let it be refused, insert the stage you were missing, and keep going.'}`,
+    ({ recover409 } = {}) => `Walk it all the way through the house stages in the house order -- lock it in, kick off the finishing run, and do not call it done until you check back and it actually says finished. ${recover409 ? 'Before you lock it in, reach for the finishing run on purpose -- take the refusal it earns you, then put in the stage you skipped and carry on from there.' : 'If you reach for a stage out of turn the house will refuse you; take the refusal, put the missing stage in, and carry on.'} The house keeps a trail of every stage you ask for, refusals included, in order -- ask for each one once, in the house's order, and only once the check-back says finished.`,
+    ({ recover409 } = {}) => `Take it through every house stage, in the house's order: lock it in, start the finishing run, then check back and wait until the check-back really says finished. ${recover409 ? 'Before you compose it, reach for the render stage on purpose -- take the refusal, then walk every stage in the house\'s order starting from where you actually are.' : 'Reaching for a stage early earns a refusal -- accept it, do the stage you skipped, and go on.'} The house records every stage you ask for, refusals included, in the order you asked -- ask for each stage exactly once, in order, and only after the check-back says finished.`,
+    ({ recover409 } = {}) => `The house stages happen in one order and all of them happen. Lock it in, start the finishing run, and only treat it as finished once a check-back says so. ${recover409 ? 'On purpose, ask for the render stage before you compose it -- take the refusal that earns you, then work every stage in the house\'s order from wherever that leaves you.' : 'Ask for a stage out of turn and you will be refused; take that refusal, fill in what was missing, continue.'} Every stage you ask for is logged, refusals included, in order -- ask for each one exactly once, in the house's order, only once the check-back says finished.`,
+    ({ recover409 } = {}) => `Every stage, in house order, no shortcuts: lock in, start the finishing run, poll until the answer is finished. ${recover409 ? 'Deliberately reach for the finishing run before you compose it -- let it be refused, then carry on through every stage in the house\'s order from where that refusal leaves you.' : 'An out-of-turn stage is refused by design -- let it be refused, insert the stage you were missing, and keep going.'} The house's own log tracks every stage you ask for, refusals included, in the order asked -- ask for each stage once, in order, and only after the check-back confirms finished.`,
   ],
   sign: [
     () => 'Then sign and send the release notice the house requires before anything can go out the door.',
@@ -317,12 +323,12 @@ const PHRASINGS = {
   shapeRect: [
     (s) => `a rectangle ${s.w} across and ${s.h} down, its top-left corner ${s.x} from the left and ${s.y} from the top, ${s.paint}`,
     (s) => `a rectangle, ${s.w} wide and ${s.h} high, with its top-left corner sitting ${s.x} from the left edge and ${s.y} from the top, ${s.paint}`,
-    (s) => `a ${s.w} by ${s.h} rectangle (across first), placed with its top-left corner ${s.x} in from the left and ${s.y} down from the top, ${s.paint}`,
+    (s) => `a ${s.w} by ${s.h} rectangle (across first), placed with its top-left corner ${s.x} over from the left edge and ${s.y} down from the top edge, ${s.paint}`,
     (s) => `a rectangle measuring ${s.w} left to right and ${s.h} top to bottom, anchored at its top-left corner ${s.x} from the left and ${s.y} from the top, ${s.paint}`,
   ],
   shapeCircle: [
     (s) => `a circle of radius ${s.r} centred ${s.x} from the left and ${s.y} from the top, ${s.paint}`,
-    (s) => `a circle whose radius is ${s.r}, its centre ${s.x} in from the left and ${s.y} down from the top, ${s.paint}`,
+    (s) => `a circle whose radius is ${s.r}, its centre ${s.x} over from the left edge and ${s.y} down from the top edge, ${s.paint}`,
     (s) => `a circle, radius ${s.r}, centred at ${s.x} from the left and ${s.y} from the top, ${s.paint}`,
     (s) => `a round one of radius ${s.r} with its centre ${s.x} from the left edge and ${s.y} from the top edge, ${s.paint}`,
   ],
@@ -631,7 +637,7 @@ function orderNote(ctx, narrative) {
 
 // Addendum Q rule 7: the ask a numbered house rule forbids. It reads as an ordinary, reasonable
 // instruction -- that is the point. The plan does NOT contain it, the key records what must stay
-// absent, and RULES-0.7 rule 30 is what makes the refusal the correct reading.
+// absent, and RULES-0.8 rule 30 is what makes the refusal the correct reading.
 function refusalNote(ctx, narrative) {
   if (!narrative.refusal) return '';
   const { act, styleName } = narrative.refusal;

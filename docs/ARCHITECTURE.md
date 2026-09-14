@@ -919,7 +919,7 @@ skill is read once; (A3) response shapes on the routes the pipeline uses never m
 derived number is a `len()` of a body already held; (A5) recall resolves from the script's own
 ledger; (A6) only the terminal artifact is graded, never the path; (A7) nothing is failed by doing
 extra and no rung revisits an earlier artifact. 0.7.0 breaks each. Generator-only; keys derivable
-from `docs/RULES-0.7.md`; docsolver, reference, sandbox-fidelity gates stay; no hand-written rungs;
+from `docs/RULES-0.8.md`; docsolver, reference, sandbox-fidelity gates stay; no hand-written rungs;
 no model judge.
 
 1. **Paraphrase the clause surface (all bands).** Each clause kind renders as one of k ≥ 4 seeded
@@ -1038,13 +1038,13 @@ that reads the sentence as a caution and does every stage correctly and in order
 exactly as the rest of the sentence literally says to do ("in the house's order"), never triggers
 a 409, and therefore cannot produce the sequence the key requires -- through no fault of its own
 reading. This is an Addendum I violation: the key depends on a fact (a mandatory out-of-turn
-attempt) that is not stated anywhere in RULES-0.7.md, the skill, or the rung text as an
+attempt) that is not stated anywhere in RULES-0.8.md, the skill, or the rung text as an
 instruction.
 
 **Fix.** When `recover409` is true, the rung text states the requirement as a plain instruction,
 not a warning: something to the effect of "Before you compose it, reach for the render stage on
 purpose -- take the refusal, then walk every stage in the house's order starting from where you
-actually are." Add the (skill) rule to `docs/RULES-0.7.md`/the clean skill: "a rung that tests
+actually are." Add the (skill) rule to `docs/RULES-0.8.md`/the clean skill: "a rung that tests
 stage recovery says so outright; if a rung does not ask for an early reach, none is required and
 none is graded." `docsolver.js` must parse the new instructional sentence and require the
 `render:409` entry in its own computed audit only when that sentence is present -- never infer it
@@ -1055,3 +1055,56 @@ task text and the audit's stage list source). Version bumps to 0.7.1.
 The three rung-50 falls above are voided, not real results. Kimi and the grok-4.6 rerun (seed
 909) may hit the same wall before this lands; their falls there would be voided too, for the same
 reason.
+
+## Addendum T: 0.7.0 had nothing to bite; 0.8.0 moves the real obligations to 20-49
+
+Added 2026-09-13 (evening), from `.audit/forensics-0.7.0.md`'s reading of round five (five
+clearing/near-clearing climbs to rung 49, ladder 0.7.0). Section 1 found nobody wrote a text
+parser below rung 49 -- every model transcribed the rung text by hand, so the paraphrase rule
+(0.7.0's highest-leverage change) had nothing to bite. Section 2 found rung 50 was the only rung
+in the round whose cost tripled for every model (astra 64s/4 code writes vs 30s typical; qwen3.8-max
+346s/9 bru calls; qwen3.8-flash 286s/21 bru calls; kimi 354s/25 bru calls/twelve 409 mentions;
+muse 112s/67 tasks; grok 71 turns/13 doc reads) -- the graded release chain (render, 409 recovery,
+poll, HMAC publish, If-Match label) only starts there, and nothing in 20-49 held a comparable
+obligation. Section 2 also found the single rung-30 amendment was inert on four of nine round-five
+seeds (it drew `hmacCanon`, which has no effect before the first publish), so every model paid to
+re-read `HOUSE-RULES.md` for a change that cost it nothing. Section 5 found `shapeRect`/
+`shapeCircle` phrasing "N in from the left" reads as inches on eight of ten round-five seeds,
+since the house's own `unitWords.inch` can include the word "in" -- deepseek's seed-907 fall at
+rung 1 traced directly to that hazard.
+
+The fix is band-table data, not new mechanism (section 4: the composer and text builder are
+picked by `band.tier`, never by the table's array index). `src/ladder/grammar.js`'s `BANDS` now
+assigns tiers `[0, 1, 5, 6, 7, 8, 9, 9, 9, 9]` by index, so tier 5 (audio-diff + render + publish +
+ETag) runs at 20-29, tier 6 (video stitch + recall + render + publish) at 30-39, tier 7 (clear-out
+batch with ordering) at 40-49, tier 8 (the same, plus a third style lookup) at 50-59, and tier 9
+(everything) across 60-99; tiers 2-4 stay defined but unselected by any band. Constants moved with
+it: `FIRST_MUTATION_RUNG` 40 -> 20 (`src/world.js`), its density ramp now reaching 0.9 by rung 50
+instead of rung 70; `AMENDMENT_RUNGS` `[30, 55, 78]` -> `[20, 30, 40, 60]`, each rung now drawing
+from a per-rung allow-list (`AMENDMENT_ALLOWED_RULES`) restricted to rules the next band actually
+depends on, so a rung-20/30/40 re-read is never inert the way rung 30 was; `FIRST_REFUSAL_RUNG`
+70 -> 40 with density raised 0.25 -> 0.5, now that tier 7 (a clear-out composer) sits at 40-49.
+`renderTier`'s `recover409` flag, previously baked in unconditionally, is now a per-rung seeded
+draw (about half), so render rungs stop being one indistinguishable shape. The two phrasings that
+read as inches are reworded to "over from the left edge" / "down from the top edge", which cannot
+be misread as a unit. `RUNG_MUTATION_TARGETS` gained `projects.render`/`projects.publish` entries
+now that tiers 5-7 reach those routes from rung 20. The `codeWrites`/`docReads` counters
+(Addendum Q rule 13) are unchanged in what they count -- tool-call file-write events for
+message-loop drivers, an mtime-diff/regex fallback for CLI drivers -- except `run-cli.js`'s
+`DOC_READ_RE` and `run.js`'s `touchesSkillDoc` now also match `SKILL.md`, not only
+`HOUSE-RULES.md`, since a CLI's own transcript boilerplate can name the generic skill file
+regardless of what this harness actually planted; codex's per-edit `codeWrites` (one spawn's
+fourteen script edits still counting as one) is left unaddressed for lack of a captured event
+fixture showing a file-write/`apply_patch` item in its `--json` stream.
+
+**Second gap, found the same way as Addendum S.** Round six, muse-spark-1.3-contributor seed 1008,
+rung 50: `hash: true, project_state: true, label: true, refusal: true, audit: false`.
+`src/api/server.js` (`~919`) grades the audit trail by EXACT sequence equality, refusals included
+-- a stray extra refusal, a repeated stage, or a stage asked for before the check-back says
+finished fails the piece even when every other check passes. Nothing in `docs/RULES-0.7.md` (now
+`RULES-0.8.md`) or the skill ever said the trail was graded exactly rather than merely "ends up in
+the right state." Same fix shape as Addendum S: state it, don't relax the check. Rule 39 (skill,
+new in 0.8.0) says the house keeps the trail exactly and grades it exactly; every phrasing of the
+`stage` clause in `src/ladder/rung.js` now carries a third sentence stating that outright, parsed
+by a new no-op `docsolver.js` clause (`clauseStageTrailNote`) that changes nothing it derives --
+same posture as `clauseStageRefusalNote` beside it.

@@ -25,7 +25,7 @@ test('toSkill produces frontmatter with a name and a description', () => {
   }
 });
 
-// Ceiling raised from 400 to 440 for ladder 0.7.0: RULES-0.7 rule 35's digest-bound signing recipe
+// Ceiling raised from 400 to 440 for ladder 0.7.0: RULES-0.8 rule 35's digest-bound signing recipe
 // needs three paragraphs the concatenated recipe did not (where the digest comes from, that it is
 // the house's own hash and never a local one, and the newline separation), and the example block
 // is four lines instead of one. The bound is a "did the generator run away" guard, not a budget.
@@ -295,7 +295,7 @@ test('the signing recipe is self-consistent, and signing by it actually publishe
 
     // The example string the document tells the agent to copy. The section carries two fenced
     // blocks -- the canonical string, then the HMAC formula. 0.7.0's default recipe is
-    // digest-bound (RULES-0.7 rule 35), so the first block is four lines: timestamp, method,
+    // digest-bound (RULES-0.8 rule 35), so the first block is four lines: timestamp, method,
     // path, digest, one per line, no separators of any other kind.
     const fences = [...sec.matchAll(/```\n([\s\S]*?)\n```/g)].map((m) => m[1]);
     assert.equal(fences.length, 2, `seed ${seed}: expected the canonical string and the HMAC formula`);

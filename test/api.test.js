@@ -600,7 +600,7 @@ test('state machine: draft -> composed -> rendered -> published, wrong order is 
   const noSig = await fetch(`${base}${publishPath}`, { method: 'POST', headers: authHeaders() });
   assert.equal(noSig.status, 401);
 
-  // RULES-0.7 rule 35: the signature binds the house's own digest of the artifact being released.
+  // RULES-0.8 rule 35: the signature binds the house's own digest of the artifact being released.
   const digest = ownAsset.hash;
   const ts = String(Math.floor(Date.now() / 1000));
   const badSig = createHmac(world.hmac.algo, 'wrong-secret').update(`${ts}POST${publishPath}`).digest('hex');

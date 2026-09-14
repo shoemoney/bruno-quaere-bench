@@ -35,6 +35,11 @@ export const LINEUP = [
   { id: 'gemini-3.8-flash', cli: 'gemini', directDriver: 'google' },
   { id: 'kimi-code/k3', cli: 'kimi', directDriver: null },
   { id: 'x-ai/grok-4.6', cli: 'grok', directDriver: 'xai' },
+  // `deepseek-flash` is DeepSeek's moving alias: the first-party API retired V4 Flash and
+  // re-pointed this id at DeepSeek-V4.1-Flash on 2026-09-08 (verified against /models and a
+  // 1-token completion on 2026-09-13). So runs before that date were V4 Flash; from round seven
+  // (seeds 1100+) on, this row IS flash 4.1. The API only ever echoes the alias back, so the
+  // version pin lives here, not in a served-model field.
   { id: 'deepseek-flash', cli: null, directDriver: 'deepseek' },
   // Jeremy's lineup addition, 2026-09-13: Meta Muse via the `muse` CLI (src/harness/cli/muse.js).
   { id: 'muse-spark-1.3-contributor', cli: 'muse', directDriver: null },

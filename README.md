@@ -8,7 +8,7 @@
 [![Node 22+](https://img.shields.io/badge/Node-22%2B-39b600?logo=node.js)](package.json)
 [![Zero deps](https://img.shields.io/badge/runtime%20deps-0-blue)](package.json)
 [![Judge](https://img.shields.io/badge/judge-bru%20run%20%2B%20sha256-orange)](docs/ARCHITECTURE.md)
-[![Ladder](https://img.shields.io/badge/ladder-0.6.0%20measured%20%C2%B7%200.7.1%20fix%20verifying-purple)](docs/ARCHITECTURE.md)
+[![Ladder](https://img.shields.io/badge/ladder-0.6.0%20measured%20%C2%B7%200.8.0%20steepening%20verifying-purple)](docs/ARCHITECTURE.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](package.json)
 
 </div>
@@ -16,11 +16,14 @@
 > 🚧 **Status, 2026-09-13 evening.** Ladder **0.6.0** is the last version with a clean, fully
 > valid round (seven models, below). Ladder **0.7.0**'s first nine-model round found a real bug
 > in the benchmark itself: six independent models, six different seeds, all hit the exact same
-> wall the instant they reached the new stage-recovery audit check. That is voided, not scored —
-> see [What 0.7.0 changes](#-what-070-changes). The fix is **0.7.1**, in final verification now;
-> a clean round six follows. Every earlier round is kept under its version number, superseded,
-> never rescored. The design promise "no current model past rung 30" did not survive contact
-> with 2026 models and is no longer claimed.
+> wall the instant they reached the new stage-recovery audit check (Addendum S, fixed in 0.7.1).
+> Round six found a second undocumented grading rule the same way (Addendum T) — see
+> [What 0.8.0 changes](#-what-080-changes). 0.8.0 also moves the graded release chain and a
+> clear-out composer down to rungs 20-49, since round five cleared to 49 on five of nine seeds
+> with no rung below 50 costing anyone anything. In verification now; a clean round seven follows.
+> Every earlier round is kept under its version number, superseded, never rescored. The design
+> promise "no current model past rung 30" did not survive contact with 2026 models and is no
+> longer claimed.
 
 ## 🧒 Like you're five
 
@@ -70,7 +73,7 @@ No model ever grades anything.
 |---|---|---|
 | [🧒 Like you're five](#-like-youre-five) | [📊 Results](#-results) | [🧭 How a climb works](#-how-a-climb-works) |
 | [🚦 Gates](#-gates-before-any-paid-climb) | [🖥️ Lineup and drivers](#️-lineup-and-drivers) | [🚀 Quick start](#-quick-start) |
-| [⌨️ CLI](#️-cli) | [🪜 Ladder history](#-ladder-history) | [🧠 What 0.7.0 changes](#-what-070-changes) |
+| [⌨️ CLI](#️-cli) | [🪜 Ladder history](#-ladder-history) | [🧠 What 0.8.0 changes](#-what-080-changes) |
 | [📁 Layout](#-layout) | | |
 
 ## 📊 Results
@@ -254,7 +257,7 @@ flowchart LR
 
 Every version is a dated addendum in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), which
 records each rule and the bug that changed it. The rules the answer key may depend on live in
-[`docs/RULES-0.7.md`](docs/RULES-0.7.md).
+[`docs/RULES-0.8.md`](docs/RULES-0.8.md).
 
 ## 🧠 What 0.7.0 changes
 
@@ -286,6 +289,24 @@ in the benchmark itself before anyone published a number from it: the generator 
 recovery step the task text never asked for, six models failed it identically, and the fix
 (Addendum S) is what "no rung publishes a rule the docs don't state" looks like applied to the
 benchmark's own build process, not just the models being graded.
+
+## 🧠 What 0.8.0 changes
+
+Round five cleared to rung 49 on five of nine seeds with **no text parser written below rung 49**
+— every model transcribed the task by hand — and rung 50, where the graded release chain begins,
+was the only rung whose cost tripled for everyone. Nothing in 20-49 held a real obligation.
+0.8.0 (Addendum T) is a band-table move, not a new mechanism: the composer and text builder are
+already picked by `tier`, not by rung range, so pulling tiers 5-9 down to rungs 20-99 is data.
+
+| # | Change | Effect |
+|---|---|---|
+| 1 | the graded release chain (render, 409 recovery, HMAC publish, ETag label) moves to 20-39 | rung 50's cost tripling now happens at 20 |
+| 2 | a clear-out, ordering batch composer moves to 40-59 | refusal grading now starts at 40, not 70 |
+| 3 | announced mutations start at rung 20, not 40, ramping to 0.9 by rung 50 | write-route mutations land well before the release chain does |
+| 4 | rule amendments move to rungs 20/30/40/60, each drawn from a rule the NEXT band actually depends on | the round-five rung-30 re-read that cost every model and changed nothing for four of nine seeds can no longer be inert |
+| 5 | `recover409` is a per-rung coin flip, not baked in true | render rungs stop being one indistinguishable shape |
+| 6 | the two `shapeRect`/`shapeCircle` phrasings that read "N in from the left" as inches are reworded | closes the phrasing hazard behind deepseek's round-five rung-1 fall |
+| 7 | a second undocumented grading rule found the same way as Addendum S: the audit trail is graded by EXACT sequence, refusals included — now stated outright (rule 39) | closes the round-six rung-50 fall on muse seed 1008 |
 
 ## 📁 Layout
 

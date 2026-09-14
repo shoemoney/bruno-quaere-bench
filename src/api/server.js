@@ -165,7 +165,7 @@ function auditPush(state, projectId, stage) {
 
 // hasDeletedAncestor(state, assetId): Addendum Q rule 7, negative-space grading. Walks
 // `state.lineage` (populated by convert/combine/diff/lora below) back from `assetId` looking for
-// a source that is (now) soft-deleted -- RULES-0.7 rule 30: a cleared-out piece never comes back
+// a source that is (now) soft-deleted -- RULES-0.8 rule 30: a cleared-out piece never comes back
 // into a chain, so ANY currently-live asset derived from a deleted one is the forbidden act,
 // regardless of which of the two acts (style vs. reflavour) the rung's text tempted with.
 function hasDeletedAncestor(state, assetId, seen) {

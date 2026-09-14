@@ -1,5 +1,5 @@
 // Addendum I rule 4: the answer key must be derivable from the documents.
-// docsolver.js is written clean-room from docs/RULES-0.7.md, the skill, the spec and the
+// docsolver.js is written clean-room from docs/RULES-0.8.md, the skill, the spec and the
 // rung text. If it disagrees with makeRung on any rung, one of the two is wrong and the
 // build is red.
 //
@@ -64,8 +64,8 @@ const FROM = 0;
 const TO = 99;
 
 // Addendum O: from this rung up a submission is graded on the project state, the label and
-// (Addendum Q rule 10) the audit as well as the hash.
-const GRADED_FROM = 50;
+// (Addendum Q rule 10) the audit as well as the hash. Addendum T (0.8.0) moved this 50 -> 20.
+const GRADED_FROM = 20;
 
 // The four-phrasing sweep is the expensive one: 100 rungs x 4 readings x a seed. Run it
 // over a window of the gate seeds rather than all of them, and let QUAERE_PHRASING_SEEDS
@@ -154,7 +154,7 @@ function insertBeforeTurnIn(text, sentence) {
 // The arithmetic the rules state
 // ---------------------------------------------------------------------------
 
-test('house arithmetic matches the rules RULES-0.7 states', () => {
+test('house arithmetic matches the rules RULES-0.8 states', () => {
   // rule 2: the six-decimal snap, so 0.56 in at 300 dpi is 168, never 168.00000000000003
   assert.equal(snap6(168.00000000000003), 168);
   assert.equal(snap6(0.1234565), 0.123457);
@@ -169,8 +169,8 @@ test('house arithmetic matches the rules RULES-0.7 states', () => {
   for (const mode of ['up', 'down', 'nearest']) assert.equal(roundToGrid(128, 16, mode), 128);
 });
 
-// The one rule this solver uses that docs/RULES-0.7.md does not state. If a future change
-// makes media.js snap inside a scale lora, or RULES-0.7.md grows the sentence that says it
+// The one rule this solver uses that docs/RULES-0.8.md does not state. If a future change
+// makes media.js snap inside a scale lora, or RULES-0.8.md grows the sentence that says it
 // does not, THIS test is the one to delete -- not the carve-out on its own.
 test('gridAfterScale is load-bearing: the scale lora grids the raw product, not the snapped one', () => {
   // seed 10: roundTo 2, direction up. 75 x 1.36 is 102.00000000000001 in IEEE-754.
@@ -204,7 +204,7 @@ test('every paraphrased clause kind is read in all four of its phrasings', () =>
 });
 
 test('every clause kind the generator can emit is either read or known not to be emitted yet', () => {
-  // RULES-0.7's appendix closes with the two kinds 0.7.0 does not emit: rule 34's
+  // RULES-0.8's appendix closes with the two kinds 0.7.0 does not emit: rule 34's
   // regression piece and rule 37's byte budget. They have no phrasings to read because no
   // rung states them; everything else must be in the solver's table.
   const NOT_YET_EMITTED = ['regressionRebuild', 'byteBudget'];
@@ -259,13 +259,13 @@ for (const seed of PHRASING_SEEDS) {
 // Failing loudly, which is the whole point of a clean-room gate
 // ---------------------------------------------------------------------------
 
-test('a clause kind outside the RULES-0.7 appendix fails loudly and names the residue', () => {
+test('a clause kind outside the RULES-0.8 appendix fails loudly and names the residue', () => {
   const world = makeWorld(SEEDS[0]);
   assert.throws(
     () => solve(world, plainTask('The house quietly halves everything on a Tuesday. '), 0),
     (err) => {
       assert.ok(err instanceof DocSolveError, `expected DocSolveError, got ${err && err.name}`);
-      assert.match(err.message, /no clause kind in the RULES-0\.7 appendix states this/);
+      assert.match(err.message, /no clause kind in the RULES-0\.8 appendix states this/);
       assert.match(err.message, /halves everything on a Tuesday/);
       return true;
     },
@@ -489,7 +489,7 @@ test('a rung that never reaches published has no audit to grade', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Addendum Q rule 7 / RULES-0.7 rule 36: negative-space grading
+// Addendum Q rule 7 / RULES-0.8 rule 36: negative-space grading
 // ---------------------------------------------------------------------------
 
 test('a refusal rung reports the forbidden act and never performs it', async () => {
@@ -703,7 +703,11 @@ test('the ladder exercises every obligation the solver models', () => {
   const byKind = {
     'cross-rung recalled size (rule 21)': (text) => statesKind(text, 'dimsRecall'),
     'cross-rung recalled ground (rule 21)': (text) => statesKind(text, 'groundRecall'),
-    'derived count: leftover shapes (rule 19)': (text) => /shape left on that leftover piece/.test(text),
+    // 'leftover shapes' (rule 19's image-diff surface) is absent on purpose: tier 3 -- the only
+    // composer emitting sourceKey 'd' -- stays defined but no 0.8.0 band selects it (grammar.js
+    // BANDS header), so no rung can ever state the phrase. Rule 19 itself stays censused through
+    // its other four surfaces below. Re-add the row when a selected composer reuses tier 3's
+    // diff-and-derive shape (the BANDS header names that as the plan for it).
     'derived count: stacked shapes (rule 19)': (text) => /shape on the stack you just built/.test(text),
     'derived count: leftover tones (rule 19)': (text) => /tone left over when you took the second sound out of the first/.test(text),
     'derived count: stitched frames (rules 16, 17, 19)': (text) => /frame in the stitched clip/.test(text),
@@ -735,7 +739,7 @@ test('the ladder exercises every obligation the solver models', () => {
 // The whole of Addendum O's grading rule plus Addendum Q rule 10, over a real ladder: the
 // key and the solver agree on what is graded, only rungs at or above GRADED_FROM are
 // graded, and every graded label is a word the task text actually states.
-test('the graded chain rides beside the descriptors, and only from rung 50 up', async () => {
+test('the graded chain rides beside the descriptors, and only from rung 20 up', async () => {
   for (const seed of [SEEDS[0], SEEDS[SEEDS.length - 1]]) {
     const world = makeWorld(seed);
     let gradedRungs = 0;

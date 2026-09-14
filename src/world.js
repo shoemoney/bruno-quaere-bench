@@ -53,7 +53,20 @@ import { rng, sub, pick, int, shuffle, chance } from './seed.js';
 // (`render:409`) the text never told them to earn. Same hashes, same plan; only the sentence and
 // the docsolver's audit-stage derivation (now read from the presence of that sentence, never
 // inferred from anything else) change.
-export const VERSION = '0.7.1';
+//
+// Bumped to 0.8.0 by Addendum T: round five (forensics-0.7.0.md) found every 0.7.0 climb --
+// hybrid, per-rung, message-loop alike -- transcribed the rung text by hand instead of parsing
+// it, so the paraphrase rule had nothing to bite in rungs 0-49, and rung 50, where the graded
+// release chain begins, was the only rung whose cost tripled for every model. This bump pulls
+// that chain (and a clear-out composer, and regression rungs) down into 20-49: the band table
+// (`grammar.js` `BANDS`) reassigns tiers 5-9 to indexes 2-9 by `tier`, not by array position;
+// `FIRST_MUTATION_RUNG` moves 40 -> 20 with the density ramp starting there instead of at 40;
+// `AMENDMENT_RUNGS` moves to `[20, 30, 40, 60]` with a per-rung allow-list so the rule an
+// amendment draws is one the rungs right after it actually depends on; `FIRST_REFUSAL_RUNG`
+// moves 70 -> 40; `renderTier`'s `recover409` flag is now a seeded per-rung draw instead of
+// always true. None of this changes a 0.7.x descriptor computation for a rung whose band did not
+// move -- it changes which rung range each obligation lands in.
+export const VERSION = '0.8.0';
 
 // ---------------------------------------------------------------------------
 // Addendum J rule 3: announced per-rung mutations
@@ -69,15 +82,16 @@ export const VERSION = '0.7.1';
 // reference's shape does not. That is the whole point of announcing it.
 export const RUNG_MUTATION_POOL = ['statusCode', 'dropField', 'renameField', 'retypeField'];
 
-// Addendum J rule 3: "from rung 40 on".
-export const FIRST_MUTATION_RUNG = 40;
+// Addendum T (0.8.0): "from rung 20 on" -- was rung 40. Pulled down with the rest of the release
+// chain so a mutation lands on the write routes tiers 5-7 use well before rung 50.
+export const FIRST_MUTATION_RUNG = 20;
 
-// Addendum Q rule 2: the density is a ramp, not a shelf. 0.6 from rung 40, rising to 0.9 from
-// rung 70, so the top third of the ladder re-picks a change under the agent nearly every rung and
-// one normalization layer written once at rung 40 is not enough.
+// Addendum Q rule 2: the density is a ramp, not a shelf.
+// Addendum T (0.8.0): the ramp now starts at rung 20 (0.6) and reaches its top (0.9) by rung 50,
+// not rung 70, so the top of the ramp lines up with the rungs the release chain occupies.
 const MUTATION_DENSITY_BASE = 0.6;
 const MUTATION_DENSITY_TOP = 0.9;
-const DENSITY_RAMP_RUNG = 70;
+const DENSITY_RAMP_RUNG = 50;
 
 // mutationDensityAt(n): the probability rung n announces a change.
 export function mutationDensityAt(n) {
@@ -113,6 +127,16 @@ export const RUNG_MUTATION_TARGETS = [
   { mutation: 'dropField', route: 'assets.combine', field: 'descriptor' },
   { mutation: 'renameField', route: 'projects.assets', field: 'cursor', to: 'next' },
   { mutation: 'statusCode', route: 'assets.lora', to: 202 },
+  // Addendum T (0.8.0): tiers 5-7 now reach `projects.render` and `projects.publish` from rung 20,
+  // so those write routes join the target pool too. `job_id` renamed (not dropped -- see the
+  // comment above) is already recoverable: `reference.js`'s `httpRender` reads
+  // `renderBody[F(world, 'job_id')] ?? renderBody.jobId ?? renderBody.job` and falls back to
+  // polling the project when no job id survives under any of those names. `projects.publish`'s
+  // `id` is read-and-discarded by every correct client (the release is graded by project state and
+  // label, never by this reply's `id`), so renaming it costs nothing to a client that does not
+  // depend on it and is exactly the kind of decorative-field rename rule 27 describes.
+  { mutation: 'renameField', route: 'projects.render', field: 'job_id', to: 'jobId' },
+  { mutation: 'renameField', route: 'projects.publish', field: 'id', to: 'assetId' },
 ];
 
 // makeRungMutations(seed) -> (RungMutation | null)[], indexed BY RUNG NUMBER so
@@ -272,7 +296,7 @@ function makeAuth(seed) {
 // derived count, so a client that pages flat out 429s partway through the count instead of at
 // some harmless moment. `Retry-After` travels as a real header. The house also, on that same
 // pooled route, sometimes hands back a SHORT page inside the throttle window rather than an
-// error -- which is why the short-page rule (RULES-0.7 rule 31) has to be written down: a page
+// error -- which is why the short-page rule (RULES-0.8 rule 31) has to be written down: a page
 // shorter than the one you asked for is not the end of the listing; only the absence of a next
 // cursor is. The API workstream owns enforcing this bucket; the ladder publishes it.
 function makeRate(seed) {
@@ -294,15 +318,23 @@ function makeRate(seed) {
 // Addendum Q rule 4: dated mid-ladder amendments
 // ---------------------------------------------------------------------------
 //
-// The house amends one numbered rule at each of three announced rungs. The harness rewrites
-// HOUSE-RULES.md in the sandbox at those rungs and the rung text says so; the amendment is the
-// only mechanism on the ladder that makes the 5 MB document keep costing after rung 0.
+// The house amends one numbered rule at each of the announced rungs (four, since Addendum T). The
+// harness rewrites HOUSE-RULES.md in the sandbox at those rungs and the rung text says so; the
+// amendment is the only mechanism on the ladder that makes the 5 MB document keep costing after
+// rung 0.
 //
 // `rulesAt(world, n)` is the ONE function that resolves "which rules are in force at rung n". The
 // answer key calls it, the reference calls it, the docsolver has to call it, and the house has to
 // call it -- if any of the four resolve the rules another way the ladder is ungradeable. It is
 // exported from this file, not from the ladder, precisely so there is no ladder-only copy.
-export const AMENDMENT_RUNGS = [30, 55, 78];
+//
+// Addendum T (0.8.0): moved from `[30, 55, 78]` to four rungs, `[20, 30, 40, 60]`, one per new
+// obligation band instead of one every third of the ladder. forensics-0.7.0.md section 2 found the
+// single rung-30 amendment was inert on four of nine round-five seeds (it drew `hmacCanon`, which
+// has no effect before the first publish) -- every model still paid to re-read it. AMENDMENT_ALLOW
+// below fixes that by restricting which rule each rung may draw to ones the NEXT band's composer
+// actually reads.
+export const AMENDMENT_RUNGS = [20, 30, 40, 60];
 
 // The closed set an amendment may draw from, per Addendum Q rule 4. Each entry names the World
 // field it moves and the candidate values it may move to.
@@ -311,7 +343,7 @@ export const AMENDMENT_RULES = {
   roundMode: { path: ['rules', 'roundMode'], choices: ROUND_MODE },
   opacityCompound: { path: ['rules', 'opacityCompound'], choices: OPACITY_COMPOUND },
   defaultFps: { path: ['rules', 'defaultFps'], choices: FPS_CHOICES },
-  // RULES-0.7 rule 35 says the signing string BINDS A DIGEST of the thing being released, and
+  // RULES-0.8 rule 35 says the signing string BINDS A DIGEST of the thing being released, and
   // rule 33 says an amendment may move "the order of the fields in the signing string". So every
   // candidate here is a digest-bound ordering: an amendment reorders the four fields, it never
   // unbinds the digest. Dropping the digest would be a rule change rule 33 does not license, and
@@ -320,6 +352,20 @@ export const AMENDMENT_RULES = {
     path: ['hmac', 'canon'],
     choices: ['ts+method+path+digest', 'ts+path+method+digest', 'method+path+ts+digest'],
   },
+};
+
+// Addendum T (0.8.0): the per-rung allow-list an amendment draws from, so every announced change
+// bites the rungs right after it instead of landing on a rule nothing downstream reads yet (the
+// old single rung-30 draw was `hmacCanon` on four of nine round-five seeds, which does nothing
+// before the first publish). 20 feeds tiers 5/6 (image/audio geometry, opacity compounding); 30
+// feeds the release chain that starts appearing at 30 (`hmacCanon`) and 60-99's fps math
+// (`defaultFps`); 40 feeds the batch/ordering tiers' own re-rounding; 60 is unrestricted, the
+// full set, same as every amendment before this file had one.
+export const AMENDMENT_ALLOWED_RULES = {
+  20: ['roundTo', 'roundMode', 'opacityCompound'],
+  30: ['hmacCanon', 'defaultFps'],
+  40: ['roundTo', 'roundMode'],
+  60: Object.keys(AMENDMENT_RULES),
 };
 
 // ---------------------------------------------------------------------------
@@ -349,14 +395,21 @@ export const AMENDMENT_RULES = {
 export const AMENDMENTS_ENFORCED = true;
 
 export function drawAmendments(seed) {
-  const r = rng(sub(seed, 'amendments'));
-  const names = shuffle(r, Object.keys(AMENDMENT_RULES));
   const base = {
     rules: makeRules(seed),
     hmac: makeHmac(),
   };
-  return AMENDMENT_RUNGS.map((atRung, i) => {
-    const rule = names[i % names.length];
+  const drawn = new Set();
+  return AMENDMENT_RUNGS.map((atRung) => {
+    // Addendum T (0.8.0): drawn from the per-rung allow-list, own sub-seed per rung so adding or
+    // narrowing a rung's allow-list never shifts another rung's draw. A rule an earlier rung
+    // already drew is out of the pool: a repeat would be shadowed newest-wins by the later draw,
+    // i.e. an announced amendment that silently does nothing -- exactly what the allow-lists
+    // exist to prevent.
+    const allowed = AMENDMENT_ALLOWED_RULES[atRung] ?? Object.keys(AMENDMENT_RULES);
+    const pool = allowed.filter((r) => !drawn.has(r));
+    const rule = pick(rng(sub(seed, `amendments.pick.${atRung}`)), pool.length > 0 ? pool : allowed);
+    drawn.add(rule);
     const { path, choices } = AMENDMENT_RULES[rule];
     const from = base[path[0]][path[1]];
     const others = choices.filter((c) => c !== from);
@@ -377,7 +430,7 @@ const RULES_AT_CACHE = new WeakMap();
 // submitted (a rule-21 recall). Resolving rung 38 off a world already resolved at rung 60 would
 // re-apply only the amendments dated on or before 38 on top of rung 60's values, leaving rung
 // 60's grid or rounding in place -- which silently changes what rung 38's answer was, the one
-// thing RULES-0.7 rule 33 says an amendment never does.
+// thing RULES-0.8 rule 33 says an amendment never does.
 const RULES_AT_BASE = new WeakMap();
 
 export function rulesAt(world, n) {
@@ -460,7 +513,7 @@ function amountFor(op, r) {
 }
 
 function makeHmac() {
-  // Addendum Q rule 10 / RULES-0.7 rule 35: from 0.7.0 the release signature binds a digest of
+  // Addendum Q rule 10 / RULES-0.8 rule 35: from 0.7.0 the release signature binds a digest of
   // the artifact being released, so the house's canonical string is digest-bound by default.
   // `canonicalString` in src/hmac.js is the one implementation of every recipe.
   return { header: 'X-Signature', tsHeader: 'X-Timestamp', algo: 'sha256', canon: 'ts+method+path+digest' };

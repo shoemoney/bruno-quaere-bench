@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makeWorld, resolvePath, fieldName } from '../src/world.js';
+import { makeWorld, resolvePath, fieldName, FIRST_MUTATION_RUNG } from '../src/world.js';
 import { routes } from '../src/routes.js';
 import { createServer } from '../src/api/server.js';
 import { mutationForRung, MUTATION_NAMES, chooseMutationTargets } from '../src/api/admin.js';
@@ -161,7 +161,7 @@ test('mutationForRung: real makeWorld() output, indexed by rung number per the w
   const world = makeWorld(SEED);
   assert.ok(Array.isArray(world.rungMutations), 'makeWorld must populate rungMutations');
   assert.equal(world.rungMutations.length, 100);
-  for (let n = 0; n < 40; n += 1) {
+  for (let n = 0; n < FIRST_MUTATION_RUNG; n += 1) {
     assert.equal(world.rungMutations[n], null, `rung ${n} is below FIRST_MUTATION_RUNG, must announce nothing`);
     assert.equal(mutationForRung(world, n), null);
   }
@@ -237,12 +237,13 @@ test('an unknown mutation name in rungMutations is never applied (defensive agai
 // The world.js contract (see makeRungMutations) is explicit: the announced mutation REPLACES the
 // active set, live from the first request of the new rung -- it must never accumulate across
 // rungs, and must clear even a mutation someone set by hand via POST /admin/mutate.
-// Addendum Q rule 2: dropField's only candidate target is assets.combine/`descriptor` -- a
-// load-bearing field on a WRITE route, unlike 0.6.0's GET-only candidates. `projects.render`'s
-// `job_id` was the obvious choice and is exactly the wrong one (see RUNG_MUTATION_TARGETS in
-// src/world.js): with no jobs listing, a dropped job id is unrecoverable and every rung 50-69
-// becomes unpassable. A dropped combine `descriptor` is recoverable -- ask `assets.get` for the
-// asset whose id the reply did hand back -- so the rung still has a correct path through it.
+// Addendum Q rule 2: dropField never targets `projects.render`'s `job_id` -- it was the obvious
+// choice and is exactly the wrong one (see RUNG_MUTATION_TARGETS in src/world.js): with no jobs
+// listing, a dropped job id is unrecoverable and every rung that renders becomes unpassable. That
+// route is a `renameField` target instead (recoverable: `reference.js` falls back through
+// `jobId`/`job`). `assets.combine`'s `descriptor` IS a dropField target and is recoverable -- ask
+// `assets.get` for the asset whose id the reply did hand back -- so the rung still has a correct
+// path through it.
 async function fetchDropFieldTarget(world, publicBase, target) {
   if (target.route !== 'assets.combine') {
     throw new Error(`fetchDropFieldTarget: no fetcher wired for dropField target route ${target.route}`);

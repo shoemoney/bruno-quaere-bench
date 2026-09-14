@@ -1,10 +1,10 @@
-// docs/RULES-0.7.md is the answer key's contract: every rule it marks (skill) must be stated,
+// docs/RULES-0.8.md is the answer key's contract: every rule it marks (skill) must be stated,
 // in plain language, inside the clean SKILL.md (and therefore, verbatim, inside the sloppy
 // expansion too -- skill-sloppy.js embeds every `## ` clean section as an intact block). This
 // test parses that file directly and proves the clean skill actually says what it claims to
 // say, rather than trusting the prose in docs/ARCHITECTURE.md's Addendum I/J commentary.
 //
-// Method: for every rule numbered 1-27, pull its full text (including wrapped/indented
+// Method: for every numbered rule, pull its full text (including wrapped/indented
 // continuation lines) and its `**(...)**` marker. For a (skill) rule, extract its "operative
 // tokens" -- the numbers, quoted "..." strings, backticked `...` identifiers/formulas, and its
 // 3 longest words -- and assert every one of them appears (case-insensitively) somewhere in the
@@ -20,18 +20,19 @@ import { toSkill } from '../src/skill.js';
 import { makeWorld } from '../src/world.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const RULES_PATH = path.join(__dirname, '..', 'docs', 'RULES-0.7.md');
+const RULES_PATH = path.join(__dirname, '..', 'docs', 'RULES-0.8.md');
 
 const SEEDS = [1, 2, 3, 4, 5];
 const SLOPPY_TARGET = 64 * 1024;
 
 // ---------------------------------------------------------------------------
-// Parsing docs/RULES-0.7.md
+// Parsing docs/RULES-0.8.md
 // ---------------------------------------------------------------------------
 
 // A rule starts with "N. **(marker)** text..." at column 0 and continues through every
 // following line (blank, indented continuation, or nested "- " sub-bullets) until either the
-// next top-level numbered rule or a `## ` heading (the appendix that follows rule 27).
+// next top-level numbered rule or a `## ` heading (the sections and appendix that follow the
+// last rule).
 const RULE_START_RE = /^(\d+)\.\s+\*\*\(([^)]*)\)\*\*\s*(.*)$/;
 
 function parseRules(text) {
@@ -67,7 +68,7 @@ function markerKind(marker) {
 // Illustrative-example numbers the docs themselves invent to demonstrate a rule (rule 2's
 // "0.56 inches at 300 dpi -> 168px") are handled by writing them into the skill verbatim as a
 // fixed, world-independent aside (skill.js does this), so no exclusion list is needed here --
-// every number rule 1-27 actually states is either a fixed constant (2.54, 72, 6, 60, ...) or
+// every number a rule actually states is either a fixed constant (2.54, 72, 6, 60, ...) or
 // this file's own worked example, and both are required verbatim.
 //
 // Cross-references to another rule's number ("(rule 3)", "rule 5 then rule 3") are not values
@@ -114,7 +115,7 @@ const TASK_TEXT_RULES = ALL_RULES.filter((r) => markerKind(r.marker) === 'task t
 // Sanity on the parse itself -- if this drifts to 0, every test below would vacuously pass.
 // ---------------------------------------------------------------------------
 
-test('parses a plausible number of (skill) and (task text) rules out of RULES-0.7.md', () => {
+test('parses a plausible number of (skill) and (task text) rules out of RULES-0.8.md', () => {
   assert.ok(ALL_RULES.length >= 25, `only found ${ALL_RULES.length} numbered rules total`);
   assert.ok(SKILL_RULES.length >= 20, `only found ${SKILL_RULES.length} (skill) rules`);
   assert.ok(TASK_TEXT_RULES.length >= 4, `only found ${TASK_TEXT_RULES.length} (task text) rules`);
@@ -129,7 +130,7 @@ test('parses a plausible number of (skill) and (task text) rules out of RULES-0.
 
 // No (task text) rule may be required as skill content -- the skill states house RULES, never
 // the ladder's own rung-phrasing grammar. This is mostly a self-check on the categorization
-// above, but it also guards against a future edit to RULES-0.7.md relabeling a rule without the
+// above, but it also guards against a future edit to RULES-0.8.md relabeling a rule without the
 // generator noticing: if a rule the file calls task-text-only ever migrated into SKILL_RULES,
 // this would start requiring the skill to contain rung-grammar placeholders like `[W]` or `[M]`,
 // which it correctly never does.

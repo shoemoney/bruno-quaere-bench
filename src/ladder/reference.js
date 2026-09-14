@@ -439,7 +439,7 @@ async function httpListCount(ctx, args, copyIds) {
 // legal on any live asset -- so it is the act that can really be violated, the violation is
 // invisible in the submitted hash (a label never touches a descriptor), and it is the one
 // test/refusal.test.js drives. All three stay in the pool: the variety is the anti-template value,
-// and RULES-0.7 rules 29 and 30 forbid all three regardless of which the house happens to catch.
+// and RULES-0.8 rules 29 and 30 forbid all three regardless of which the house happens to catch.
 async function performForbiddenAct(ctx, forbidden, { victims, ids }) {
   let created = 0;
   if (forbidden.act === 'labelTheStack') {
@@ -720,7 +720,7 @@ export async function climb({
         // demand in the text was graded by nothing.
         failed.push({
           n,
-          reason: `refusal: rung ${n} performed the forbidden act "${rung.forbidden.act}" (RULES-0.7 rule ${rung.forbidden.rule}) and the house passed it anyway: ${rung.forbidden.detail}`,
+          reason: `refusal: rung ${n} performed the forbidden act "${rung.forbidden.act}" (RULES-0.8 rule ${rung.forbidden.rule}) and the house passed it anyway: ${rung.forbidden.detail}`,
         });
         if (log) log({ n, pass: false, checks: body.checks });
         continue;

@@ -24,12 +24,12 @@ import { sha256 } from '../src/canon.js';
 // to the stitched clip -- and "Video container facts" now states outright that a video converts
 // only to `qvid`. Both are real, intended content additions (see test/skill-rules-subset.test.js,
 // which proves docs/RULES-0.6.md rule 28's tokens are actually present), not a regression.
-// Rebaselined a fifth time for ladder 0.7.0 / docs/RULES-0.7.md rules 30-37 (Addendum Q): four new
+// Rebaselined a fifth time for ladder 0.7.0 / docs/RULES-0.8.md rules 30-37 (Addendum Q): four new
 // sections -- "Cleared-out assets" (30), "Amendments" (33, plus the regression-task paragraph for
 // 34), "Negative-space grading" (36), "Byte budgets" (37) -- inserted between "Video container
 // facts" and "Overrides"; the Pagination section gained the short-page/undercount and
 // scoped-derived-count paragraphs (31, 32); the Publish signing section gained the digest-binding
-// paragraph (35, `X-Body-Digest`). test/skill-rules-subset.test.js (now pointed at RULES-0.7.md)
+// paragraph (35, `X-Body-Digest`). test/skill-rules-subset.test.js (now pointed at RULES-0.8.md)
 // proves every new (skill) rule's tokens are actually present; this is a real, intended content
 // addition, not a regression.
 // Rebaselined a sixth time when Addendum Q rule 10's digest-bound canonical string became the
@@ -38,11 +38,17 @@ import { sha256 } from '../src/canon.js';
 // the four parts are newline-separated rather than concatenated -- and its worked example is four
 // lines instead of one. test/skill.test.js proves an agent following the section actually
 // publishes, and that the pre-0.7.0 recipes do not. A real, intended content change.
-// Rebaselined a seventh time for ladder 0.7.1 / docs/RULES-0.7.md rule 38 (Addendum S): the
+// Rebaselined a seventh time for ladder 0.7.1 / docs/RULES-0.8.md rule 38 (Addendum S): the
 // "Project state machine" section now states outright that a task testing stage recovery says so
 // as a plain instruction, and that a task which never asks for the early reach never requires or
 // grades one. A real, intended content addition, not a regression.
-const CLEAN_SEED_1_SHA256 = '45063d869b24e4fc02543e512182f71487fc5c13a2841039d1ba009a487e85f7';
+// Rebaselined an eighth time for ladder 0.8.0 / docs/RULES-0.8.md rule 40 (Addendum T): the
+// Defaults section now states that the task text's plain words name the flavors ("a vector file"
+// is `svg`, "a bitmap file" is `png`, "plain wave audio" is `wav`, "the compact house audio
+// flavor" is `qa8`) -- the word-to-flavor mapping previously existed only in the docsolver, so
+// nothing agent-facing derived it. test/skill-rules-subset.test.js proves rule 40's tokens are
+// actually present. A real, intended content addition, not a regression.
+const CLEAN_SEED_1_SHA256 = '1917e930e86c432bf9921d75ed2873bad5599231239bdcc4d1d657f2e97d04e5';
 
 test('clean-mode toSkill(world) output for seed 1 is byte-identical to the pre-sloppy baseline', () => {
   const world = makeWorld(1);

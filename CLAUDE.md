@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Bruno QUAERE: a seeded, deterministic media API plus a hundred-rung task ladder that AI agents
 climb using only the Bruno CLI (`bru`), judged by sha256 hash equality on rendered bytes plus,
-from rung 50 up, the project state and label the task demanded. Zero runtime dependencies, Node
-22+, ESM. The contract is `docs/ARCHITECTURE.md`; its dated Addenda A through S are the change
+from rung 20 up, the project state and label the task demanded. Zero runtime dependencies, Node
+22+, ESM. The contract is `docs/ARCHITECTURE.md`; its dated Addenda A through T are the change
 log of every rule and every bug that changed a rule. Read the newest addenda first. `docs/SPEC.md`
-is the original intent; `docs/RULES-0.7.md` is the plain-language list of every house rule the
+is the original intent; `docs/RULES-0.8.md` is the plain-language list of every house rule the
 answer key may depend on.
 
 ## Commands
@@ -90,3 +90,9 @@ is comparable only with rows from the same `version`. Publish the median of thre
   `run ...` args, never prepended -- `run` is a positional subcommand and must stay `argv[0]`, or
   every launch prints the usage banner and exits in under a second while looking like nine climbs
   that started successfully (their PIDs are real, their logs are one line).
+- A live check can be stricter than the docs without anyone noticing for a whole version: the
+  house grades the audit trail by EXACT sequence, refusals included, and nothing said so until a
+  second independent-models-same-wall tell (round six, muse seed 1008) caught it the same way
+  Addendum S did (T). Steepening the ladder is a data-only change in `src/ladder/grammar.js`'s
+  `BANDS` (`tier`, not array index, selects the composer and text builder) plus the constants
+  beside it in `src/world.js`; never hand-edit a rung.

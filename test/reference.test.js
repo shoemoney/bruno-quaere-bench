@@ -111,7 +111,8 @@ test('every announced mutation leaves the ladder passable', { concurrency: true 
 // The cheapest rung on seed 1 that borrows from an earlier one. Asserted rather than assumed: if
 // the grammar ever stops putting a cross-rung reference here, these two tests would pass
 // vacuously and the regression they guard would be unguarded.
-const RECALL_RUNG = 20;
+// Addendum T: recall now starts at rung 30 (tier 6), not rung 20 (tier 5 never recalls).
+const RECALL_RUNG = 30;
 
 test('a partial climb fails loudly on a recall it cannot resolve from its own submissions', async () => {
   const recall = composePlan(makeWorld(1), RECALL_RUNG).plan.find((s) => s.op === 'recall');
@@ -156,10 +157,14 @@ test('the same partial climb passes when the caller explicitly opts into the rec
 // ---------------------------------------------------------------------------
 
 test('the answer key a real climb is graded against carries the project state and label', () => {
+  // Addendum T: the graded release chain is now at rungs 20-39 (was 50-69), and `recover409` is
+  // a per-rung seeded draw rather than always true, so `render:409` is only sometimes in the
+  // stage list.
   const world = makeWorld(1);
   const key = answerKey(world);
   const graded = key.rungs.filter((r) => r.expectedProjectState !== null);
-  assert.deepEqual(graded.map((r) => r.n), Array.from({ length: 20 }, (_, i) => 50 + i));
+  assert.deepEqual(graded.map((r) => r.n), Array.from({ length: 20 }, (_, i) => 20 + i));
+  let recovers = 0;
   for (const entry of graded) {
     assert.equal(entry.expectedProjectState, 'published');
     // Addendum Q rule 1 paraphrases the clause, so the word is what is checked, not the sentence.
@@ -167,6 +172,7 @@ test('the answer key a real climb is graded against carries the project state an
     // Addendum Q rule 10: the same rungs record the path, not only the terminal artifact.
     assert.ok(entry.expectedAudit, `rung ${entry.n} publishes but records no audit`);
     assert.equal(entry.expectedAudit.bodyDigestOf, 'submittedAsset');
-    assert.ok(entry.expectedAudit.stages.includes('render:409'));
+    if (entry.expectedAudit.stages.includes('render:409')) recovers += 1;
   }
+  assert.ok(recovers > 0 && recovers < graded.length, `seed 1: recover409 never varies across rungs 20-39 (${recovers}/${graded.length})`);
 });
