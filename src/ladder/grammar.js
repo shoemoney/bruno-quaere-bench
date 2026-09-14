@@ -931,12 +931,16 @@ function solveChainPercents(world, chain, i, width, height) {
   // redraw out of an 8px-floor violation the way drawSafeImageCanvas would.
   const [lo0, hi] = (step.kind === 'shrink' || step.kind === 'derivedShrink') ? SHRINK_PERCENT : GROW_PERCENT;
   const lo = step.minPercent === undefined ? lo0 : Math.max(lo0, step.minPercent);
+  // The minPercent floor exists for Addendum D grid-rounding safety, so when batchTier
+  // pins it above the nominal percent cap (e.g. roundTo amended to 16 -> floor 93),
+  // the cap gives way rather than leaving an empty candidate range.
+  const hiEff = Math.max(hi, lo);
   const original = step.percent;
   const candidates = [0];
   for (let delta = 1; delta <= MAX_PERCENT_NUDGE; delta += 1) candidates.push(delta, -delta);
   for (const delta of candidates) {
     const candidate = original + delta;
-    if (candidate < lo || candidate > hi) continue;
+    if (candidate < lo || candidate > hiEff) continue;
     if (percentIsAmbiguous(world, { width, height }, candidate)) continue;
     // Mirrors runCompute's percentOfDims floor exactly (Addendum M: floor at `roundTo`, not bare
     // `1`) -- this function predicts what the NEXT step in the chain will actually receive, so it
