@@ -48,7 +48,17 @@
 > (`keygen-bounds`, seed 8 answerKey 8325 ms against an 8000 ms budget, 4.3 s uncontended on both
 > 0.8.0 and 0.9.0 because png-default seeds render real PNG bytes for the hash; the same test took
 > 580 s in the passing run). The reference solver passes 100/100 on seeds 1200, 1201 and 1205.
-> **Round eight (0.9.0, seeds 1200-1208) is live.**
+> **Round eight ran 0.9.0** (2026-09-14 20:07 to 23:02, seeds 1200-1208, same lineup): astra
+> **97** (stopped by the 5000-turn budget at 5001 turns, 175 min, no fall), fable 70 (wrong hash
+> at 71, 151 min, 4440 turns), qwen3.8-max 39 (refusal at 40, 135 min), muse 24 (audit at 25),
+> deepseek-flash 19 (audit at 20), qwen3.8-flash 19 (audit at 20), kimi k3 4 (wrong hash at 5,
+> after 42 the round before). Every result has `driverError: null`. CLI rows: max 97, median
+> 31.5, six distinct fall rungs, **not in band**. The stated placement rule and the leftover
+> refusal at 25-39 stopped nobody: the two frontier models walked straight through it, so the
+> round-seven falls at 39-49 were the unstated rule and nothing else. What round eight measures
+> is the ladder above 40 with the rule in place: fable's 4440 turns to reach 70 against 651 to
+> reach 40 the round before says rungs 40-70 are expensive, not impossible. Next steepen is
+> designed from the astra and fable transcripts, not from the fall rungs.
 > Every earlier round is kept under its version number, superseded, never rescored. The design
 > promise "no current model past rung 30" did not survive contact with 2026 models and is no
 > longer claimed.
