@@ -20,6 +20,14 @@ export function settingsPathFor(repoRoot) {
   return path.join(repoRoot, '.quaere', 'settings.json');
 }
 
+// The doctor.js `error` string a found CLI carries when `--no-smoke` skipped its live smoke test.
+// Shared with doctor.js (imported there, not duplicated) so resolveModels() and
+// anyLineupCliFailed() can tell "smoke skipped" apart from "smoke actually failed" without a
+// second field -- a found CLI with this exact error is routed to the cli driver just like a
+// passed smoke, while any other found-but-not-headless CLI (a real failure, or grok's by-design
+// unverified-headless case) is not.
+export const SMOKE_SKIPPED_ERROR = 'smoke skipped (--no-smoke)';
+
 // Lineup entry -> {cli adapter name|null, direct provider driver if the CLI is missing/unusable}.
 // The `directDriver` values (google/deepseek/xai) are exactly the labs this bench already has a
 // message-loop driver for (src/harness/run.js resolveDriver); the other three CLIs (ai/codex/qwen/
@@ -320,16 +328,20 @@ export async function probeProviderKey(provider, apiKey, { fetchImpl = fetch } =
 }
 
 // resolveModels(clis, keys, lineup?) -> {<lineup id>: {driver, cli|null, reason}}. cli found +
-// headless smoke ok -> driver "cli"; else a direct provider driver (google/deepseek/xai) but
-// ONLY when doctor found that provider's key working; else "openrouter" (with a reason that says
-// why the direct driver was skipped, when it was).
+// headless smoke ok (or smoke skipped via --no-smoke) -> driver "cli"; else a direct provider
+// driver (google/deepseek/xai) but ONLY when doctor found that provider's key working; else
+// "openrouter" (with a reason that says why the direct driver was skipped, when it was).
 export function resolveModels(clis, keys = {}, lineup = LINEUP) {
   const models = {};
   for (const entry of lineup) {
     if (entry.cli) {
       const info = clis[entry.cli];
-      if (info && info.found && info.headless) {
-        models[entry.id] = { driver: 'cli', cli: entry.cli, reason: 'CLI found and headless smoke passed' };
+      if (info && info.found && (info.headless || info.error === SMOKE_SKIPPED_ERROR)) {
+        models[entry.id] = {
+          driver: 'cli',
+          cli: entry.cli,
+          reason: info.headless ? 'CLI found and headless smoke passed' : 'CLI found; smoke skipped (--no-smoke)',
+        };
         continue;
       }
     }

@@ -22,6 +22,7 @@ import {
   probeProviderKey,
   resolveModels,
   writeSettings,
+  SMOKE_SKIPPED_ERROR,
 } from './settings.js';
 
 // The direct-provider drivers this lineup can fall back to (google/deepseek/xai), derived from
@@ -161,7 +162,7 @@ export async function probeOne(cliName, { noSmoke = false, execFileSyncImpl, spa
   }
 
   if (noSmoke) {
-    return { found: true, path: binPath, version, headless: false, servedModel: null, error: 'smoke skipped (--no-smoke)' };
+    return { found: true, path: binPath, version, headless: false, servedModel: null, error: SMOKE_SKIPPED_ERROR };
   }
 
   const model = SMOKE_MODEL[cliName];
@@ -358,10 +359,17 @@ export function renderDoctorTable(settings) {
 }
 
 // anyLineupCliFailed(settings) -> true if any lineup CLI (all but deepseek-flash, which has none)
-// is missing or failed its smoke -- the doctor command's non-zero exit condition.
+// is missing or failed its smoke -- the doctor command's non-zero exit condition. A found CLI
+// whose smoke was deliberately skipped (--no-smoke; SMOKE_SKIPPED_ERROR) is NOT a failure --
+// resolveModels() already routes it to the cli driver just like a passed smoke, so doctor exiting
+// 1 here for that same CLI would contradict the settings.json it just wrote. Any other
+// found-but-not-headless CLI (a real smoke failure, or grok's by-design unverified-headless case)
+// still counts as a failure.
 export function anyLineupCliFailed(settings) {
   return LINEUP.filter((entry) => entry.cli).some((entry) => {
     const info = settings.clis[entry.cli];
-    return !info || !info.found || !info.headless;
+    if (!info || !info.found) return true;
+    if (info.headless) return false;
+    return info.error !== SMOKE_SKIPPED_ERROR;
   });
 }

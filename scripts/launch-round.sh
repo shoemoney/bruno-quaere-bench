@@ -41,10 +41,18 @@ esac
 
 if [ ! -f "$SETTINGS_FILE" ]; then
   echo "launch-round: $SETTINGS_FILE is missing -- running 'node bin/quaere.js doctor --no-smoke' first" >&2
-  node "$ROOT_DIR/bin/quaere.js" doctor --no-smoke || {
-    echo "launch-round: doctor failed to produce $SETTINGS_FILE" >&2
-    exit 1
-  }
+  if ! node "$ROOT_DIR/bin/quaere.js" doctor --no-smoke; then
+    # runDoctor() writes settings.json before it ever returns (doctor.js), so a non-zero exit
+    # does not by itself mean the file is missing -- e.g. a lineup CLI that's genuinely not
+    # installed still exits 1 even though every OTHER model's resolution in the file is usable.
+    # Only treat this as fatal when the file really isn't there; otherwise warn and carry on.
+    if [ -f "$SETTINGS_FILE" ]; then
+      echo "launch-round: doctor exited non-zero (see above) but $SETTINGS_FILE was written anyway -- continuing" >&2
+    else
+      echo "launch-round: doctor exited non-zero and $SETTINGS_FILE was not written" >&2
+      exit 1
+    fi
+  fi
 fi
 if [ ! -f "$SETTINGS_FILE" ]; then
   echo "launch-round: doctor ran but $SETTINGS_FILE still does not exist" >&2
