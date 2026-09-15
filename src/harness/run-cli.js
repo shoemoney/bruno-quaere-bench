@@ -181,9 +181,9 @@ async function copyCollection(sandboxDir, collectionDir) {
 // between turns" for codeWrites, and "grep/cat/sed invocations of HOUSE-RULES.md in the CLI's own
 // transcript events where available, else null" for docReads.
 
-const SCRIPT_EXT_RE = /\.(py|js|sh|ts)$/i;
+const SCRIPT_EXT_RE = /\.(py|js|cjs|mjs|sh|ts)$/i;
 
-// scanScriptMtimes(root) -> Map<relPath, mtimeMs> for every script file (.py/.js/.sh/.ts) under
+// scanScriptMtimes(root) -> Map<relPath, mtimeMs> for every script file (.py/.js/.cjs/.mjs/.sh/.ts) under
 // the sandbox, skipping `bin/` (the bru shim this harness plants, never the CLI's own work).
 // Best-effort: a file that vanishes between readdir and stat (mid-write, or removed) is skipped
 // rather than thrown over, since this only ever runs between spawns, not during one.
