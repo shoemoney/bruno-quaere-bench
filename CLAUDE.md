@@ -16,7 +16,7 @@ answer key may depend on.
 
 ```bash
 npm run lint                         # node --check over bin, src, test
-npm test                             # node:test, ~90-95 min measured (0.8.0, unremeasured for 0.9.0); includes the 100-rung reference climbs
+npm test                             # node:test, ~90-95 min measured (0.9.0 run three: 87 min; 794 tests); includes the 100-rung reference climbs
 node --test test/<file>.test.js      # one file; ALWAYS write output to a file and grep it:
 node --test test/x.test.js > /tmp/x.log 2>&1; grep -E "^# (pass|fail)" /tmp/x.log
 bash scripts/run-behaviors.sh        # 16 behaviors proven with bru run against a live instance

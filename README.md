@@ -8,7 +8,7 @@
 [![Node 22+](https://img.shields.io/badge/Node-22%2B-39b600?logo=node.js)](package.json)
 [![Zero deps](https://img.shields.io/badge/runtime%20deps-0-blue)](package.json)
 [![Judge](https://img.shields.io/badge/judge-bru%20run%20%2B%20sha256-orange)](docs/ARCHITECTURE.md)
-[![Ladder](https://img.shields.io/badge/ladder-0.6.0%20measured%20%C2%B7%200.8.0%20verified-purple)](docs/ARCHITECTURE.md)
+[![Ladder](https://img.shields.io/badge/ladder-0.6.0%20measured%20%C2%B7%200.9.0%20verified-purple)](docs/ARCHITECTURE.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](package.json)
 
 </div>
@@ -27,7 +27,28 @@
 > the `:409` audit stage (82d4c44), and the hardcoded test ports that only collided inside the
 > full suite (56278e3) — and the pinned answer keys were rebaselined for all three (9e7bb16).
 > The reference solver also passes 100/100 on the round-seven seeds (1100, 1101, 1105).
-> Round seven is next.
+>
+> **Round seven ran 0.8.0** (2026-09-14, seeds 1100-1108, seven subscription CLIs plus
+> DeepSeek V4.1 Flash direct): astra 48, kimi k3 42, fable 40, qwen3.8-max 39, qwen3.8-flash 23,
+> muse 20, deepseek-flash 19 (max 48, median 39, seven distinct fall rungs, not in band). The
+> bottom three fell on the audit trail at 20, 21 and 24 and kimi on a wrong hash at 43; those
+> four are valid. Astra, fable and qwen3.8-max each fell on the **first** "write the word onto
+> that stack" ask their seed drew, and the rule that makes refusing correct (a stated word goes
+> only onto the turn-in piece, rule 29's 0.7.0 amendment) was in `docs/RULES-0.8.md`, which the
+> docsolver reads, and in nothing the models were given — it was tagged `(task text)`, which
+> exempted it from the skill-coverage test, and no rung text stated it. Those three are lower
+> bounds, not scores. See `blog/2026-09-14-the-trap-nobody-could-see.md` in the ideas repo.
+>
+> **0.9.0 is verified** (2026-09-14, Addendum U, `e691c12` + `4401468`): the skill now states the
+> placement rule for every rung and every intermediate, a per-act test pins the forbidding
+> sentence so no refusal act can enter the pool without one, and the same ask now fires on the
+> tier 5 leftover sound and the tier 6 stitched clip from rung 25 (`labelTheLeftover`, one rung in
+> two, own sub-seed, so the pinned answer keys did not move). The full suite is 794 tests; runs
+> one and three were 794/794 (87 min for run three), run two failed exactly one wall-clock guard
+> (`keygen-bounds`, seed 8 answerKey 8325 ms against an 8000 ms budget, 4.3 s uncontended on both
+> 0.8.0 and 0.9.0 because png-default seeds render real PNG bytes for the hash; the same test took
+> 580 s in the passing run). The reference solver passes 100/100 on seeds 1200, 1201 and 1205.
+> **Round eight (0.9.0, seeds 1200-1208) is live.**
 > Every earlier round is kept under its version number, superseded, never rescored. The design
 > promise "no current model past rung 30" did not survive contact with 2026 models and is no
 > longer claimed.
@@ -258,8 +279,11 @@ flowchart LR
     C --> D[0.5 🧗<br/>cross-rung memory, derived params,<br/>announced mutations, chains]
     D --> E[0.6 🧾<br/>stitch antecedent stated,<br/>chain graded, sandbox fidelity]
     E --> F[0.7 🧠<br/>attacks the replayable solver]
+    F --> G[0.8 🪜<br/>obligations move to 20-49]
+    G --> H[0.9 🧾<br/>label rule stated to the agent,<br/>leftover refusal from 25]
     style E fill:#2b6,stroke:#333,color:#fff
     style F fill:#96f,stroke:#333,color:#fff
+    style H fill:#96f,stroke:#333,color:#fff
 ```
 
 Every version is a dated addendum in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), which
