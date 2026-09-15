@@ -1113,17 +1113,17 @@ same posture as `clauseStageRefusalNote` beside it.
 
 Added 2026-09-14, from the round seven evidence (astra fell at rung 49, fable at 41, qwen3.8-max at
 40): three models each fell on the first `labelTheStack` ask their seed drew. The rule they broke --
-rule 29's 0.7.0 amendment ("a stated word goes onto the piece a turn-in step asks for, never onto
-any intermediate like a stack of hauled copies") -- lived in `docs/RULES-0.8.md` only, which the
-docsolver reads and no agent ever sees. Rule 29 is marked `(task text)`, so the skill-coverage test
+rule 29's 0.7.0 amendment -- a stated word goes only onto the piece the turn-in step names,
+never onto a stack or an intermediate -- lived in `docs/RULES-0.8.md` only, which the docsolver
+reads and no agent ever sees. Rule 29 is marked `(task text)`, so the skill-coverage test
 never required it in the skill, and no rung text stated it either. Each model therefore broke a rule
 it had not been told (test/refusal.test.js:310, 315).
 
 From 0.9.0 (commits e691c12 and 4401468), that ask also lands on tiers 5 and 6 -- the tier 5
 leftover sound and the tier 6 stitched clip -- at rungs 25-39 under the act `labelTheLeftover`. The
 skill now states the placement rule for every rung and every intermediate so no agent can claim it
-was never stated. test/refusal.test.js (lines 137, 236, 310) pins the forbidding sentence for each
-refusal act, so no act can enter the pool without one. The sub-seed is `leftoverRefusal:${n}` with
+was never stated. test/refusal.test.js (lines 322-349) pins the forbidding sentence for each refusal
+act, so no act can enter the pool without one. The sub-seed is `leftoverRefusal:${n}` with
 density 0.5, drawn at rungs 25-39, its own word never equaling the rung's labelFor word; the pinned
 answer keys in test/ladder-0-7.test.js did not move.
 
