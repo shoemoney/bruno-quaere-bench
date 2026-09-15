@@ -33,6 +33,7 @@ import {
   openrouterConsentQuestion,
   ensureOpenrouterConsent,
   LINEUP,
+  SMOKE_SKIPPED_ERROR,
 } from '../src/harness/settings.js';
 
 async function withTempDir(fn) {
@@ -285,6 +286,55 @@ test('runDoctor() writes .quaere/settings.json with the documented shape and res
     assert.equal(anyLineupCliFailed(settings), true); // qwen and grok both fail their lineup check
   }));
 
+test('runDoctor({noSmoke: true}) routes every found lineup CLI to the cli driver instead of openrouter', () =>
+  withTempDir(async (repoRoot) => {
+    const bins = {};
+    for (const name of CLI_LIST) {
+      const p = path.join(repoRoot, name);
+      await writeFile(p, '#!/bin/sh\n');
+      bins[name] = p;
+    }
+    const execFileSyncImpl = (cmd, args) => {
+      const name = String(args[1] || '').replace('whence -p ', '');
+      if (bins[name]) return `${bins[name]}\n`;
+      throw new Error('not found');
+    };
+    // smokeTestImpl must never be invoked under --no-smoke -- prove it by throwing if it is.
+    const smokeTestImpl = async () => {
+      throw new Error('smokeTestImpl should never run under --no-smoke');
+    };
+
+    const { settings, table } = await runDoctor({ repoRoot, noSmoke: true, execFileSyncImpl, smokeTestImpl, noNetwork: true });
+
+    // Every CLI but grok: found:true, headless:false, the skip marker -- and its lineup model(s)
+    // resolve straight to the cli driver, exactly like round eight needed and didn't get.
+    for (const cli of ['ai', 'codex', 'qwen', 'gemini', 'kimi', 'muse']) {
+      assert.equal(settings.clis[cli].found, true, `${cli} should be found`);
+      assert.equal(settings.clis[cli].headless, false);
+      assert.equal(settings.clis[cli].error, 'smoke skipped (--no-smoke)');
+    }
+    for (const entry of LINEUP) {
+      if (!entry.cli || entry.cli === 'grok') continue;
+      assert.equal(settings.models[entry.id].driver, 'cli', `${entry.id} should route to cli under --no-smoke`);
+      assert.equal(settings.models[entry.id].cli, entry.cli);
+      assert.match(settings.models[entry.id].reason, /smoke skipped/);
+    }
+    // grok keeps its distinct by-design reason (not the --no-smoke skip marker) and its existing
+    // routing -- no working xai key in this fixture, so it falls to openrouter, same as always.
+    assert.equal(settings.clis.grok.error, GROK_HEADLESS_UNVERIFIED_REASON);
+    assert.equal(settings.models['x-ai/grok-4.6'].driver, 'openrouter');
+
+    // Not one model was routed to openrouter just because --no-smoke skipped its CLI's smoke.
+    const skippedToOpenrouter = LINEUP.filter((e) => e.cli && e.cli !== 'grok' && settings.models[e.id].driver === 'openrouter');
+    assert.deepEqual(skippedToOpenrouter, []);
+
+    // A --no-smoke doctor with every CLI found exits 0 -- grok's own permanent, separately
+    // documented by-design gap is the sole exception and is not this evidence item's scope.
+    assert.equal(anyLineupCliFailed({ clis: { ...settings.clis, grok: { found: true, headless: true } } }), false);
+
+    assert.match(table, /CLI\s+Found\s+Path/);
+  }));
+
 // ---------------------------------------------------------------------------
 // findProviderKey() / readProviderKey() / probeProviderKey(): the google/deepseek/xai gap
 // ---------------------------------------------------------------------------
@@ -456,7 +506,30 @@ test('anyLineupCliFailed() is false only when every lineup CLI is found and head
     ['ai', 'codex', 'qwen', 'gemini', 'kimi', 'grok', 'muse'].map((n) => [n, { found: true, headless: true }]),
   );
   assert.equal(anyLineupCliFailed({ clis }), false);
+  // headless:false with no SMOKE_SKIPPED_ERROR marker (a real smoke failure, or grok's by-design
+  // unverified-headless case) still counts as a failure.
   clis.grok.headless = false;
+  assert.equal(anyLineupCliFailed({ clis }), true);
+});
+
+test('anyLineupCliFailed() is false when every found CLI\'s smoke was skipped via --no-smoke', () => {
+  const clis = Object.fromEntries(
+    ['ai', 'codex', 'qwen', 'gemini', 'kimi', 'grok', 'muse'].map((n) => [
+      n,
+      { found: true, headless: false, error: SMOKE_SKIPPED_ERROR },
+    ]),
+  );
+  assert.equal(anyLineupCliFailed({ clis }), false);
+});
+
+test('anyLineupCliFailed() is still true when one CLI is missing even though the rest skipped smoke', () => {
+  const clis = Object.fromEntries(
+    ['ai', 'codex', 'qwen', 'gemini', 'kimi', 'grok', 'muse'].map((n) => [
+      n,
+      { found: true, headless: false, error: SMOKE_SKIPPED_ERROR },
+    ]),
+  );
+  clis.qwen = { found: false, headless: false, error: 'binary not found' };
   assert.equal(anyLineupCliFailed({ clis }), true);
 });
 
@@ -606,6 +679,25 @@ test('resolveModels() falls back to openrouter for a direct-driver entry whose k
   const models = resolveModels(clis, {}, LINEUP);
   assert.equal(models['x-ai/grok-4.6'].driver, 'openrouter');
   assert.match(models['x-ai/grok-4.6'].reason, /key not found/);
+});
+
+test('resolveModels() routes a found CLI whose smoke was skipped (--no-smoke) to the cli driver, not openrouter', () => {
+  const clis = {
+    ai: { found: true, headless: false, error: SMOKE_SKIPPED_ERROR },
+    qwen: { found: true, headless: false, error: SMOKE_SKIPPED_ERROR },
+    // grok is found but its headless:false comes from the by-design unverified-headless case
+    // (see the grok probeOne test above), NOT a skipped smoke -- it must still fall through to
+    // its direct driver / openrouter exactly like today, never to the cli driver.
+    grok: { found: true, headless: false, error: GROK_HEADLESS_UNVERIFIED_REASON },
+  };
+  const keys = { xai: { found: true, working: false, reason: 'team_blocked' } };
+  const models = resolveModels(clis, keys, LINEUP);
+  assert.equal(models['claude-fable-5-1'].driver, 'cli');
+  assert.equal(models['claude-fable-5-1'].cli, 'ai');
+  assert.match(models['claude-fable-5-1'].reason, /smoke skipped/);
+  assert.equal(models['qwen3.8-max'].driver, 'cli');
+  assert.equal(models['qwen3.8-flash'].driver, 'cli');
+  assert.equal(models['x-ai/grok-4.6'].driver, 'openrouter');
 });
 
 // ---------------------------------------------------------------------------
