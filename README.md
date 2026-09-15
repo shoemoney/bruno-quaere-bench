@@ -13,7 +13,7 @@
 
 </div>
 
-> 🚧 **Status, 2026-09-13 evening.** Ladder **0.6.0** is the last version with a clean, fully
+> 🚧 **Status, 2026-09-14 evening.** Ladder **0.6.0** is the last version with a clean, fully
 > valid round (seven models, below). Ladder **0.7.0**'s first nine-model round found a real bug
 > in the benchmark itself: six independent models, six different seeds, all hit the exact same
 > wall the instant they reached the new stage-recovery audit check (Addendum S, fixed in 0.7.1).
