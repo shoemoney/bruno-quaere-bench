@@ -35,7 +35,7 @@ piped into grep. Read the `# pass` / `# fail` lines from a file, never trust an 
 
 1. `npm test`, including `test/docsolver.test.js` (a clean-room solver written from the docs
    alone agrees with the answer key on seeds 1..20 and 500..540), `test/reference.test.js`,
-   `test/keygen-bounds.test.js` (300 seeds under 2 s and 2 MB), `test/sandbox-fidelity.test.js`
+   `test/keygen-bounds.test.js` (300 seeds under 8 s CPU time and 2 MB), `test/sandbox-fidelity.test.js`
    (the reference climbs using only files found in a prepared sandbox), and
    `test/skill-rules-subset.test.js` (every skill-marked rule in RULES appears in the skill).
 2. A rung-0 smoke per driver with `--max-rung 0`.

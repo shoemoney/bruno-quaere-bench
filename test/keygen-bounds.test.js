@@ -29,6 +29,13 @@ const SEED_COUNT = 300;
 // baseline with real margin, so this still catches what actually matters: an unbounded blowup
 // (the seed-525 class of bug redraws/caps this file guards against), not the pre-existing
 // deflate cost. Flagged separately for whoever next has zlib/PNG-encode time on their plate.
+//
+// Measured in CPU time (process.cpuUsage: user+system), not wall clock. Run two of the 0.9.0
+// full-suite gate failed this exact guard under full-suite contention (seed 8, 8325ms wall vs
+// the old 8000ms wall budget) while the same seed is ~4.3s uncontended for a png-default seed
+// (README.md, 0.9.0 gate notes) -- contention inflates wall clock but not CPU time charged to
+// this process, so CPU time is what the budget should bound. 8000ms keeps the ~1.86x headroom
+// the original wall-clock budget had over that 4.3s baseline, now immune to scheduler noise.
 const MAX_MS_PER_SEED = 8000;
 const MAX_BYTES_PER_SEED = 2 * 1024 * 1024;
 
@@ -59,12 +66,13 @@ function assertWithinCaps(value, where, seen = new Set()) {
   for (const [k, v] of Object.entries(value)) assertWithinCaps(v, `${where}.${k}`, seen);
 }
 
-test('answerKey(seed) stays under 2s and 2MB for seeds 1..300', () => {
+test('answerKey(seed) stays under 8s and 2MB for seeds 1..300', () => {
   for (let seed = 1; seed <= SEED_COUNT; seed += 1) {
     const world = makeWorld(seed);
-    const t0 = Date.now();
+    const cpu0 = process.cpuUsage();
     const key = answerKey(world);
-    const ms = Date.now() - t0;
+    const { user, system } = process.cpuUsage(cpu0);
+    const ms = (user + system) / 1000;
     const bytes = Buffer.byteLength(JSON.stringify(key), 'utf8');
     assert.ok(ms < MAX_MS_PER_SEED, `seed ${seed}: answerKey took ${ms}ms, budget is ${MAX_MS_PER_SEED}ms`);
     assert.ok(
