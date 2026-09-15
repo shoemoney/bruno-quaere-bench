@@ -204,7 +204,7 @@ run silently; both are published.
 | ✅ Clean-room doc-solver | a solver written from the docs alone, never reading the generator, agrees with the key on seeds 1-20 and the round's seed block | `test/docsolver.test.js` |
 | ✅ Sandbox fidelity | the reference climbs using only files found in a prepared sandbox | `test/sandbox-fidelity.test.js` |
 | ✅ Rules in the document | every skill-marked rule in `docs/RULES-*.md` appears in the clean skill and the 5 MB sloppy one | `test/skill-rules-subset.test.js` |
-| ✅ Generation bounds | keys for 300 seeds under 2 s and 2 MB | `test/keygen-bounds.test.js` |
+| ✅ Generation bounds | keys for 300 seeds under 8 s CPU time and 2 MB | `test/keygen-bounds.test.js` |
 | ✅ Behaviors | 16 behaviors proven with `bru run` against a live instance | `scripts/run-behaviors.sh` |
 | ✅ Rung-0 smoke | every driver produces `result.json` for rung 0 | `--max-rung 0` |
 
