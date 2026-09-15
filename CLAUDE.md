@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Bruno QUAERE: a seeded, deterministic media API plus a hundred-rung task ladder that AI agents
 climb using only the Bruno CLI (`bru`), judged by sha256 hash equality on rendered bytes plus,
 from rung 20 up, the project state and label the task demanded. Zero runtime dependencies, Node
-22+, ESM. The contract is `docs/ARCHITECTURE.md`; its dated Addenda A through T are the change
+22+, ESM. The contract is `docs/ARCHITECTURE.md`; its dated Addenda A through U are the change
 log of every rule and every bug that changed a rule. Read the newest addenda first. `docs/SPEC.md`
 is the original intent; `docs/RULES-0.9.md` is the plain-language list of every house rule the
 answer key may depend on.
