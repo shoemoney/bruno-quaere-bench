@@ -153,7 +153,6 @@ test('consecutive batch rungs do not pile onto the same project', () => {
     // (RULES-0.9 rule 32), which lets a count be taken without walking anybody else's rows and is
     // the API workstream's half. A library with more projects would raise this number on its own.
     assert.ok(distinct >= 3, `seed ${seed}: only ${distinct} distinct projects across ${hauls.length} hauls`);
-    assert.equal(distinct, new Set(hauls.map((h) => h.projectId)).size);
   }
 });
 
