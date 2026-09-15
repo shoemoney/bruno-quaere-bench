@@ -3,6 +3,13 @@
 // model, plus the calibration predicate the steepening loop is driven by (max rung, median rung,
 // distinct fall rungs, and whether any row used a per-token driver). Reads only; zero deps.
 //
+// The band (inBand) is evaluated over CLI-only rows (driver 'cli'), not all rows: a paid direct-
+// provider row (e.g. deepseek-flash, which has no CLI in LINEUP) has nothing to do with whether
+// the CLI-driven models are within the mission band, but counting it in max/median/inBand made
+// every round that included it report inBand=false regardless of where the CLI rows actually fell.
+// Paid rows are still surfaced in paidDrivers for the reader; they just no longer gate inBand by
+// themselves. All-rows and CLI-only numbers are both reported so the difference stays visible.
+//
 //   node scripts/round-summary.js <from-seed> <to-seed> [runsDir] [--json]
 
 import fs from 'node:fs';
@@ -52,10 +59,17 @@ for (const file of resultFiles(runsDir)) {
 }
 rows.sort((a, b) => b.rung - a.rung || a.model.localeCompare(b.model));
 
+function medianOf(sorted) {
+  return sorted.length === 0 ? null
+    : sorted.length % 2 ? sorted[(sorted.length - 1) / 2]
+    : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+}
+
 const rungs = rows.map((r) => r.rung).sort((a, b) => a - b);
-const median = rungs.length === 0 ? null
-  : rungs.length % 2 ? rungs[(rungs.length - 1) / 2]
-  : (rungs[rungs.length / 2 - 1] + rungs[rungs.length / 2]) / 2;
+const median = medianOf(rungs);
+const cliRows = rows.filter((r) => String(r.driver).startsWith('cli'));
+const cliRungs = cliRows.map((r) => r.rung).sort((a, b) => a - b);
+const cliMedian = medianOf(cliRungs);
 const paid = rows.filter((r) => PAID_DRIVERS.has(String(r.driver).split(':')[0]));
 const versions = [...new Set(rows.map((r) => r.version))];
 const predicate = {
@@ -64,9 +78,13 @@ const predicate = {
   max: rungs.length ? rungs[rungs.length - 1] : null,
   median,
   distinctFallRungs: new Set(rungs).size,
+  cliRows: cliRows.length,
+  cliMax: cliRungs.length ? cliRungs[cliRungs.length - 1] : null,
+  cliMedian,
+  cliDistinctFallRungs: new Set(cliRungs).size,
   paidDrivers: paid.map((r) => `${r.model}(${r.driver})`),
-  inBand: rows.length > 0 && rungs[rungs.length - 1] <= 40 && median >= 20 && median <= 40
-    && new Set(rungs).size >= 3 && paid.length === 0 && versions.length === 1,
+  inBand: cliRows.length > 0 && cliRungs[cliRungs.length - 1] <= 40 && cliMedian >= 20 && cliMedian <= 40
+    && new Set(cliRungs).size >= 3 && versions.length === 1,
 };
 
 if (json) {
@@ -78,5 +96,5 @@ if (json) {
     console.log(`| ${r.model} | ${r.driver} | ${r.seed} | ${r.version} | ${r.rung} | ${r.stop} | ${r.turns} | ${r.wallMin} | ${r.novelTokens ?? ''} | ${r.codeWrites ?? ''} | ${r.docReads ?? ''} |`);
   }
   console.log('');
-  console.log(`rows=${predicate.rows} versions=${versions.join(',')} max=${predicate.max} median=${predicate.median} distinctFallRungs=${predicate.distinctFallRungs} paidDrivers=${predicate.paidDrivers.length} inBand=${predicate.inBand}`);
+  console.log(`rows=${predicate.rows} versions=${versions.join(',')} max=${predicate.max} median=${predicate.median} distinctFallRungs=${predicate.distinctFallRungs} paidDrivers=${predicate.paidDrivers.length} | cliRows=${predicate.cliRows} cliMax=${predicate.cliMax} cliMedian=${predicate.cliMedian} cliDistinctFallRungs=${predicate.cliDistinctFallRungs} inBand=${predicate.inBand}`);
 }
