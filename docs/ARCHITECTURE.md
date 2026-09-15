@@ -1111,8 +1111,26 @@ same posture as `clauseStageRefusalNote` beside it.
 
 ## Addendum U: Rule 29's word refusal reaches tiers 5 and 6; 0.8.0 graded a rule the agent never saw
 
-Added 2026-09-14, from the round seven evidence (astra 49, fable 40, qwen3.8-max 39): three models each fell on the first `labelTheStack` ask their seed drew. The rule they broke—rule 29's 0.7.0 amendment ("a stated word goes onto the piece a turn-in step asks for, never onto any intermediate like a stack of hauled copies")—lived in `docs/RULES-0.8.md` only, which the docsolver reads and no agent ever sees. Rule 29 is marked `(task text)`, so the skill-coverage test never required it in the skill, and no rung text stated it either. Each model therefore broke a rule it had not been told (test/refusal.test.js:310, 315).
+Added 2026-09-14, from the round seven evidence (astra fell at rung 49, fable at 41, qwen3.8-max at
+40): three models each fell on the first `labelTheStack` ask their seed drew. The rule they broke --
+rule 29's 0.7.0 amendment ("a stated word goes onto the piece a turn-in step asks for, never onto
+any intermediate like a stack of hauled copies") -- lived in `docs/RULES-0.8.md` only, which the
+docsolver reads and no agent ever sees. Rule 29 is marked `(task text)`, so the skill-coverage test
+never required it in the skill, and no rung text stated it either. Each model therefore broke a rule
+it had not been told (test/refusal.test.js:310, 315).
 
-From 0.9.0 (commits e691c12 and 4401468), that ask also lands on tiers 5 and 6—the tier 5 leftover sound and the tier 6 stitched clip—at rungs 25-39 under the act `labelTheLeftover`. The skill now states the placement rule for every rung and every intermediate so no agent can claim it was never stated. test/refusal.test.js (lines 137, 236, 310) pins the forbidding sentence for each refusal act, so no act can enter the pool without one. The sub-seed is `leftoverRefusal:${n}` with density 0.5, drawn at rungs 25-39, its own word never equaling the rung's labelFor word; the pinned answer keys in test/ladder-0-7.test.js did not move.
+From 0.9.0 (commits e691c12 and 4401468), that ask also lands on tiers 5 and 6 -- the tier 5
+leftover sound and the tier 6 stitched clip -- at rungs 25-39 under the act `labelTheLeftover`. The
+skill now states the placement rule for every rung and every intermediate so no agent can claim it
+was never stated. test/refusal.test.js (lines 137, 236, 310) pins the forbidding sentence for each
+refusal act, so no act can enter the pool without one. The sub-seed is `leftoverRefusal:${n}` with
+density 0.5, drawn at rungs 25-39, its own word never equaling the rung's labelFor word; the pinned
+answer keys in test/ladder-0-7.test.js did not move.
 
-Rule 41 (skill, new in 0.9.0) states the boundary as a house rule (docs/RULES-0.9.md ~290): "A stated word goes onto exactly one piece: the one the turn-in step names, once every ordered step is done. Nothing else made along the way carries a word—not a stack of hauled copies, not a leftover, not an audio difference only converted on the way to a picture, not a pair of clips only stitched on the way to being counted." test/docsolver.test.js (lines 513–527) exercises every `refusalLabelLeftover` phrasing, so all four allowed wordings are proven to parse to the right act and the right word—not just the one phrasing the seed drew.
+Rule 41 (skill, new in 0.9.0) states the boundary as a house rule (docs/RULES-0.9.md ~290): "A
+stated word goes onto exactly one piece: the one the turn-in step names, once every ordered step is
+done. Nothing else made along the way carries a word — not a stack of hauled copies, not a leftover,
+not an audio difference only converted on the way to a picture, not a pair of clips only stitched on
+the way to being counted — however reasonable the bookkeeping sounds." test/docsolver.test.js (lines
+513-527) exercises every `refusalLabelLeftover` phrasing, so all four allowed wordings are proven to
+parse to the right act and the right word -- not just the one phrasing the seed drew.
